@@ -118,6 +118,7 @@ import { MOCK_INVOICES, Invoice, InvoiceChangeLog, MOCK_SUPPLIERS, Supplier } fr
 import { api, isRealId, type FinancialRatios, type AdminOrg, type AdminActivity, type AdminCostByFeature, type AdminOrgCost, type FactorajeItem, type NotificationItem, type DiotApiResult, type DiotEntryApi, type StatementApi, type ApiUserRow, type CorpFactoraje } from './services/apiClient.ts';
 import { auditInvoice, batchAuditInvoices, queryOperations, generateReport, ForensicAuditResult, ChatMessage, OperationsContext, ReportType, queryContabilidad, AccountingContext } from './services/geminiService.ts';
 import type { SATVerificationResult } from './services/satService.ts';
+import { validateRFC, validateCLABE } from './lib/validators.ts';
 
 const CURRENCY_FORMATTER = new Intl.NumberFormat('es-MX', {
   style: 'currency',
@@ -6696,42 +6697,6 @@ function BudgetEditor({ totalBudget, onBudgetChange }: { totalBudget: number; on
 }
 
 // ─── RFC Validation (SAT Algorithm) ──────────────────────────────────────────
-function validateRFC(rfc: string): { valid: boolean; type?: 'moral' | 'fisica'; error?: string } {
-  const rfcClean = rfc.toUpperCase().trim();
-
-  // Moral person: 3 letters + 6 digits + 3 alphanumeric
-  const moralRegex = /^[A-ZÑ&]{3}\d{6}[A-Z0-9]{3}$/;
-  // Physical person: 4 letters + 6 digits + 3 alphanumeric
-  const fisicaRegex = /^[A-ZÑ&]{4}\d{6}[A-Z0-9]{3}$/;
-
-  if (moralRegex.test(rfcClean)) {
-    // Validate date portion (positions 3-8)
-    const dateStr = rfcClean.substring(3, 9);
-    const year = parseInt(dateStr.substring(0, 2));
-    const month = parseInt(dateStr.substring(2, 4));
-    const day = parseInt(dateStr.substring(4, 6));
-    if (month < 1 || month > 12 || day < 1 || day > 31) {
-      return { valid: false, error: 'Fecha inválida en el RFC' };
-    }
-    return { valid: true, type: 'moral' };
-  }
-
-  if (fisicaRegex.test(rfcClean)) {
-    const dateStr = rfcClean.substring(4, 10);
-    const year = parseInt(dateStr.substring(0, 2));
-    const month = parseInt(dateStr.substring(2, 4));
-    const day = parseInt(dateStr.substring(4, 6));
-    if (month < 1 || month > 12 || day < 1 || day > 31) {
-      return { valid: false, error: 'Fecha inválida en el RFC' };
-    }
-    return { valid: true, type: 'fisica' };
-  }
-
-  if (rfcClean.length < 12) return { valid: false, error: 'RFC demasiado corto (mín. 12 caracteres)' };
-  if (rfcClean.length > 13) return { valid: false, error: 'RFC demasiado largo (máx. 13 caracteres)' };
-  return { valid: false, error: 'Formato de RFC inválido. Verifica letras y dígitos.' };
-}
-
 // ─── ERP Connection Panel ──────────────────────────────────────────────────────
 function ERPConnectionPanel({ erpOptions }: { erpOptions: { name: string; logo: string; description: string }[] }) {
   const [connectedERP, setConnectedERP] = useState<string | null>(() => localStorage.getItem('royaltica_erp_connected'));
@@ -11594,43 +11559,6 @@ function ConectividadERPPanel() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─── CLABE Validation Utility ─────────────────────────────────────────────────
-function validateCLABE(clabe: string): { valid: boolean; bank?: string; error?: string } {
-  if (!/^\d{18}$/.test(clabe)) return { valid: false, error: 'Debe tener exactamente 18 dígitos' };
-
-  // Bank codes (first 3 digits)
-  const BANK_CODES: Record<string, string> = {
-    '002': 'BBVA', '012': 'BBVA Bancomer', '014': 'Santander', '021': 'HSBC',
-    '030': 'Bajío', '036': 'Inbursa', '042': 'Mifel', '044': 'Scotiabank',
-    '058': 'Banregio', '059': 'Invex', '060': 'Bansi', '062': 'Afirme',
-    '072': 'Banorte', '106': 'Bank of America', '108': 'MUFG', '112': 'Bmonex',
-    '113': 'Ve por Más', '127': 'Azteca', '128': 'Autofin', '130': 'Compartamos',
-    '136': 'Intercam', '137': 'Bancoppel', '138': 'ABC Capital', '140': 'Consubanco',
-    '141': 'Volkswagen', '143': 'CIBanco', '145': 'Bbase', '166': 'BanCrea',
-    '168': 'Hipotecaria Federal', '600': 'Monex', '602': 'Masari', '606': 'Arcus',
-    '616': 'Finamex', '617': 'Valmex', '620': 'Profuturo', '630': 'CB Intercam',
-    '631': 'CI Bolsa', '634': 'Fincomún', '638': 'Nu México', '646': 'STP',
-    '659': 'Fondos Únicos', '670': 'Libertad Serv. Fin.', '684': 'Transfer',
-    '722': 'Mercado Pago', '706': 'Arcus', '902': 'Indeval', '903': 'CoDi',
-  };
-
-  const bankCode = clabe.substring(0, 3);
-  const bank = BANK_CODES[bankCode];
-  if (!bank) return { valid: false, error: `Código de banco desconocido: ${bankCode}` };
-
-  // Verify check digit (modulo 10)
-  const weights = [3, 7, 1, 3, 7, 1, 3, 7, 1, 3, 7, 1, 3, 7, 1, 3, 7];
-  let sum = 0;
-  for (let i = 0; i < 17; i++) {
-    sum += (parseInt(clabe[i]) * weights[i]) % 10;
-  }
-  const checkDigit = (10 - (sum % 10)) % 10;
-  if (checkDigit !== parseInt(clabe[17])) {
-    return { valid: false, error: `Dígito verificador inválido (esperado: ${checkDigit})` };
-  }
-
-  return { valid: true, bank };
-}
-
 // ─── REPMotorPanel ────────────────────────────────────────────────────────────
 function REPMotorPanel() {
   const [invoices, setInvoices] = React.useState<PPDInvoice[]>(REPMotorService.getInvoices());
@@ -13748,6 +13676,18 @@ function ContabilidadView({ invoices }: { invoices: Invoice[] }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─── FiscalAuditDashboard ─────────────────────────────────────────────────────
+// Aviso visual para paneles que todavía corren sobre servicios simulados en
+// memoria (no persisten en el backend). Ver docs/auditoria-modulos.md para el
+// detalle de qué está conectado a la API real y qué sigue en modo demo.
+function DemoModeNotice({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2.5 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[10px] font-bold uppercase tracking-widest text-amber-700">
+      <Info size={13} className="flex-shrink-0" />
+      {label} — datos simulados, no persisten en el backend
+    </div>
+  );
+}
+
 function FiscalAuditDashboard() {
   const [ledger, setLedger] = React.useState<FiscalAuditEvent[]>(DualLoggerService.getLedger());
   const [trails, setTrails] = React.useState<Record<string, FiscalAuditEvent[]>>(DualLoggerService.getTrails());
@@ -13943,18 +13883,26 @@ function FiscalAuditDashboard() {
 
       {/* Data Table or New Panel */}
       {activeSection === 'rep_motor' ? (
-        <div className="space-y-6"><RepRegistrationPanel /><REPMotorPanel /></div>
+        <div className="space-y-6">
+          <RepRegistrationPanel />
+          <DemoModeNotice label="Vista previa · Motor de riesgo REP" />
+          <REPMotorPanel />
+        </div>
       ) : activeSection === 'pagos_globales' ? (
-        <PagosGlobalesPanel />
+        <div className="space-y-4">
+          <DemoModeNotice label="Vista previa · Pagos Globales" />
+          <PagosGlobalesPanel />
+        </div>
       ) : activeSection === 'diot' ? (
         <DiotCompilerPanel />
       ) : activeSection === 'factoraje' ? (
         <FactorajeCorporativoPanel />
       ) : activeSection === 'erp' ? (
-        <ConectividadERPPanel />
-      ) : (
-        <ConectividadERPPanel />
-      )}
+        <div className="space-y-4">
+          <DemoModeNotice label="Vista previa · Conectividad ERP (el conector real está en Stub, ver Configuración → ERP)" />
+          <ConectividadERPPanel />
+        </div>
+      ) : null}
     </div>
   );
 }
