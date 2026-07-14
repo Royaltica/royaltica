@@ -5,7 +5,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://REEMPLAZAR-CON-TU-BACKEND.up.railway.app/:path*"
+      "destination": "https://royaltica-production.up.railway.app/:path*"
     }
   ],
   "headers": [
