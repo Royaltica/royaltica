@@ -115,17 +115,19 @@ export class AiService implements OnModuleInit {
       throw new ForbiddenException('Tu cuenta no pertenece a una organización.');
     }
     try {
-      await this.prisma.aiFeedback.create({
-        data: {
-          organizationId,
-          userId: user.id,
-          rating: dto.rating,
-          question: dto.question,
-          answer: dto.answer,
-          comment: dto.comment ?? null,
-          toolsUsed: dto.toolsUsed ?? [],
-        },
-      });
+      await this.prisma.withOrg(organizationId, (tx) =>
+        tx.aiFeedback.create({
+          data: {
+            organizationId,
+            userId: user.id,
+            rating: dto.rating,
+            question: dto.question,
+            answer: dto.answer,
+            comment: dto.comment ?? null,
+            toolsUsed: dto.toolsUsed ?? [],
+          },
+        }),
+      );
     } catch (err) {
       this.logger.warn(
         `No se pudo guardar el feedback: ${err instanceof Error ? err.message : String(err)}`,

@@ -42,15 +42,17 @@ export class WebhooksService {
     const organizationId = this.requireOrg(user);
     const secret = `whsec_${randomBytes(24).toString('hex')}`;
 
-    const endpoint = await this.prisma.webhookEndpoint.create({
-      data: {
-        organizationId,
-        url: dto.url,
-        events: dto.events ?? [],
-        description: dto.description,
-        secret,
-      },
-    });
+    const endpoint = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.webhookEndpoint.create({
+        data: {
+          organizationId,
+          url: dto.url,
+          events: dto.events ?? [],
+          description: dto.description,
+          secret,
+        },
+      }),
+    );
 
     // El secreto completo se entrega solo aquí; después solo queda la pista.
     return { ...serialize(endpoint), secret };
@@ -58,31 +60,39 @@ export class WebhooksService {
 
   async list(user: AuthenticatedUser) {
     const organizationId = this.requireOrg(user);
-    const rows = await this.prisma.webhookEndpoint.findMany({
-      where: { organizationId },
-      orderBy: { createdAt: 'desc' },
-    });
+    const rows = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.webhookEndpoint.findMany({
+        where: { organizationId },
+        orderBy: { createdAt: 'desc' },
+      }),
+    );
     return rows.map(serialize);
   }
 
   async remove(user: AuthenticatedUser, id: string) {
     const organizationId = this.requireOrg(user);
-    const endpoint = await this.prisma.webhookEndpoint.findFirst({
-      where: { id, organizationId },
-      select: { id: true },
+    await this.prisma.withOrg(organizationId, async (tx) => {
+      const endpoint = await tx.webhookEndpoint.findFirst({
+        where: { id, organizationId },
+        select: { id: true },
+      });
+      if (!endpoint) throw new NotFoundException('Webhook no encontrado.');
+      await tx.webhookEndpoint.delete({ where: { id } });
     });
-    if (!endpoint) throw new NotFoundException('Webhook no encontrado.');
-    await this.prisma.webhookEndpoint.delete({ where: { id } });
     return { deleted: true, id };
   }
 
   async deliveries(user: AuthenticatedUser, endpointId: string) {
     const organizationId = this.requireOrg(user);
-    const endpoint = await this.prisma.webhookEndpoint.findFirst({
-      where: { id: endpointId, organizationId },
-      select: { id: true },
-    });
+    const endpoint = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.webhookEndpoint.findFirst({
+        where: { id: endpointId, organizationId },
+        select: { id: true },
+      }),
+    );
     if (!endpoint) throw new NotFoundException('Webhook no encontrado.');
+    // WebhookDelivery no tiene RLS (no está en la lista de la migración);
+    // el acceso ya quedó acotado por el check de endpoint de arriba.
     return this.prisma.webhookDelivery.findMany({
       where: { endpointId },
       orderBy: { createdAt: 'desc' },
@@ -102,14 +112,16 @@ export class WebhooksService {
   ): Promise<void> {
     let endpoints;
     try {
-      endpoints = await this.prisma.webhookEndpoint.findMany({
-        where: {
-          organizationId,
-          isActive: true,
-          // events vacío = todos; si no, debe incluir el evento.
-          OR: [{ events: { isEmpty: true } }, { events: { has: event } }],
-        },
-      });
+      endpoints = await this.prisma.withOrg(organizationId, (tx) =>
+        tx.webhookEndpoint.findMany({
+          where: {
+            organizationId,
+            isActive: true,
+            // events vacío = todos; si no, debe incluir el evento.
+            OR: [{ events: { isEmpty: true } }, { events: { has: event } }],
+          },
+        }),
+      );
     } catch (err) {
       this.logger.warn(
         `No se pudieron consultar webhooks para ${event}: ${

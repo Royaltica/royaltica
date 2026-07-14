@@ -52,14 +52,11 @@ export class InvoicesService {
   async create(user: AuthenticatedUser, dto: CreateInvoiceDto) {
     const organizationId = this.requireOrg(user);
 
-    const supplier = await this.prisma.supplier.findFirst({
-      where: { id: dto.supplierId, organizationId, deletedAt: null },
-      select: { id: true },
-    });
-    if (!supplier) {
-      throw new NotFoundException('Proveedor no encontrado.');
-    }
-
+    // Chequeo GLOBAL a propósito (fuera de withOrg): cfdiUuid es @unique en
+    // toda la tabla, no por organización, así que este check de duplicado
+    // debe ver TODAS las organizaciones o daría falsos negativos ante un
+    // choque entre orgs distintas (el INSERT igual lo bloquearía el
+    // constraint de Postgres, pero con un error feo en vez de este mensaje).
     const dupe = await this.prisma.invoice.findUnique({
       where: { cfdiUuid: dto.cfdiUuid },
       select: { id: true },
@@ -72,38 +69,48 @@ export class InvoicesService {
     const iva = this.assertMoney(dto.iva, 'iva');
     const total = this.assertMoney(dto.total, 'total');
 
-    const invoice = await this.prisma.invoice.create({
-      data: {
-        organizationId,
-        supplierId: dto.supplierId,
-        cfdiUuid: dto.cfdiUuid,
-        rfcEmisor: dto.rfcEmisor.toUpperCase(),
-        rfcReceptor: dto.rfcReceptor.toUpperCase(),
-        subtotal,
-        iva,
-        total,
-        date: new Date(dto.date),
-        dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-        folio: dto.folio,
-        paymentRoute: dto.paymentRoute,
-        paymentType: dto.paymentType,
-        poNumber: dto.poNumber,
-        description: dto.description,
-        cfdiXmlUrl: dto.cfdiXmlUrl,
-        pdfUrl: dto.pdfUrl,
-      },
-    });
+    return this.prisma.withOrg(organizationId, async (tx) => {
+      const supplier = await tx.supplier.findFirst({
+        where: { id: dto.supplierId, organizationId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!supplier) {
+        throw new NotFoundException('Proveedor no encontrado.');
+      }
 
-    await this.prisma.invoiceAuditLog.create({
-      data: {
-        invoiceId: invoice.id,
-        userId: user.id,
-        action: 'CREATE',
-        newStatus: invoice.status,
-      },
-    });
+      const invoice = await tx.invoice.create({
+        data: {
+          organizationId,
+          supplierId: dto.supplierId,
+          cfdiUuid: dto.cfdiUuid,
+          rfcEmisor: dto.rfcEmisor.toUpperCase(),
+          rfcReceptor: dto.rfcReceptor.toUpperCase(),
+          subtotal,
+          iva,
+          total,
+          date: new Date(dto.date),
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+          folio: dto.folio,
+          paymentRoute: dto.paymentRoute,
+          paymentType: dto.paymentType,
+          poNumber: dto.poNumber,
+          description: dto.description,
+          cfdiXmlUrl: dto.cfdiXmlUrl,
+          pdfUrl: dto.pdfUrl,
+        },
+      });
 
-    return serialize(invoice);
+      await tx.invoiceAuditLog.create({
+        data: {
+          invoiceId: invoice.id,
+          userId: user.id,
+          action: 'CREATE',
+          newStatus: invoice.status,
+        },
+      });
+
+      return serialize(invoice);
+    });
   }
 
   async findAll(
@@ -133,32 +140,38 @@ export class InvoicesService {
         : {}),
     };
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.invoice.findMany({
-        where,
-        orderBy: { date: 'desc' },
-        skip: query.skip,
-        take: query.limit,
-        include: { supplier: { select: { id: true, name: true, rfc: true } } },
-      }),
-      this.prisma.invoice.count({ where }),
-    ]);
+    const { rows, total } = await this.prisma.withOrg(
+      organizationId,
+      async (tx) => {
+        const rows = await tx.invoice.findMany({
+          where,
+          orderBy: { date: 'desc' },
+          skip: query.skip,
+          take: query.limit,
+          include: { supplier: { select: { id: true, name: true, rfc: true } } },
+        });
+        const total = await tx.invoice.count({ where });
+        return { rows, total };
+      },
+    );
 
     return buildPaginated(rows.map(serialize), total, query.page, query.limit);
   }
 
   async findOne(user: AuthenticatedUser, id: string) {
     const organizationId = this.requireOrg(user);
-    const invoice = await this.prisma.invoice.findFirst({
-      where: { id, organizationId, deletedAt: null },
-      include: {
-        supplier: { select: { id: true, name: true, rfc: true } },
-        auditLogs: {
-          orderBy: { createdAt: 'desc' },
-          include: { user: { select: { id: true, name: true } } },
+    const invoice = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.invoice.findFirst({
+        where: { id, organizationId, deletedAt: null },
+        include: {
+          supplier: { select: { id: true, name: true, rfc: true } },
+          auditLogs: {
+            orderBy: { createdAt: 'desc' },
+            include: { user: { select: { id: true, name: true } } },
+          },
         },
-      },
-    });
+      }),
+    );
     if (!invoice) throw new NotFoundException('Factura no encontrada.');
     return serialize(invoice);
   }
@@ -169,29 +182,30 @@ export class InvoicesService {
     target: InvoiceStatus,
     reason?: string,
   ) {
-    const invoice = await this.getOwned(user, id);
-    const current = invoice.status;
+    const organizationId = this.requireOrg(user);
+    const updated = await this.prisma.withOrg(organizationId, async (tx) => {
+      const invoice = await this.getOwnedTx(tx, organizationId, id);
+      const current = invoice.status;
 
-    if (!TRANSITIONS[current].includes(target)) {
-      throw new BadRequestException(
-        `Transición inválida: ${current} → ${target}.`,
-      );
-    }
-    if (target === InvoiceStatus.APPROVED) {
-      const required = await this.requiredSignatures(invoice.organizationId);
-      if (invoice.signatures < required) {
-        throw new ConflictException(
-          `Se requieren ${required} firmas para aprobar (actuales: ${invoice.signatures}).`,
+      if (!TRANSITIONS[current].includes(target)) {
+        throw new BadRequestException(
+          `Transición inválida: ${current} → ${target}.`,
         );
       }
-    }
+      if (target === InvoiceStatus.APPROVED) {
+        const required = await this.requiredSignatures(invoice.organizationId);
+        if (invoice.signatures < required) {
+          throw new ConflictException(
+            `Se requieren ${required} firmas para aprobar (actuales: ${invoice.signatures}).`,
+          );
+        }
+      }
 
-    const data: Prisma.InvoiceUpdateInput = { status: target };
-    if (target === InvoiceStatus.PAID) data.paidDate = new Date();
+      const data: Prisma.InvoiceUpdateInput = { status: target };
+      if (target === InvoiceStatus.PAID) data.paidDate = new Date();
 
-    const [updated] = await this.prisma.$transaction([
-      this.prisma.invoice.update({ where: { id }, data }),
-      this.prisma.invoiceAuditLog.create({
+      const updated = await tx.invoice.update({ where: { id }, data });
+      await tx.invoiceAuditLog.create({
         data: {
           invoiceId: id,
           userId: user.id,
@@ -202,42 +216,44 @@ export class InvoicesService {
             ? ({ reason } as Prisma.InputJsonValue)
             : undefined,
         },
-      }),
-    ]);
+      });
+      return updated;
+    });
 
-    await this.emitStatusWebhook(invoice.organizationId, updated, target);
+    await this.emitStatusWebhook(organizationId, updated, target);
     return serialize(updated);
   }
 
   async sign(user: AuthenticatedUser, id: string) {
-    const invoice = await this.getOwned(user, id);
+    const organizationId = this.requireOrg(user);
+    const result = await this.prisma.withOrg(organizationId, async (tx) => {
+      const invoice = await this.getOwnedTx(tx, organizationId, id);
 
-    if (invoice.status !== InvoiceStatus.AUDITED) {
-      throw new ConflictException(
-        'Solo se pueden firmar facturas en estado AUDITED.',
-      );
-    }
+      if (invoice.status !== InvoiceStatus.AUDITED) {
+        throw new ConflictException(
+          'Solo se pueden firmar facturas en estado AUDITED.',
+        );
+      }
 
-    // Cada usuario firma una sola vez (2 firmas = 2 usuarios distintos).
-    const alreadySigned = await this.prisma.invoiceAuditLog.findFirst({
-      where: { invoiceId: id, userId: user.id, action: 'SIGN' },
-      select: { id: true },
-    });
-    if (alreadySigned) {
-      throw new ConflictException('Ya firmaste esta factura.');
-    }
+      // Cada usuario firma una sola vez (2 firmas = 2 usuarios distintos).
+      const alreadySigned = await tx.invoiceAuditLog.findFirst({
+        where: { invoiceId: id, userId: user.id, action: 'SIGN' },
+        select: { id: true },
+      });
+      if (alreadySigned) {
+        throw new ConflictException('Ya firmaste esta factura.');
+      }
 
-    const required = await this.requiredSignatures(invoice.organizationId);
-    const signatures = invoice.signatures + 1;
-    const promote = signatures >= required;
-    const newStatus = promote ? InvoiceStatus.APPROVED : invoice.status;
+      const required = await this.requiredSignatures(invoice.organizationId);
+      const signatures = invoice.signatures + 1;
+      const promote = signatures >= required;
+      const newStatus = promote ? InvoiceStatus.APPROVED : invoice.status;
 
-    const [updated] = await this.prisma.$transaction([
-      this.prisma.invoice.update({
+      const updated = await tx.invoice.update({
         where: { id },
         data: { signatures, status: newStatus },
-      }),
-      this.prisma.invoiceAuditLog.create({
+      });
+      await tx.invoiceAuditLog.create({
         data: {
           invoiceId: id,
           userId: user.id,
@@ -246,12 +262,15 @@ export class InvoicesService {
           newStatus,
           metadata: { signatureNumber: signatures } as Prisma.InputJsonValue,
         },
-      }),
-    ]);
+      });
 
+      return { updated, required, promote };
+    });
+
+    const { updated, required, promote } = result;
     if (promote) {
       await this.emitStatusWebhook(
-        invoice.organizationId,
+        organizationId,
         updated,
         InvoiceStatus.APPROVED,
       );
@@ -270,53 +289,57 @@ export class InvoicesService {
    * el UUID y marca `repStatus = RECEIVED` para cerrar el recordatorio.
    */
   async registerRep(user: AuthenticatedUser, id: string, repUuid: string) {
-    const invoice = await this.getOwned(user, id);
+    const organizationId = this.requireOrg(user);
+    return this.prisma.withOrg(organizationId, async (tx) => {
+      const invoice = await this.getOwnedTx(tx, organizationId, id);
 
-    if (invoice.paymentType !== 'PPD') {
-      throw new BadRequestException(
-        'El REP solo aplica a facturas con método de pago PPD.',
-      );
-    }
-    if (invoice.status !== InvoiceStatus.PAID) {
-      throw new ConflictException(
-        'Solo se registra el REP de facturas ya pagadas.',
-      );
-    }
-    if (invoice.repStatus === 'RECEIVED') {
-      throw new ConflictException('Esta factura ya tiene un REP registrado.');
-    }
+      if (invoice.paymentType !== 'PPD') {
+        throw new BadRequestException(
+          'El REP solo aplica a facturas con método de pago PPD.',
+        );
+      }
+      if (invoice.status !== InvoiceStatus.PAID) {
+        throw new ConflictException(
+          'Solo se registra el REP de facturas ya pagadas.',
+        );
+      }
+      if (invoice.repStatus === 'RECEIVED') {
+        throw new ConflictException('Esta factura ya tiene un REP registrado.');
+      }
 
-    const [updated] = await this.prisma.$transaction([
-      this.prisma.invoice.update({
+      const updated = await tx.invoice.update({
         where: { id },
         data: {
           repUuid: repUuid.toUpperCase(),
           repStatus: 'RECEIVED',
           repReceivedAt: new Date(),
         },
-      }),
-      this.prisma.invoiceAuditLog.create({
+      });
+      await tx.invoiceAuditLog.create({
         data: {
           invoiceId: id,
           userId: user.id,
           action: 'REP_REGISTERED',
           metadata: { repUuid } as Prisma.InputJsonValue,
         },
-      }),
-    ]);
-    return serialize(updated);
+      });
+      return serialize(updated);
+    });
   }
 
   async remove(user: AuthenticatedUser, id: string) {
-    const invoice = await this.getOwned(user, id);
-    if (invoice.status !== InvoiceStatus.PENDING) {
-      throw new ConflictException(
-        'Solo se pueden eliminar facturas en estado PENDING.',
-      );
-    }
-    await this.prisma.invoice.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+    const organizationId = this.requireOrg(user);
+    await this.prisma.withOrg(organizationId, async (tx) => {
+      const invoice = await this.getOwnedTx(tx, organizationId, id);
+      if (invoice.status !== InvoiceStatus.PENDING) {
+        throw new ConflictException(
+          'Solo se pueden eliminar facturas en estado PENDING.',
+        );
+      }
+      await tx.invoice.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
     });
     return { deleted: true, id };
   }
@@ -354,10 +377,11 @@ export class InvoicesService {
     for (const entry of entries) {
       try {
         const parsed = parseCfdiXml(entry.xml);
-        const result = await this.persistParsed(
-          organizationId,
-          user.id,
-          parsed,
+        // Transacción por archivo (no una sola para todo el ZIP): así un
+        // error en un XML no aborta la transacción y arruina el resto de
+        // los archivos que sí son válidos.
+        const result = await this.prisma.withOrg(organizationId, (tx) =>
+          this.persistParsed(tx, organizationId, user.id, parsed),
         );
         if (result.skipped) {
           skipped.push({ file: entry.name, reason: result.reason });
@@ -383,11 +407,13 @@ export class InvoicesService {
   /** Exporta las facturas de la organización a CSV. */
   async exportCsv(user: AuthenticatedUser): Promise<string> {
     const organizationId = this.requireOrg(user);
-    const rows = await this.prisma.invoice.findMany({
-      where: { organizationId, deletedAt: null },
-      orderBy: { date: 'desc' },
-      include: { supplier: { select: { name: true, rfc: true } } },
-    });
+    const rows = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.invoice.findMany({
+        where: { organizationId, deletedAt: null },
+        orderBy: { date: 'desc' },
+        include: { supplier: { select: { name: true, rfc: true } } },
+      }),
+    );
 
     return toCsv(rows, [
       { header: 'UUID', value: (i) => i.cfdiUuid },
@@ -414,6 +440,7 @@ export class InvoicesService {
    * ni por proveedor faltante: devuelve un resultado para el resumen masivo.
    */
   private async persistParsed(
+    tx: Prisma.TransactionClient,
     organizationId: string,
     userId: string,
     parsed: ParsedCfdi,
@@ -421,6 +448,8 @@ export class InvoicesService {
     | { skipped: true; reason: string; invoiceId?: undefined }
     | { skipped: false; reason?: undefined; invoiceId: string }
   > {
+    // Chequeo GLOBAL a propósito, ver comentario en create(): cfdiUuid es
+    // único en toda la tabla, no por organización.
     const dupe = await this.prisma.invoice.findUnique({
       where: { cfdiUuid: parsed.cfdiUuid },
       select: { id: true },
@@ -429,7 +458,7 @@ export class InvoicesService {
       return { skipped: true, reason: 'UUID ya registrado.' };
     }
 
-    const supplier = await this.prisma.supplier.findFirst({
+    const supplier = await tx.supplier.findFirst({
       where: { organizationId, rfc: parsed.rfcEmisor, deletedAt: null },
       select: { id: true },
     });
@@ -440,7 +469,7 @@ export class InvoicesService {
       };
     }
 
-    const invoice = await this.prisma.invoice.create({
+    const invoice = await tx.invoice.create({
       data: {
         organizationId,
         supplierId: supplier.id,
@@ -457,7 +486,7 @@ export class InvoicesService {
       },
     });
 
-    await this.prisma.invoiceAuditLog.create({
+    await tx.invoiceAuditLog.create({
       data: {
         invoiceId: invoice.id,
         userId,
@@ -492,12 +521,12 @@ export class InvoicesService {
     });
   }
 
-  private async getOwned(
-    user: AuthenticatedUser,
+  private async getOwnedTx(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
     id: string,
   ): Promise<Invoice> {
-    const organizationId = this.requireOrg(user);
-    const invoice = await this.prisma.invoice.findFirst({
+    const invoice = await tx.invoice.findFirst({
       where: { id, organizationId, deletedAt: null },
     });
     if (!invoice) throw new NotFoundException('Factura no encontrada.');

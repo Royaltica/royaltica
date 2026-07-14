@@ -38,16 +38,20 @@ export class ActivityController {
       ...(query.dateFrom || query.dateTo ? { createdAt: dateFilter } : {}),
     };
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.activityLog.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: query.skip,
-        take: query.limit,
-        include: { user: { select: { id: true, name: true, email: true } } },
-      }),
-      this.prisma.activityLog.count({ where }),
-    ]);
+    const { rows, total } = await this.prisma.withOrg(
+      user.organizationId,
+      async (tx) => {
+        const rows = await tx.activityLog.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip: query.skip,
+          take: query.limit,
+          include: { user: { select: { id: true, name: true, email: true } } },
+        });
+        const total = await tx.activityLog.count({ where });
+        return { rows, total };
+      },
+    );
 
     return buildPaginated(rows, total, query.page, query.limit);
   }

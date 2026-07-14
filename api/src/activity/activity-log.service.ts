@@ -24,17 +24,24 @@ export class ActivityLogService {
 
   async record(entry: ActivityRecord): Promise<void> {
     try {
-      await this.prisma.activityLog.create({
-        data: {
-          organizationId: entry.organizationId ?? null,
-          userId: entry.userId ?? null,
-          action: entry.action,
-          entityType: entry.entityType,
-          entityId: entry.entityId,
-          metadata: (entry.metadata ?? {}) as Prisma.InputJsonValue,
-          ipAddress: entry.ipAddress,
-        },
-      });
+      const data = {
+        organizationId: entry.organizationId ?? null,
+        userId: entry.userId ?? null,
+        action: entry.action,
+        entityType: entry.entityType,
+        entityId: entry.entityId,
+        metadata: (entry.metadata ?? {}) as Prisma.InputJsonValue,
+        ipAddress: entry.ipAddress,
+      };
+      // Eventos de plataforma (SUPERADMIN, sin organización) no tienen
+      // organizationId: no hay org para la que abrir un contexto de RLS.
+      if (entry.organizationId) {
+        await this.prisma.withOrg(entry.organizationId, (tx) =>
+          tx.activityLog.create({ data }),
+        );
+      } else {
+        await this.prisma.activityLog.create({ data });
+      }
     } catch (err) {
       this.logger.warn(
         `No se pudo registrar actividad (${entry.action}): ${

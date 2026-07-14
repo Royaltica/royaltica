@@ -52,16 +52,18 @@ export class UsageService {
         outputTokens: input.outputTokens,
       });
 
-      await this.prisma.usageEvent.create({
-        data: {
-          organizationId: input.organizationId,
-          feature: input.feature,
-          units,
-          estimatedCostMxn,
-          metadata: (input.metadata ??
-            undefined) as Prisma.InputJsonValue | undefined,
-        },
-      });
+      await this.prisma.withOrg(input.organizationId, (tx) =>
+        tx.usageEvent.create({
+          data: {
+            organizationId: input.organizationId,
+            feature: input.feature,
+            units,
+            estimatedCostMxn,
+            metadata: (input.metadata ??
+              undefined) as Prisma.InputJsonValue | undefined,
+          },
+        }),
+      );
     } catch (err) {
       this.logger.warn(
         `No se pudo registrar UsageEvent (${input.feature}): ${
@@ -71,7 +73,11 @@ export class UsageService {
     }
   }
 
-  /** Costo y volumen totales agrupados por organización en un período. */
+  /**
+   * Costo y volumen totales agrupados por organización en un período.
+   * A PROPÓSITO sin withOrg(): es un reporte SUPERADMIN cross-organización
+   * (panel de costos de la plataforma completa), no debe acotarse a una sola.
+   */
   async costByOrganization(period: UsagePeriod = {}) {
     const where = this.periodWhere(period);
     const grouped = await this.prisma.usageEvent.groupBy({
@@ -100,15 +106,17 @@ export class UsageService {
       .sort((a, b) => b.estimatedCostMxn - a.estimatedCostMxn);
   }
 
-  /** Desglose por feature para una organización específica. */
+  /** Desglose por feature para una organización específica (vista SUPERADMIN de un orgId puntual). */
   async breakdownByFeature(organizationId: string, period: UsagePeriod = {}) {
     const where = { organizationId, ...this.periodWhere(period) };
-    const grouped = await this.prisma.usageEvent.groupBy({
-      by: ['feature'],
-      where,
-      _sum: { estimatedCostMxn: true, units: true },
-      _count: { _all: true },
-    });
+    const grouped = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.usageEvent.groupBy({
+        by: ['feature'],
+        where,
+        _sum: { estimatedCostMxn: true, units: true },
+        _count: { _all: true },
+      }),
+    );
 
     const byFeature = grouped
       .map((g) => ({
@@ -134,6 +142,7 @@ export class UsageService {
   /**
    * Desglose por feature de TODA la plataforma (todas las organizaciones).
    * Sirve para visualizar el gasto global por servicio (Gemini, correos, etc.).
+   * A PROPÓSITO sin withOrg(): cross-organización, ver nota en costByOrganization().
    */
   async globalBreakdownByFeature(period: UsagePeriod = {}) {
     const where = this.periodWhere(period);

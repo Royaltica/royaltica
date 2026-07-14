@@ -30,6 +30,7 @@ describe('PaymentsService', () => {
       update: jest.Mock;
     };
     $transaction: jest.Mock;
+    withOrg: jest.Mock;
   };
   let notifications: { create: jest.Mock; notifyOrgAdmins: jest.Mock };
   let activity: { record: jest.Mock };
@@ -47,7 +48,13 @@ describe('PaymentsService', () => {
       $transaction: jest.fn((ops: unknown) =>
         Array.isArray(ops) ? Promise.all(ops) : ops,
       ),
+      withOrg: jest.fn(),
     };
+    // withOrg simula la transacción con RLS corriendo el callback con el
+    // mismo objeto prisma mockeado como `tx`.
+    prisma.withOrg.mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) =>
+      fn(prisma),
+    );
     notifications = {
       create: jest.fn().mockResolvedValue({}),
       notifyOrgAdmins: jest.fn().mockResolvedValue(0),

@@ -11,6 +11,7 @@ describe('AiToolsService (aislamiento multi-tenant)', () => {
     supplierDocument: { count: jest.Mock };
     payment: { findMany: jest.Mock };
     factorajeRequest: { findMany: jest.Mock; groupBy: jest.Mock };
+    withOrg: jest.Mock;
   };
 
   const ORG = 'org-1';
@@ -33,7 +34,13 @@ describe('AiToolsService (aislamiento multi-tenant)', () => {
         findMany: jest.fn().mockResolvedValue([]),
         groupBy: jest.fn().mockResolvedValue([]),
       },
+      withOrg: jest.fn(),
     };
+    // withOrg simula la transacción con RLS corriendo el callback con el
+    // mismo objeto prisma mockeado como `tx`.
+    prisma.withOrg.mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) =>
+      fn(prisma),
+    );
     dashboard = { getFinancialRatios: jest.fn().mockResolvedValue({}) };
     service = new AiToolsService(
       prisma as unknown as PrismaService,

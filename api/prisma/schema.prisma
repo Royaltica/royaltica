@@ -2,7 +2,12 @@
 // Plataforma B2B fintech: orquestación de pagos y auditoría fiscal.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // "native" solo no basta en node:20-alpine: Prisma no detecta bien el
+  // OpenSSL del contenedor y genera el engine para libssl 1.1, que ya no
+  // existe en Alpine reciente (trae OpenSSL 3). Se agrega explícito el
+  // target correcto para que el binario coincida con el runtime real.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {

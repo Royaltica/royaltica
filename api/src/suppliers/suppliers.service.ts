@@ -35,31 +35,33 @@ export class SuppliersService {
     const organizationId = this.requireOrg(admin);
     const rfc = dto.rfc.toUpperCase();
 
-    const exists = await this.prisma.supplier.findFirst({
-      where: { organizationId, rfc, deletedAt: null },
-      select: { id: true },
-    });
-    if (exists) {
-      throw new ConflictException('Ya existe un proveedor con ese RFC.');
-    }
+    return this.prisma.withOrg(organizationId, async (tx) => {
+      const exists = await tx.supplier.findFirst({
+        where: { organizationId, rfc, deletedAt: null },
+        select: { id: true },
+      });
+      if (exists) {
+        throw new ConflictException('Ya existe un proveedor con ese RFC.');
+      }
 
-    const supplier = await this.prisma.supplier.create({
-      data: {
-        organizationId,
-        name: dto.name,
-        rfc,
-        legalName: dto.legalName,
-        contact: dto.contact,
-        email: dto.email,
-        category: dto.category,
-        activity: dto.activity,
-        seniorityYears: dto.seniorityYears ?? 0,
-        capitalAmount: dto.capitalAmount ?? 0,
-        clabeInterbancaria: dto.clabeInterbancaria,
-        bankName: dto.bankName,
-      },
+      const supplier = await tx.supplier.create({
+        data: {
+          organizationId,
+          name: dto.name,
+          rfc,
+          legalName: dto.legalName,
+          contact: dto.contact,
+          email: dto.email,
+          category: dto.category,
+          activity: dto.activity,
+          seniorityYears: dto.seniorityYears ?? 0,
+          capitalAmount: dto.capitalAmount ?? 0,
+          clabeInterbancaria: dto.clabeInterbancaria,
+          bankName: dto.bankName,
+        },
+      });
+      return serialize(supplier);
     });
-    return serialize(supplier);
   }
 
   async findAll(
@@ -86,29 +88,33 @@ export class SuppliersService {
         : {}),
     };
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.supplier.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: query.skip,
-        take: query.limit,
-        include: {
-          _count: { select: { documents: true, invoices: true } },
-          documents: {
-            where: { deletedAt: null },
-            orderBy: { uploadedAt: 'desc' },
-            select: {
-              id: true,
-              type: true,
-              status: true,
-              fileName: true,
-              expiresAt: true,
+    const { rows, total } = await this.prisma.withOrg(
+      organizationId,
+      async (tx) => {
+        const rows = await tx.supplier.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip: query.skip,
+          take: query.limit,
+          include: {
+            _count: { select: { documents: true, invoices: true } },
+            documents: {
+              where: { deletedAt: null },
+              orderBy: { uploadedAt: 'desc' },
+              select: {
+                id: true,
+                type: true,
+                status: true,
+                fileName: true,
+                expiresAt: true,
+              },
             },
           },
-        },
-      }),
-      this.prisma.supplier.count({ where }),
-    ]);
+        });
+        const total = await tx.supplier.count({ where });
+        return { rows, total };
+      },
+    );
 
     const data = rows.map((r) => ({
       ...serialize(r),
@@ -120,37 +126,45 @@ export class SuppliersService {
 
   async findOne(admin: AuthenticatedUser, id: string) {
     const organizationId = this.requireOrg(admin);
-    const supplier = await this.prisma.supplier.findFirst({
-      where: { id, organizationId, deletedAt: null },
-      include: {
-        documents: {
-          where: { deletedAt: null },
-          orderBy: { uploadedAt: 'desc' },
+    const supplier = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.supplier.findFirst({
+        where: { id, organizationId, deletedAt: null },
+        include: {
+          documents: {
+            where: { deletedAt: null },
+            orderBy: { uploadedAt: 'desc' },
+          },
         },
-      },
-    });
+      }),
+    );
     if (!supplier) throw new NotFoundException('Proveedor no encontrado.');
     return serialize(supplier);
   }
 
   async update(admin: AuthenticatedUser, id: string, dto: UpdateSupplierDto) {
-    await this.ensureExists(admin, id);
+    const organizationId = this.requireOrg(admin);
     const data: Prisma.SupplierUpdateInput = { ...dto };
     if (dto.rfc) data.rfc = dto.rfc.toUpperCase();
 
-    const updated = await this.prisma.supplier.update({ where: { id }, data });
-    return serialize(updated);
+    return this.prisma.withOrg(organizationId, async (tx) => {
+      await this.ensureExists(tx, organizationId, id);
+      const updated = await tx.supplier.update({ where: { id }, data });
+      return serialize(updated);
+    });
   }
 
   async approve(admin: AuthenticatedUser, id: string, isApproved: boolean) {
-    await this.ensureExists(admin, id);
-    const updated = await this.prisma.supplier.update({
-      where: { id },
-      data: { isApproved },
+    const organizationId = this.requireOrg(admin);
+    const updated = await this.prisma.withOrg(organizationId, async (tx) => {
+      await this.ensureExists(tx, organizationId, id);
+      return tx.supplier.update({
+        where: { id },
+        data: { isApproved },
+      });
     });
-    if (isApproved && admin.organizationId) {
+    if (isApproved) {
       await this.webhooks.dispatch(
-        admin.organizationId,
+        organizationId,
         WEBHOOK_EVENTS.SUPPLIER_APPROVED,
         { supplierId: updated.id, name: updated.name, rfc: updated.rfc },
       );
@@ -159,10 +173,13 @@ export class SuppliersService {
   }
 
   async remove(admin: AuthenticatedUser, id: string) {
-    await this.ensureExists(admin, id);
-    await this.prisma.supplier.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+    const organizationId = this.requireOrg(admin);
+    await this.prisma.withOrg(organizationId, async (tx) => {
+      await this.ensureExists(tx, organizationId, id);
+      await tx.supplier.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
     });
     return { deleted: true, id };
   }
@@ -170,11 +187,13 @@ export class SuppliersService {
   /** Exporta el padrón de proveedores de la organización a CSV. */
   async exportCsv(admin: AuthenticatedUser): Promise<string> {
     const organizationId = this.requireOrg(admin);
-    const rows = await this.prisma.supplier.findMany({
-      where: { organizationId, deletedAt: null },
-      orderBy: { name: 'asc' },
-      include: { _count: { select: { invoices: true } } },
-    });
+    const rows = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.supplier.findMany({
+        where: { organizationId, deletedAt: null },
+        orderBy: { name: 'asc' },
+        include: { _count: { select: { invoices: true } } },
+      }),
+    );
 
     return toCsv(rows, [
       { header: 'Nombre', value: (s) => s.name },
@@ -202,11 +221,11 @@ export class SuppliersService {
   }
 
   private async ensureExists(
-    admin: AuthenticatedUser,
+    tx: Prisma.TransactionClient,
+    organizationId: string,
     id: string,
   ): Promise<void> {
-    const organizationId = this.requireOrg(admin);
-    const found = await this.prisma.supplier.findFirst({
+    const found = await tx.supplier.findFirst({
       where: { id, organizationId, deletedAt: null },
       select: { id: true },
     });

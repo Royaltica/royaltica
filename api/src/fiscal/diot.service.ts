@@ -44,36 +44,39 @@ export class DiotService {
   async generate(user: AuthenticatedUser, period: string) {
     const organizationId = this.requireOrg(user);
 
-    const existing = await this.prisma.diotDeclaration.findUnique({
-      where: { organizationId_period: { organizationId, period } },
-    });
-    if (existing?.submittedAt) {
-      throw new ConflictException(
-        'La DIOT de este período ya fue presentada y no puede regenerarse.',
-      );
-    }
+    const declaration = await this.prisma.withOrg(organizationId, async (tx) => {
+      const existing = await tx.diotDeclaration.findUnique({
+        where: { organizationId_period: { organizationId, period } },
+      });
+      if (existing?.submittedAt) {
+        throw new ConflictException(
+          'La DIOT de este período ya fue presentada y no puede regenerarse.',
+        );
+      }
 
-    const { entries, totalOps, totalIva } = await this.computeEntries(
-      organizationId,
-      period,
-    );
-
-    const declaration = await this.prisma.diotDeclaration.upsert({
-      where: { organizationId_period: { organizationId, period } },
-      create: {
+      const { entries, totalOps, totalIva } = await this.computeEntries(
+        tx,
         organizationId,
         period,
-        entries: entries as unknown as Prisma.InputJsonValue,
-        totalOps,
-        totalIva,
-        createdByUserId: user.id,
-      },
-      update: {
-        entries: entries as unknown as Prisma.InputJsonValue,
-        totalOps,
-        totalIva,
-        generatedAt: new Date(),
-      },
+      );
+
+      return tx.diotDeclaration.upsert({
+        where: { organizationId_period: { organizationId, period } },
+        create: {
+          organizationId,
+          period,
+          entries: entries as unknown as Prisma.InputJsonValue,
+          totalOps,
+          totalIva,
+          createdByUserId: user.id,
+        },
+        update: {
+          entries: entries as unknown as Prisma.InputJsonValue,
+          totalOps,
+          totalIva,
+          generatedAt: new Date(),
+        },
+      });
     });
 
     await this.activity.record({
@@ -82,7 +85,7 @@ export class DiotService {
       action: 'DIOT_GENERATED',
       entityType: 'DiotDeclaration',
       entityId: declaration.id,
-      metadata: { period, totalOps },
+      metadata: { period, totalOps: declaration.totalOps },
     });
 
     return serialize(declaration);
@@ -92,27 +95,37 @@ export class DiotService {
     const organizationId = this.requireOrg(user);
     const where: Prisma.DiotDeclarationWhereInput = { organizationId };
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.diotDeclaration.findMany({
-        where,
-        orderBy: { period: 'desc' },
-        skip: query.skip,
-        take: query.limit,
-      }),
-      this.prisma.diotDeclaration.count({ where }),
-    ]);
+    const { rows, total } = await this.prisma.withOrg(
+      organizationId,
+      async (tx) => {
+        const rows = await tx.diotDeclaration.findMany({
+          where,
+          orderBy: { period: 'desc' },
+          skip: query.skip,
+          take: query.limit,
+        });
+        const total = await tx.diotDeclaration.count({ where });
+        return { rows, total };
+      },
+    );
 
     return buildPaginated(rows.map(serialize), total, query.page, query.limit);
   }
 
   async findOne(user: AuthenticatedUser, id: string) {
-    const declaration = await this.getOwned(user, id);
+    const organizationId = this.requireOrg(user);
+    const declaration = await this.prisma.withOrg(organizationId, (tx) =>
+      this.getOwnedTx(tx, organizationId, id),
+    );
     return serialize(declaration);
   }
 
   /** Recalcula la DIOT desde las facturas actuales (antes de presentar). */
   async update(user: AuthenticatedUser, id: string) {
-    const declaration = await this.getOwned(user, id);
+    const organizationId = this.requireOrg(user);
+    const declaration = await this.prisma.withOrg(organizationId, (tx) =>
+      this.getOwnedTx(tx, organizationId, id),
+    );
     if (declaration.submittedAt) {
       throw new ConflictException(
         'No se puede modificar una DIOT ya presentada.',
@@ -123,23 +136,25 @@ export class DiotService {
 
   /** Marca la DIOT como presentada (acción única e irreversible). */
   async submit(user: AuthenticatedUser, id: string) {
-    const declaration = await this.getOwned(user, id);
-    if (declaration.submittedAt) {
-      throw new ConflictException('La DIOT ya fue presentada.');
-    }
-
-    const updated = await this.prisma.diotDeclaration.update({
-      where: { id },
-      data: { submittedAt: new Date() },
+    const organizationId = this.requireOrg(user);
+    const updated = await this.prisma.withOrg(organizationId, async (tx) => {
+      const declaration = await this.getOwnedTx(tx, organizationId, id);
+      if (declaration.submittedAt) {
+        throw new ConflictException('La DIOT ya fue presentada.');
+      }
+      return tx.diotDeclaration.update({
+        where: { id },
+        data: { submittedAt: new Date() },
+      });
     });
 
     await this.activity.record({
-      organizationId: declaration.organizationId,
+      organizationId,
       userId: user.id,
       action: 'DIOT_SUBMITTED',
       entityType: 'DiotDeclaration',
       entityId: id,
-      metadata: { period: declaration.period },
+      metadata: { period: updated.period },
     });
 
     return serialize(updated);
@@ -147,10 +162,14 @@ export class DiotService {
 
   // ── helpers ───────────────────────────────────────────────
 
-  private async computeEntries(organizationId: string, period: string) {
+  private async computeEntries(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    period: string,
+  ) {
     const { start, end } = periodRange(period);
 
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await tx.invoice.findMany({
       where: {
         organizationId,
         deletedAt: null,
@@ -194,12 +213,12 @@ export class DiotService {
     return { entries, totalOps, totalIva };
   }
 
-  private async getOwned(
-    user: AuthenticatedUser,
+  private async getOwnedTx(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
     id: string,
   ): Promise<DiotDeclaration> {
-    const organizationId = this.requireOrg(user);
-    const declaration = await this.prisma.diotDeclaration.findFirst({
+    const declaration = await tx.diotDeclaration.findFirst({
       where: { id, organizationId },
     });
     if (!declaration) throw new NotFoundException('Declaración no encontrada.');

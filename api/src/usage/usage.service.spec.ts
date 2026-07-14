@@ -26,10 +26,18 @@ describe('usage.pricing', () => {
 
 describe('UsageService', () => {
   let service: UsageService;
-  let prisma: { usageEvent: { create: jest.Mock } };
+  let prisma: { usageEvent: { create: jest.Mock }; withOrg: jest.Mock };
 
   beforeEach(() => {
-    prisma = { usageEvent: { create: jest.fn().mockResolvedValue({}) } };
+    prisma = {
+      usageEvent: { create: jest.fn().mockResolvedValue({}) },
+      withOrg: jest.fn(),
+    };
+    // withOrg simula la transacción con RLS corriendo el callback con el
+    // mismo objeto prisma mockeado como `tx`.
+    prisma.withOrg.mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) =>
+      fn(prisma),
+    );
     service = new UsageService(prisma as unknown as PrismaService);
   });
 

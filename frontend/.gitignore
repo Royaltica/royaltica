@@ -9,3 +9,4 @@ coverage/
 *.log
 *.zip
 .claude/
+.vercel

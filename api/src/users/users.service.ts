@@ -43,11 +43,13 @@ export class UsersService {
   /** Lista el equipo corporativo de la organización del admin. */
   async list(admin: AuthenticatedUser) {
     const organizationId = this.requireOrg(admin);
-    return this.prisma.user.findMany({
-      where: { organizationId, role: { in: TEAM_ROLES } },
-      select: USER_SELECT,
-      orderBy: { createdAt: 'asc' },
-    });
+    return this.prisma.withOrg(organizationId, (tx) =>
+      tx.user.findMany({
+        where: { organizationId, role: { in: TEAM_ROLES } },
+        select: USER_SELECT,
+        orderBy: { createdAt: 'asc' },
+      }),
+    );
   }
 
   /**
@@ -60,6 +62,9 @@ export class UsersService {
     const email = dto.email.toLowerCase();
     const role: UserRole = dto.role ?? 'CORPORATE_USER';
 
+    // Chequeo GLOBAL a propósito (fuera de withOrg): email es @unique en toda
+    // la tabla User, no por organización (un mismo correo no puede repetirse
+    // entre organizaciones distintas).
     const existing = await this.prisma.user.findUnique({ where: { email } });
     if (existing) {
       throw new ConflictException('Ya existe un usuario con ese email.');
@@ -76,20 +81,22 @@ export class UsersService {
     const fbUser = await this.firebase.createOrGetUser(email, dto.name);
     const inviteLink = await this.firebase.generateInviteLink(email);
 
-    const user = await this.prisma.user.create({
-      data: {
-        firebaseUid: fbUser.uid,
-        organizationId,
-        email,
-        name: dto.name,
-        role,
-        permissions,
-        status: 'INVITED',
-        isActive: true,
-        invitedById: admin.id,
-      },
-      select: USER_SELECT,
-    });
+    const user = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.user.create({
+        data: {
+          firebaseUid: fbUser.uid,
+          organizationId,
+          email,
+          name: dto.name,
+          role,
+          permissions,
+          status: 'INVITED',
+          isActive: true,
+          invitedById: admin.id,
+        },
+        select: USER_SELECT,
+      }),
+    );
 
     this.logger.log(`Usuario invitado: ${email} (rol ${role}).`);
 
@@ -122,11 +129,14 @@ export class UsersService {
       data.permissions = dto.permissions;
     }
 
-    return this.prisma.user.update({
-      where: { id: target.id },
-      data,
-      select: USER_SELECT,
-    });
+    const organizationId = this.requireOrg(admin);
+    return this.prisma.withOrg(organizationId, (tx) =>
+      tx.user.update({
+        where: { id: target.id },
+        data,
+        select: USER_SELECT,
+      }),
+    );
   }
 
   /** Activa o desactiva el acceso de un usuario (sin borrarlo). */
@@ -146,11 +156,14 @@ export class UsersService {
       await this.firebase.setUserDisabled(target.firebaseUid, !isActive);
     }
 
-    return this.prisma.user.update({
-      where: { id: target.id },
-      data: { isActive, status: isActive ? 'ACTIVE' : 'DISABLED' },
-      select: USER_SELECT,
-    });
+    const organizationId = this.requireOrg(admin);
+    return this.prisma.withOrg(organizationId, (tx) =>
+      tx.user.update({
+        where: { id: target.id },
+        data: { isActive, status: isActive ? 'ACTIVE' : 'DISABLED' },
+        select: USER_SELECT,
+      }),
+    );
   }
 
   /** Elimina un usuario del equipo (DB + Firebase). */
@@ -165,7 +178,10 @@ export class UsersService {
     if (this.firebase.isConfigured) {
       await this.firebase.deleteUser(target.firebaseUid);
     }
-    await this.prisma.user.delete({ where: { id: target.id } });
+    const organizationId = this.requireOrg(admin);
+    await this.prisma.withOrg(organizationId, (tx) =>
+      tx.user.delete({ where: { id: target.id } }),
+    );
     return { deleted: true, id: target.id };
   }
 
@@ -205,13 +221,20 @@ export class UsersService {
     return admin.organizationId;
   }
 
-  /** Garantiza que el usuario objetivo existe y es del mismo org. */
+  /**
+   * Garantiza que el usuario objetivo existe y es del mismo org. Con RLS
+   * activa, buscar por id ya viene acotado a la org del admin (un id de otra
+   * organización simplemente no aparece); el check manual de abajo queda
+   * como defensa adicional para el caso `user == null`.
+   */
   private async findInOrg(
     admin: AuthenticatedUser,
     id: string,
   ): Promise<User> {
     const organizationId = this.requireOrg(admin);
-    const user = await this.prisma.user.findUnique({ where: { id } });
+    const user = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.user.findUnique({ where: { id } }),
+    );
     if (!user || user.organizationId !== organizationId) {
       throw new NotFoundException('Usuario no encontrado.');
     }
@@ -221,13 +244,18 @@ export class UsersService {
   /** Evita dejar a la organización sin ningún administrador activo. */
   private async assertNotLastAdmin(target: User): Promise<void> {
     if (target.role !== 'CORPORATE_ADMIN') return;
-    const activeAdmins = await this.prisma.user.count({
-      where: {
-        organizationId: target.organizationId,
-        role: 'CORPORATE_ADMIN',
-        isActive: true,
-      },
-    });
+    if (!target.organizationId) return;
+    const activeAdmins = await this.prisma.withOrg(
+      target.organizationId,
+      (tx) =>
+        tx.user.count({
+          where: {
+            organizationId: target.organizationId,
+            role: 'CORPORATE_ADMIN',
+            isActive: true,
+          },
+        }),
+    );
     if (activeAdmins <= 1) {
       throw new BadRequestException(
         'No puedes dejar a la organización sin administradores activos.',
