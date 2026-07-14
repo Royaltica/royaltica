@@ -53,56 +53,58 @@ export class PaymentsService {
   async create(user: AuthenticatedUser, dto: CreatePaymentDto) {
     const organizationId = this.requireOrg(user);
 
-    const invoices = await this.prisma.invoice.findMany({
-      where: {
-        id: { in: dto.invoiceIds },
-        organizationId,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        total: true,
-        status: true,
-        supplierId: true,
-        payments: { where: { status: { not: PaymentStatus.FAILED } }, select: { id: true } },
-      },
-    });
+    const payment = await this.prisma.withOrg(organizationId, async (tx) => {
+      const invoices = await tx.invoice.findMany({
+        where: {
+          id: { in: dto.invoiceIds },
+          organizationId,
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          total: true,
+          status: true,
+          supplierId: true,
+          payments: { where: { status: { not: PaymentStatus.FAILED } }, select: { id: true } },
+        },
+      });
 
-    if (invoices.length !== dto.invoiceIds.length) {
-      throw new NotFoundException(
-        'Una o más facturas no existen o no pertenecen a tu organización.',
+      if (invoices.length !== dto.invoiceIds.length) {
+        throw new NotFoundException(
+          'Una o más facturas no existen o no pertenecen a tu organización.',
+        );
+      }
+
+      const notApproved = invoices.filter(
+        (i) => i.status !== InvoiceStatus.APPROVED,
       );
-    }
+      if (notApproved.length > 0) {
+        throw new ConflictException(
+          'Solo se pueden pagar facturas en estado APPROVED.',
+        );
+      }
 
-    const notApproved = invoices.filter(
-      (i) => i.status !== InvoiceStatus.APPROVED,
-    );
-    if (notApproved.length > 0) {
-      throw new ConflictException(
-        'Solo se pueden pagar facturas en estado APPROVED.',
-      );
-    }
+      const alreadyLinked = invoices.filter((i) => i.payments.length > 0);
+      if (alreadyLinked.length > 0) {
+        throw new ConflictException(
+          'Una o más facturas ya están incluidas en otro pago activo.',
+        );
+      }
 
-    const alreadyLinked = invoices.filter((i) => i.payments.length > 0);
-    if (alreadyLinked.length > 0) {
-      throw new ConflictException(
-        'Una o más facturas ya están incluidas en otro pago activo.',
-      );
-    }
+      const totalAmount = invoices.reduce((sum, i) => sum + Number(i.total), 0);
 
-    const totalAmount = invoices.reduce((sum, i) => sum + Number(i.total), 0);
-
-    const payment = await this.prisma.payment.create({
-      data: {
-        organizationId,
-        totalAmount,
-        route: dto.route,
-        scheduledDate: dto.scheduledDate ? new Date(dto.scheduledDate) : null,
-        notes: dto.notes,
-        createdByUserId: user.id,
-        invoices: { connect: dto.invoiceIds.map((id) => ({ id })) },
-      },
-      include: this.detailInclude(),
+      return tx.payment.create({
+        data: {
+          organizationId,
+          totalAmount,
+          route: dto.route,
+          scheduledDate: dto.scheduledDate ? new Date(dto.scheduledDate) : null,
+          notes: dto.notes,
+          createdByUserId: user.id,
+          invoices: { connect: dto.invoiceIds.map((id) => ({ id })) },
+        },
+        include: this.detailInclude(),
+      });
     });
 
     await this.activity.record({
@@ -111,7 +113,7 @@ export class PaymentsService {
       action: 'PAYMENT_CREATED',
       entityType: 'Payment',
       entityId: payment.id,
-      metadata: { totalAmount, invoices: dto.invoiceIds.length },
+      metadata: { totalAmount: Number(payment.totalAmount), invoices: dto.invoiceIds.length },
     });
 
     return serialize(payment);
@@ -134,16 +136,20 @@ export class PaymentsService {
       ...(query.dateFrom || query.dateTo ? { createdAt: dateFilter } : {}),
     };
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.payment.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: query.skip,
-        take: query.limit,
-        include: { _count: { select: { invoices: true } } },
-      }),
-      this.prisma.payment.count({ where }),
-    ]);
+    const { rows, total } = await this.prisma.withOrg(
+      organizationId,
+      async (tx) => {
+        const rows = await tx.payment.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip: query.skip,
+          take: query.limit,
+          include: { _count: { select: { invoices: true } } },
+        });
+        const total = await tx.payment.count({ where });
+        return { rows, total };
+      },
+    );
 
     return buildPaginated(
       rows.map((p) => ({ ...serialize(p), invoiceCount: p._count.invoices })),
@@ -155,10 +161,12 @@ export class PaymentsService {
 
   async findOne(user: AuthenticatedUser, id: string) {
     const organizationId = this.requireOrg(user);
-    const payment = await this.prisma.payment.findFirst({
-      where: { id, organizationId },
-      include: this.detailInclude(),
-    });
+    const payment = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.payment.findFirst({
+        where: { id, organizationId },
+        include: this.detailInclude(),
+      }),
+    );
     if (!payment) throw new NotFoundException('Pago no encontrado.');
     return serialize(payment);
   }
@@ -171,10 +179,12 @@ export class PaymentsService {
     reason?: string,
   ) {
     const organizationId = this.requireOrg(user);
-    const payment = await this.prisma.payment.findFirst({
-      where: { id, organizationId },
-      include: { invoices: { select: { id: true, paymentType: true } } },
-    });
+    const payment = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.payment.findFirst({
+        where: { id, organizationId },
+        include: { invoices: { select: { id: true, paymentType: true } } },
+      }),
+    );
     if (!payment) throw new NotFoundException('Pago no encontrado.');
 
     if (!TRANSITIONS[payment.status].includes(target)) {
@@ -189,38 +199,32 @@ export class PaymentsService {
 
     // Al completar el pago: las facturas pasan a PAID y, si son PPD, queda
     // pendiente el REP que debe emitir el cliente (PUE no requiere REP).
-    const ops: Prisma.PrismaPromise<unknown>[] = [
-      this.prisma.payment.update({ where: { id }, data }),
-    ];
+    await this.prisma.withOrg(organizationId, async (tx) => {
+      await tx.payment.update({ where: { id }, data });
 
-    if (target === PaymentStatus.COMPLETED) {
-      const paidDate = new Date();
-      const ppdIds = payment.invoices
-        .filter((i) => i.paymentType === PaymentType.PPD)
-        .map((i) => i.id);
-      const nonPpdIds = payment.invoices
-        .filter((i) => i.paymentType !== PaymentType.PPD)
-        .map((i) => i.id);
+      if (target === PaymentStatus.COMPLETED) {
+        const paidDate = new Date();
+        const ppdIds = payment.invoices
+          .filter((i) => i.paymentType === PaymentType.PPD)
+          .map((i) => i.id);
+        const nonPpdIds = payment.invoices
+          .filter((i) => i.paymentType !== PaymentType.PPD)
+          .map((i) => i.id);
 
-      if (ppdIds.length > 0) {
-        ops.push(
-          this.prisma.invoice.updateMany({
+        if (ppdIds.length > 0) {
+          await tx.invoice.updateMany({
             where: { id: { in: ppdIds } },
             data: { status: InvoiceStatus.PAID, paidDate, repStatus: 'PENDING' },
-          }),
-        );
-      }
-      if (nonPpdIds.length > 0) {
-        ops.push(
-          this.prisma.invoice.updateMany({
+          });
+        }
+        if (nonPpdIds.length > 0) {
+          await tx.invoice.updateMany({
             where: { id: { in: nonPpdIds } },
             data: { status: InvoiceStatus.PAID, paidDate, repStatus: 'NA' },
-          }),
-        );
+          });
+        }
       }
-    }
-
-    await this.prisma.$transaction(ops);
+    });
 
     await this.activity.record({
       organizationId,
@@ -272,11 +276,13 @@ export class PaymentsService {
 
   async exportCsv(user: AuthenticatedUser): Promise<string> {
     const organizationId = this.requireOrg(user);
-    const rows = await this.prisma.payment.findMany({
-      where: { organizationId },
-      orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { invoices: true } } },
-    });
+    const rows = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.payment.findMany({
+        where: { organizationId },
+        orderBy: { createdAt: 'desc' },
+        include: { _count: { select: { invoices: true } } },
+      }),
+    );
 
     return toCsv(rows, [
       { header: 'ID', value: (p) => p.id },

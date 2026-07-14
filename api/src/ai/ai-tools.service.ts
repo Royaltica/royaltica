@@ -53,33 +53,39 @@ export class AiToolsService {
     args: ToolArgs,
     organizationId: string,
   ): Promise<Record<string, unknown>> {
-    switch (name) {
-      case 'get_dashboard_overview':
-        return this.dashboardOverview(organizationId);
-      case 'get_aging_report':
-        return this.agingReport(organizationId);
-      case 'get_invoices':
-        return this.invoices(organizationId, args);
-      case 'get_suppliers':
-        return this.suppliers(organizationId, args);
-      case 'get_supplier_detail':
-        return this.supplierDetail(organizationId, args);
-      case 'get_payments':
-        return this.payments(organizationId, args);
-      case 'get_factoraje_requests':
-        return this.factorajeRequests(organizationId, args);
-      case 'get_financial_ratios':
-        return this.financialRatios(organizationId);
-      case 'get_audit_summary':
-        return this.auditSummary(organizationId);
-      case 'get_financial_statements':
-        return this.financialStatements(organizationId, args);
-      case 'get_activity_log':
-        return this.activityLog(organizationId, args);
-      default:
-        this.logger.warn(`Herramienta desconocida solicitada: ${name}`);
-        return { error: `Herramienta no soportada: ${name}` };
-    }
+    // Una sola transacción con RLS activa para toda la herramienta: `tx`
+    // baja a cada método privado en vez de usar this.prisma directo, así
+    // Postgres refuerza el aislamiento por organización aunque alguna
+    // consulta abajo olvide el filtro manual.
+    return this.prisma.withOrg(organizationId, async (tx) => {
+      switch (name) {
+        case 'get_dashboard_overview':
+          return this.dashboardOverview(tx, organizationId);
+        case 'get_aging_report':
+          return this.agingReport(tx, organizationId);
+        case 'get_invoices':
+          return this.invoices(tx, organizationId, args);
+        case 'get_suppliers':
+          return this.suppliers(tx, organizationId, args);
+        case 'get_supplier_detail':
+          return this.supplierDetail(tx, organizationId, args);
+        case 'get_payments':
+          return this.payments(tx, organizationId, args);
+        case 'get_factoraje_requests':
+          return this.factorajeRequests(tx, organizationId, args);
+        case 'get_financial_ratios':
+          return this.financialRatios(organizationId);
+        case 'get_audit_summary':
+          return this.auditSummary(tx, organizationId);
+        case 'get_financial_statements':
+          return this.financialStatements(tx, organizationId, args);
+        case 'get_activity_log':
+          return this.activityLog(tx, organizationId, args);
+        default:
+          this.logger.warn(`Herramienta desconocida solicitada: ${name}`);
+          return { error: `Herramienta no soportada: ${name}` };
+      }
+    });
   }
 
   /**
@@ -100,20 +106,20 @@ export class AiToolsService {
    * las facturas de mayor riesgo, y el cumplimiento de complementos de pago
    * (REP): cuántas facturas PPD están pendientes de complemento.
    */
-  private async auditSummary(organizationId: string) {
+  private async auditSummary(tx: Prisma.TransactionClient, organizationId: string) {
     const [forensic, repGroups, topRisk] = await Promise.all([
-      this.prisma.invoice.groupBy({
+      tx.invoice.groupBy({
         by: ['forensicStatus'],
         where: { organizationId, deletedAt: null },
         _count: { _all: true },
         _sum: { total: true },
       }),
-      this.prisma.invoice.groupBy({
+      tx.invoice.groupBy({
         by: ['repStatus'],
         where: { organizationId, deletedAt: null },
         _count: { _all: true },
       }),
-      this.prisma.invoice.findMany({
+      tx.invoice.findMany({
         where: {
           organizationId,
           deletedAt: null,
@@ -176,8 +182,12 @@ export class AiToolsService {
    * Pestaña HISTORIAL → Estados Financieros: lista los estados de resultados
    * generados por período (ingresos, costos, opex, utilidad neta).
    */
-  private async financialStatements(organizationId: string, args: ToolArgs) {
-    const rows = await this.prisma.financialStatement.findMany({
+  private async financialStatements(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    args: ToolArgs,
+  ) {
+    const rows = await tx.financialStatement.findMany({
       where: { organizationId },
       take: clampLimit(args.limit, 12),
       orderBy: { period: 'desc' },
@@ -210,8 +220,12 @@ export class AiToolsService {
    * Pestaña HISTORIAL → bitácora de actividad: eventos recientes de la
    * organización (acción, entidad afectada, usuario, fecha).
    */
-  private async activityLog(organizationId: string, args: ToolArgs) {
-    const rows = await this.prisma.activityLog.findMany({
+  private async activityLog(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    args: ToolArgs,
+  ) {
+    const rows = await tx.activityLog.findMany({
       where: { organizationId },
       take: clampLimit(args.limit, 20),
       orderBy: { createdAt: 'desc' },
@@ -233,23 +247,26 @@ export class AiToolsService {
     };
   }
 
-  private async dashboardOverview(organizationId: string) {
+  private async dashboardOverview(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ) {
     const [groups, invoiced, paid, pending, suppliers, approved, factoraje] =
       await Promise.all([
-        this.prisma.invoice.groupBy({
+        tx.invoice.groupBy({
           by: ['status'],
           where: { organizationId, deletedAt: null },
           _count: { _all: true },
         }),
-        this.prisma.invoice.aggregate({
+        tx.invoice.aggregate({
           where: { organizationId, deletedAt: null },
           _sum: { total: true },
         }),
-        this.prisma.invoice.aggregate({
+        tx.invoice.aggregate({
           where: { organizationId, deletedAt: null, status: InvoiceStatus.PAID },
           _sum: { total: true },
         }),
-        this.prisma.invoice.aggregate({
+        tx.invoice.aggregate({
           where: {
             organizationId,
             deletedAt: null,
@@ -263,13 +280,13 @@ export class AiToolsService {
           },
           _sum: { total: true },
         }),
-        this.prisma.supplier.count({
+        tx.supplier.count({
           where: { organizationId, deletedAt: null },
         }),
-        this.prisma.supplier.count({
+        tx.supplier.count({
           where: { organizationId, deletedAt: null, isApproved: true },
         }),
-        this.prisma.factorajeRequest.groupBy({
+        tx.factorajeRequest.groupBy({
           by: ['status'],
           where: { supplier: { organizationId } },
           _count: { _all: true },
@@ -308,9 +325,9 @@ export class AiToolsService {
     };
   }
 
-  private async agingReport(organizationId: string) {
+  private async agingReport(tx: Prisma.TransactionClient, organizationId: string) {
     const now = Date.now();
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = await tx.invoice.findMany({
       where: {
         organizationId,
         deletedAt: null,
@@ -384,7 +401,11 @@ export class AiToolsService {
     };
   }
 
-  private async invoices(organizationId: string, args: ToolArgs) {
+  private async invoices(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    args: ToolArgs,
+  ) {
     const where: Prisma.InvoiceWhereInput = {
       organizationId,
       deletedAt: null,
@@ -395,7 +416,7 @@ export class AiToolsService {
     }
     if (typeof args.supplierId === 'string') where.supplierId = args.supplierId;
 
-    const rows = await this.prisma.invoice.findMany({
+    const rows = await tx.invoice.findMany({
       where,
       take: clampLimit(args.limit),
       orderBy: { date: 'desc' },
@@ -437,7 +458,11 @@ export class AiToolsService {
     };
   }
 
-  private async suppliers(organizationId: string, args: ToolArgs) {
+  private async suppliers(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    args: ToolArgs,
+  ) {
     const where: Prisma.SupplierWhereInput = {
       organizationId,
       deletedAt: null,
@@ -452,7 +477,7 @@ export class AiToolsService {
       ];
     }
 
-    const rows = await this.prisma.supplier.findMany({
+    const rows = await tx.supplier.findMany({
       where,
       take: clampLimit(args.limit),
       orderBy: { name: 'asc' },
@@ -483,13 +508,17 @@ export class AiToolsService {
     };
   }
 
-  private async supplierDetail(organizationId: string, args: ToolArgs) {
+  private async supplierDetail(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    args: ToolArgs,
+  ) {
     if (typeof args.supplierId !== 'string') {
       return { error: 'Falta el parámetro supplierId.' };
     }
     // El filtro por organizationId garantiza que un id de otra organización
     // simplemente no se encuentre (no se filtra información cruzada).
-    const supplier = await this.prisma.supplier.findFirst({
+    const supplier = await tx.supplier.findFirst({
       where: { id: args.supplierId, organizationId, deletedAt: null },
       select: {
         id: true,
@@ -512,16 +541,16 @@ export class AiToolsService {
     }
 
     const [invoiceGroups, docs, factoraje] = await Promise.all([
-      this.prisma.invoice.groupBy({
+      tx.invoice.groupBy({
         by: ['status'],
         where: { supplierId: supplier.id, deletedAt: null },
         _count: { _all: true },
         _sum: { total: true },
       }),
-      this.prisma.supplierDocument.count({
+      tx.supplierDocument.count({
         where: { supplierId: supplier.id, deletedAt: null },
       }),
-      this.prisma.factorajeRequest.groupBy({
+      tx.factorajeRequest.groupBy({
         by: ['status'],
         where: { supplierId: supplier.id },
         _count: { _all: true },
@@ -549,11 +578,15 @@ export class AiToolsService {
     };
   }
 
-  private async payments(organizationId: string, args: ToolArgs) {
+  private async payments(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    args: ToolArgs,
+  ) {
     const where: Prisma.PaymentWhereInput = { organizationId };
     if (isEnumValue(PaymentStatus, args.status)) where.status = args.status;
 
-    const rows = await this.prisma.payment.findMany({
+    const rows = await tx.payment.findMany({
       where,
       take: clampLimit(args.limit),
       orderBy: { createdAt: 'desc' },
@@ -584,13 +617,17 @@ export class AiToolsService {
     };
   }
 
-  private async factorajeRequests(organizationId: string, args: ToolArgs) {
+  private async factorajeRequests(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    args: ToolArgs,
+  ) {
     const where: Prisma.FactorajeRequestWhereInput = {
       supplier: { organizationId },
     };
     if (isEnumValue(FactorajeStatus, args.status)) where.status = args.status;
 
-    const rows = await this.prisma.factorajeRequest.findMany({
+    const rows = await tx.factorajeRequest.findMany({
       where,
       take: clampLimit(args.limit),
       orderBy: { createdAt: 'desc' },

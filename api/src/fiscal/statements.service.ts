@@ -44,78 +44,80 @@ export class StatementsService {
     const { start, end } = periodRange(dto.period);
     const { costRatio } = await this.settings.get(organizationId);
 
-    const invoices = await this.prisma.invoice.findMany({
-      where: {
-        organizationId,
-        deletedAt: null,
-        status: { in: COUNTED_STATUSES },
-        date: { gte: start, lt: end },
-      },
-      select: {
-        subtotal: true,
-        supplier: { select: { id: true, name: true } },
-      },
-    });
+    const statement = await this.prisma.withOrg(organizationId, async (tx) => {
+      const invoices = await tx.invoice.findMany({
+        where: {
+          organizationId,
+          deletedAt: null,
+          status: { in: COUNTED_STATUSES },
+          date: { gte: start, lt: end },
+        },
+        select: {
+          subtotal: true,
+          supplier: { select: { id: true, name: true } },
+        },
+      });
 
-    const totalExpenses = round2(
-      invoices.reduce((a, i) => a + Number(i.subtotal), 0),
-    );
-    const costs = round2(totalExpenses * costRatio);
-    const opex = round2(totalExpenses - costs);
-    const revenue = round2(dto.revenue ?? 0);
-    const netIncome = round2(revenue - costs - opex);
+      const totalExpenses = round2(
+        invoices.reduce((a, i) => a + Number(i.subtotal), 0),
+      );
+      const costs = round2(totalExpenses * costRatio);
+      const opex = round2(totalExpenses - costs);
+      const revenue = round2(dto.revenue ?? 0);
+      const netIncome = round2(revenue - costs - opex);
 
-    // Top proveedores por egreso (para el desglose).
-    const bySupplier = new Map<string, { name: string; amount: number }>();
-    for (const inv of invoices) {
-      const cur = bySupplier.get(inv.supplier.id) ?? {
-        name: inv.supplier.name,
-        amount: 0,
+      // Top proveedores por egreso (para el desglose).
+      const bySupplier = new Map<string, { name: string; amount: number }>();
+      for (const inv of invoices) {
+        const cur = bySupplier.get(inv.supplier.id) ?? {
+          name: inv.supplier.name,
+          amount: 0,
+        };
+        cur.amount += Number(inv.subtotal);
+        bySupplier.set(inv.supplier.id, cur);
+      }
+      const topSuppliers = [...bySupplier.values()]
+        .map((s) => ({ ...s, amount: round2(s.amount) }))
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 10);
+
+      const data = {
+        assumptions: { costRatio },
+        invoiceCount: invoices.length,
+        totalExpenses,
+        grossMargin: revenue > 0 ? round2((revenue - costs) / revenue) : null,
+        netMargin: revenue > 0 ? round2(netIncome / revenue) : null,
+        topSuppliers,
       };
-      cur.amount += Number(inv.subtotal);
-      bySupplier.set(inv.supplier.id, cur);
-    }
-    const topSuppliers = [...bySupplier.values()]
-      .map((s) => ({ ...s, amount: round2(s.amount) }))
-      .sort((a, b) => b.amount - a.amount)
-      .slice(0, 10);
 
-    const data = {
-      assumptions: { costRatio },
-      invoiceCount: invoices.length,
-      totalExpenses,
-      grossMargin: revenue > 0 ? round2((revenue - costs) / revenue) : null,
-      netMargin: revenue > 0 ? round2(netIncome / revenue) : null,
-      topSuppliers,
-    };
-
-    const statement = await this.prisma.financialStatement.upsert({
-      where: {
-        organizationId_period_type: {
+      return tx.financialStatement.upsert({
+        where: {
+          organizationId_period_type: {
+            organizationId,
+            period: dto.period,
+            type: STATEMENT_TYPE,
+          },
+        },
+        create: {
           organizationId,
           period: dto.period,
           type: STATEMENT_TYPE,
+          revenue,
+          costs,
+          opex,
+          netIncome,
+          data: data as unknown as Prisma.InputJsonValue,
+          createdByUserId: user.id,
         },
-      },
-      create: {
-        organizationId,
-        period: dto.period,
-        type: STATEMENT_TYPE,
-        revenue,
-        costs,
-        opex,
-        netIncome,
-        data: data as unknown as Prisma.InputJsonValue,
-        createdByUserId: user.id,
-      },
-      update: {
-        revenue,
-        costs,
-        opex,
-        netIncome,
-        data: data as unknown as Prisma.InputJsonValue,
-        generatedAt: new Date(),
-      },
+        update: {
+          revenue,
+          costs,
+          opex,
+          netIncome,
+          data: data as unknown as Prisma.InputJsonValue,
+          generatedAt: new Date(),
+        },
+      });
     });
 
     await this.activity.record({
@@ -124,7 +126,7 @@ export class StatementsService {
       action: 'STATEMENT_GENERATED',
       entityType: 'FinancialStatement',
       entityId: statement.id,
-      metadata: { period: dto.period, netIncome },
+      metadata: { period: dto.period, netIncome: Number(statement.netIncome) },
     });
 
     return serialize(statement);
@@ -132,21 +134,31 @@ export class StatementsService {
 
   async list(user: AuthenticatedUser) {
     const organizationId = this.requireOrg(user);
-    const rows = await this.prisma.financialStatement.findMany({
-      where: { organizationId },
-      orderBy: { period: 'desc' },
-    });
+    const rows = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.financialStatement.findMany({
+        where: { organizationId },
+        orderBy: { period: 'desc' },
+      }),
+    );
     return rows.map(serialize);
   }
 
   async findOne(user: AuthenticatedUser, id: string) {
-    const statement = await this.getOwned(user, id);
+    const organizationId = this.requireOrg(user);
+    const statement = await this.prisma.withOrg(organizationId, (tx) =>
+      this.getOwnedTx(tx, organizationId, id),
+    );
     return serialize(statement);
   }
 
   /** Devuelve los datos estructurados en filas para exportar (Excel/PDF). */
   async exportData(user: AuthenticatedUser, id: string) {
-    const statement = serialize(await this.getOwned(user, id));
+    const organizationId = this.requireOrg(user);
+    const statement = serialize(
+      await this.prisma.withOrg(organizationId, (tx) =>
+        this.getOwnedTx(tx, organizationId, id),
+      ),
+    );
     const rows = [
       { concepto: 'Ingresos', monto: statement.revenue },
       { concepto: 'Costos', monto: -statement.costs },
@@ -165,12 +177,12 @@ export class StatementsService {
 
   // ── helpers ───────────────────────────────────────────────
 
-  private async getOwned(
-    user: AuthenticatedUser,
+  private async getOwnedTx(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
     id: string,
   ): Promise<FinancialStatement> {
-    const organizationId = this.requireOrg(user);
-    const statement = await this.prisma.financialStatement.findFirst({
+    const statement = await tx.financialStatement.findFirst({
       where: { id, organizationId },
     });
     if (!statement) throw new NotFoundException('Estado financiero no encontrado.');

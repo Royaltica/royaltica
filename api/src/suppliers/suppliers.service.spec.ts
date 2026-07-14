@@ -22,6 +22,7 @@ describe('SuppliersService', () => {
       create: jest.Mock;
       update: jest.Mock;
     };
+    withOrg: jest.Mock;
   };
 
   beforeEach(() => {
@@ -31,7 +32,13 @@ describe('SuppliersService', () => {
         create: jest.fn(),
         update: jest.fn(),
       },
+      withOrg: jest.fn(),
     };
+    // withOrg simula la transacción con RLS: en el mock, simplemente corre
+    // el callback pasándole el mismo objeto prisma mockeado como `tx`.
+    prisma.withOrg.mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) =>
+      fn(prisma),
+    );
     const webhooks = { dispatch: jest.fn().mockResolvedValue(undefined) };
     service = new SuppliersService(
       prisma as unknown as PrismaService,

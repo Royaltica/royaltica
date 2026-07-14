@@ -46,6 +46,7 @@ describe('InvoicesService', () => {
     };
     invoiceAuditLog: { create: jest.Mock; findFirst: jest.Mock };
     $transaction: jest.Mock;
+    withOrg: jest.Mock;
   };
 
   beforeEach(() => {
@@ -59,7 +60,13 @@ describe('InvoicesService', () => {
       },
       invoiceAuditLog: { create: jest.fn(), findFirst: jest.fn() },
       $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+      withOrg: jest.fn(),
     };
+    // withOrg simula la transacción con RLS corriendo el callback con el
+    // mismo objeto prisma mockeado como `tx`.
+    prisma.withOrg.mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) =>
+      fn(prisma),
+    );
     const settings = {
       get: jest.fn().mockResolvedValue({ requiredSignatures: 2 }),
     };

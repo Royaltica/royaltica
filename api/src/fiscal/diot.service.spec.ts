@@ -24,6 +24,7 @@ describe('DiotService', () => {
       update: jest.Mock;
     };
     invoice: { findMany: jest.Mock };
+    withOrg: jest.Mock;
   };
   let activity: { record: jest.Mock };
 
@@ -36,7 +37,13 @@ describe('DiotService', () => {
         update: jest.fn(),
       },
       invoice: { findMany: jest.fn() },
+      withOrg: jest.fn(),
     };
+    // withOrg simula la transacción con RLS corriendo el callback con el
+    // mismo objeto prisma mockeado como `tx`.
+    prisma.withOrg.mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) =>
+      fn(prisma),
+    );
     activity = { record: jest.fn().mockResolvedValue(undefined) };
     service = new DiotService(
       prisma as unknown as PrismaService,
