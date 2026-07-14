@@ -17,6 +17,15 @@ export const envSchema = z.object({
   // Llave dedicada para cifrar secretos TOTP (si falta, se deriva de JWT_SECRET).
   TOTP_ENCRYPTION_KEY: z.string().min(32).optional(),
 
+  // Interruptor EXPLÍCITO para permitir /auth/dev-login en un despliegue con
+  // NODE_ENV=production (p. ej. un ambiente de demo/staging temporal, antes
+  // de tener Firebase configurado). Independiente de NODE_ENV a propósito:
+  // así el resto del comportamiento "producción" (CORS estricto, etc.) no
+  // se ve afectado. Por default queda deshabilitado — hay que prenderlo
+  // a mano y apagarlo cuando ya no se necesite, porque emite un JWT válido
+  // para cualquier usuario existente solo con su email.
+  ALLOW_DEV_LOGIN: z.enum(['true', 'false']).optional().default('false'),
+
   // Infraestructura — obligatorias
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),

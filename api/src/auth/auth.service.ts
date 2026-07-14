@@ -163,17 +163,29 @@ export class AuthService {
 
   /**
    * Login de DESARROLLO: emite un JWT para un usuario existente por email,
-   * sin pasar por Firebase. Deshabilitado en producción. Pensado para probar
-   * el sistema cuando el reloj del entorno bloquea la verificación de Firebase
-   * contra Google, o para desarrollo local sin login real.
+   * sin pasar por Firebase. Deshabilitado en producción salvo que se
+   * active explícitamente con ALLOW_DEV_LOGIN=true (ver env.validation.ts).
+   * Pensado para probar el sistema cuando el reloj del entorno bloquea la
+   * verificación de Firebase contra Google, o para desarrollo local sin
+   * login real, o para un ambiente de demo temporal sin Firebase configurado.
    */
   async devLogin(dto: {
     email?: string;
     supplierId?: string;
   }): Promise<AuthResult> {
-    if (this.config.get('NODE_ENV', { infer: true }) === 'production') {
+    const isProduction =
+      this.config.get('NODE_ENV', { infer: true }) === 'production';
+    const devLoginAllowed =
+      this.config.get('ALLOW_DEV_LOGIN', { infer: true }) === 'true';
+    if (isProduction && !devLoginAllowed) {
       throw new ForbiddenException(
         'El login de desarrollo está deshabilitado en producción.',
+      );
+    }
+    if (isProduction && devLoginAllowed) {
+      this.logger.warn(
+        '[DEV] dev-login habilitado en producción vía ALLOW_DEV_LOGIN=true. ' +
+          'Desactivar en cuanto Firebase esté configurado.',
       );
     }
 
