@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Store configuration and role for Royáltica users.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["corporate", "provider"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role"]
+    },
+    "InvoiceAudit": {
+      "title": "Invoice Audit Log",
+      "description": "Immutable log of AI triple match results.",
+      "type": "object",
+      "properties": {
+        "invoiceId": { "type": "string" },
+        "score": { "type": "number" },
+        "passed": { "type": "boolean" },
+        "checks": { "type": "object" },
+        "analysis": { "type": "string" },
+        "auditorId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Registry of system users."
+    },
+    "/audits/{auditId}": {
+      "schema": "InvoiceAudit",
+      "description": "Immutable audit repository."
+    }
+  }
+}

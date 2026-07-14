@@ -1,0 +1,526 @@
+// Royáltica — Prisma schema
+// Plataforma B2B fintech: orquestación de pagos y auditoría fiscal.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum UserRole {
+  CORPORATE_ADMIN
+  CORPORATE_USER
+  PROVIDER
+  SUPERADMIN
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  DISABLED
+}
+
+enum DocumentType {
+  CONSTANCIA_SF
+  OPINION_32D
+  COMPROBANTE_DOMICILIO
+  ACTA_CONSTITUTIVA
+  IDENTIFICACION
+  PODER_NOTARIAL
+}
+
+enum DocumentStatus {
+  PENDING
+  VALIDATED
+  EXPIRED
+}
+
+enum InvoiceStatus {
+  PENDING
+  AUDITED
+  APPROVED
+  PAID
+  REJECTED
+}
+
+enum PaymentRoute {
+  TRANSFER
+  CHECK
+  CREDIT
+}
+
+enum PaymentType {
+  PPD
+  PUE
+}
+
+enum ForensicStatus {
+  PENDING
+  VALIDATED
+  DISCREPANCY
+  BLOCKED
+}
+
+enum PaymentStatus {
+  SCHEDULED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum FactorajeStatus {
+  PENDING
+  APPROVED
+  DISBURSED
+  REJECTED
+}
+
+// ─────────────────────────────────────────────────────
+// Models
+// ─────────────────────────────────────────────────────
+
+model Organization {
+  id        String    @id @default(uuid())
+  name      String
+  rfc       String    @unique
+  legalName String
+  plan      Plan      @default(FREE)
+  settings  Json      @default("{}")
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  users               User[]
+  suppliers           Supplier[]
+  invoices            Invoice[]
+  payments            Payment[]
+  diotDeclarations    DiotDeclaration[]
+  financialStatements FinancialStatement[]
+  activityLogs        ActivityLog[]
+  webhookEndpoints    WebhookEndpoint[]
+  usageEvents         UsageEvent[]
+
+  @@index([isActive])
+}
+
+model User {
+  id             String     @id @default(uuid())
+  firebaseUid    String     @unique
+  organizationId String?
+  role           UserRole
+  email          String     @unique
+  name           String
+  avatarUrl      String?
+  isActive       Boolean    @default(true)
+  status         UserStatus @default(ACTIVE)
+  // Áreas a las que el usuario tiene acceso (CORPORATE_USER).
+  // CORPORATE_ADMIN ignora esto y ve todo. Ej: ["finanzas","factoraje"]
+  permissions    String[]   @default([])
+  invitedById    String?
+  lastLoginAt    DateTime?
+  supplierId     String?    @unique
+  // Alertas críticas por WhatsApp (opt-in por usuario, ver Prompt 8C).
+  // Solo se envían si optIn=true y hay teléfono; en E.164 (ej. +5215512345678).
+  whatsappPhone  String?
+  whatsappOptIn  Boolean    @default(false)
+  // 2FA TOTP (RFC 6238). El secreto se guarda CIFRADO (AES-256-GCM).
+  totpSecret     String?
+  totpEnabled    Boolean    @default(false)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization        Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  supplier            Supplier?            @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  uploadedDocuments   SupplierDocument[]   @relation("DocUploader")
+  invoiceAuditLogs    InvoiceAuditLog[]
+  createdPayments     Payment[]            @relation("PaymentCreator")
+  diotDeclarations    DiotDeclaration[]    @relation("DiotCreator")
+  financialStatements FinancialStatement[] @relation("StatementCreator")
+  activityLogs        ActivityLog[]
+  notifications       Notification[]
+
+  @@index([organizationId])
+  @@index([role])
+}
+
+model Supplier {
+  id                 String    @id @default(uuid())
+  organizationId     String
+  name               String
+  rfc                String
+  legalName          String
+  contact            String?
+  email              String?
+  category           String?
+  activity           String?
+  seniorityYears     Int       @default(0)
+  isApproved         Boolean   @default(false)
+  capitalAmount      Decimal   @default(0) @db.Decimal(15, 2)
+  clabeInterbancaria String?
+  bankName           String?
+  // Score de confiabilidad 0-100 (KYC + forense + puntualidad + antigüedad).
+  // Calculado por SupplierScoringService; null hasta el primer cálculo.
+  score              Int?
+  scoreUpdatedAt     DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user              User?
+  documents         SupplierDocument[]
+  invoices          Invoice[]
+  factorajeRequests FactorajeRequest[]
+
+  @@unique([organizationId, rfc])
+  @@index([organizationId])
+  @@index([isApproved])
+}
+
+model SupplierDocument {
+  id               String         @id @default(uuid())
+  supplierId       String
+  type             DocumentType
+  fileName         String
+  storageUrl       String
+  status           DocumentStatus @default(PENDING)
+  expiresAt        DateTime?
+  uploadedAt       DateTime       @default(now())
+  uploadedByUserId String?
+  deletedAt        DateTime?
+
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  uploadedBy User?    @relation("DocUploader", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([supplierId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model Invoice {
+  id               String         @id @default(uuid())
+  organizationId   String
+  supplierId       String
+  folio            String?
+  cfdiUuid         String         @unique
+  rfcEmisor        String
+  rfcReceptor      String
+  subtotal         Decimal        @db.Decimal(15, 2)
+  iva              Decimal        @db.Decimal(15, 2)
+  total            Decimal        @db.Decimal(15, 2)
+  currency         String         @default("MXN")
+  exchangeRate     Decimal        @default(1) @db.Decimal(15, 6)
+  date             DateTime
+  dueDate          DateTime?
+  status           InvoiceStatus  @default(PENDING)
+  paymentRoute     PaymentRoute?
+  paymentType      PaymentType?
+  poNumber         String?
+  description      String?
+  satStatus        String?
+  paidDate         DateTime?
+  scheduledPayDate DateTime?
+  // REP (Recibo Electrónico de Pago / complemento de pago).
+  // Royáltica NO timbra: solo rastrea si el cliente ya emitió el REP de
+  // una factura PPD pagada y recuerda emitirlo. repStatus: NA (no aplica,
+  // p. ej. PUE) | PENDING (PPD pagada, falta REP) | RECEIVED (REP registrado).
+  repStatus        String         @default("NA")
+  repUuid          String?
+  repReceivedAt    DateTime?
+  forensicStatus   ForensicStatus @default(PENDING)
+  forensicScore    Int?
+  auditAnalysis    Json?
+  signatures       Int            @default(0)
+  cfdiXmlUrl       String?
+  pdfUrl           String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  deletedAt        DateTime?
+
+  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  supplier          Supplier           @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  auditLogs         InvoiceAuditLog[]
+  factorajeRequests FactorajeRequest[]
+  payments          Payment[]          @relation("PaymentInvoices")
+
+  @@index([organizationId])
+  @@index([supplierId])
+  @@index([status])
+  @@index([forensicStatus])
+  @@index([date])
+  @@index([deletedAt])
+  @@index([repStatus])
+}
+
+model InvoiceAuditLog {
+  id             String   @id @default(uuid())
+  invoiceId      String
+  userId         String?
+  action         String
+  previousStatus String?
+  newStatus      String?
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+  @@index([createdAt])
+}
+
+model Payment {
+  id              String        @id @default(uuid())
+  organizationId  String
+  totalAmount     Decimal       @db.Decimal(15, 2)
+  route           PaymentRoute
+  status          PaymentStatus @default(SCHEDULED)
+  scheduledDate   DateTime?
+  processedAt     DateTime?
+  transactionRef  String?
+  notes           String?
+  createdByUserId String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator      User?        @relation("PaymentCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  invoices     Invoice[]    @relation("PaymentInvoices")
+
+  @@index([organizationId])
+  @@index([status])
+}
+
+model FactorajeRequest {
+  id              String          @id @default(uuid())
+  invoiceId       String
+  supplierId      String
+  requestedAmount Decimal         @db.Decimal(15, 2)
+  fee             Decimal         @db.Decimal(15, 2)
+  netAmount       Decimal         @db.Decimal(15, 2)
+  rate            Decimal         @db.Decimal(15, 2)
+  status          FactorajeStatus @default(PENDING)
+  notes           String?
+  // Referencia y fecha de la dispersión hecha por el proveedor externo de
+  // factoraje (se llena vía el adaptador FactorajeProviderService.disburse).
+  providerRef     String?
+  disbursedAt     DateTime?
+  createdAt       DateTime        @default(now())
+  resolvedAt      DateTime?
+
+  invoice  Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([supplierId])
+  @@index([status])
+}
+
+model DiotDeclaration {
+  id              String    @id @default(uuid())
+  organizationId  String
+  period          String // formato "YYYY-MM"
+  generatedAt     DateTime  @default(now())
+  submittedAt     DateTime?
+  fileUrl         String?
+  totalOps        Int       @default(0)
+  totalIva        Decimal   @default(0) @db.Decimal(15, 2)
+  entries         Json      @default("[]")
+  createdByUserId String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator      User?        @relation("DiotCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, period])
+  @@index([organizationId])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  title     String
+  body      String
+  isRead    Boolean  @default(false)
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+// Estado financiero generado de un período (estado de resultados).
+model FinancialStatement {
+  id              String   @id @default(uuid())
+  organizationId  String
+  period          String // formato "YYYY-MM"
+  type            String   @default("INCOME_STATEMENT")
+  revenue         Decimal  @default(0) @db.Decimal(15, 2)
+  costs           Decimal  @default(0) @db.Decimal(15, 2)
+  opex            Decimal  @default(0) @db.Decimal(15, 2)
+  netIncome       Decimal  @default(0) @db.Decimal(15, 2)
+  // Desglose detallado (por proveedor, por categoría, supuestos usados).
+  data            Json     @default("{}")
+  generatedAt     DateTime @default(now())
+  createdByUserId String?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creator      User?        @relation("StatementCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, period, type])
+  @@index([organizationId])
+}
+
+// Bitácora general de actividad (quién hizo qué). Inmutable.
+model ActivityLog {
+  id             String   @id @default(uuid())
+  organizationId String?
+  userId         String?
+  action         String // ej: USER_INVITED, ORG_SETTINGS_UPDATED, SUPPLIER_APPROVED
+  entityType     String? // ej: User, Organization, Supplier, Invoice
+  entityId       String?
+  metadata       Json     @default("{}")
+  ipAddress      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// Endpoint saliente al que Royáltica notifica eventos (integraciones del
+// cliente: su ERP, Zapier, un middleware propio). El cliente registra la URL
+// y los eventos que quiere recibir; cada entrega se firma con HMAC-SHA256.
+model WebhookEndpoint {
+  id             String   @id @default(uuid())
+  organizationId String
+  url            String
+  // Eventos suscritos, ej: ["invoice.approved","payment.completed"].
+  // Lista vacía = todos los eventos.
+  events         String[] @default([])
+  secret         String // se usa para firmar el payload (X-Royaltica-Signature)
+  isActive       Boolean  @default(true)
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deliveries   WebhookDelivery[]
+
+  @@index([organizationId])
+  @@index([isActive])
+}
+
+// Bitácora de cada intento de entrega de un webhook (para depurar el cliente).
+model WebhookDelivery {
+  id         String   @id @default(uuid())
+  endpointId String
+  event      String
+  payload    Json
+  success    Boolean  @default(false)
+  statusCode Int?
+  error      String?
+  attempts   Int      @default(1)
+  createdAt  DateTime @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId])
+  @@index([event])
+  @@index([createdAt])
+}
+
+// Caché local de la lista 69-B del SAT (EFOS/EDOS). Global, no por org.
+// Un RFC en esta tabla es un contribuyente con operaciones presuntamente
+// inexistentes; facturar con él pone en riesgo la deducción del cliente.
+model Sat69bEntry {
+  id          String    @id @default(uuid())
+  rfc         String    @unique
+  name        String?
+  // Situación: PRESUNTO, DEFINITIVO, DESVIRTUADO, SENTENCIA_FAVORABLE
+  status      String
+  publishedAt DateTime?
+  syncedAt    DateTime  @default(now())
+
+  @@index([rfc])
+  @@index([status])
+}
+
+// Feature que generó un costo operativo. Cada valor mapea a una fuente de
+// costo distinta (ver UsageService/usage.pricing.ts para la tarifa).
+enum UsageFeature {
+  GEMINI_AUDIT // tokens de auditoría forense de facturas
+  GEMINI_CHAT // tokens del asistente IA (/ai/chat)
+  EMAIL_SENT // correos enviados vía Resend
+  GCS_UPLOAD // bytes subidos a Google Cloud Storage
+  SAT_QUERY // consultas al SAT (69-B / verificación CFDI)
+  JOB_RUN // ejecuciones de jobs programados
+  FACTORAJE_API // llamadas a la API del proveedor de factoraje
+}
+
+// Registro de un evento que genera costo operativo, por organización y
+// feature. Alimenta el panel SUPERADMIN de cost tracking. Se escribe de forma
+// fire-and-forget (UsageService.record) para no afectar la latencia del
+// request que lo originó. `units` es genérico (tokens, bytes o conteo según el
+// feature); `estimatedCostMxn` es el costo estimado ya convertido a pesos.
+model UsageEvent {
+  id               String       @id @default(uuid())
+  organizationId   String
+  feature          UsageFeature
+  units            Int          @default(0)
+  estimatedCostMxn Decimal      @default(0) @db.Decimal(12, 6)
+  metadata         Json?
+  createdAt        DateTime     @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([feature])
+  @@index([createdAt])
+  @@index([organizationId, createdAt])
+}
+
+enum AiFeedbackRating {
+  UP
+  DOWN
+}
+
+// Retroalimentación del usuario sobre una respuesta del asistente de IA.
+// Base para mejorar el prompt/herramientas con casos reales (las marcadas
+// DOWN son las que se revisan para afinar). Sin FK: log ligero por org/usuario.
+model AiFeedback {
+  id             String           @id @default(uuid())
+  organizationId String
+  userId         String
+  rating         AiFeedbackRating
+  question       String
+  answer         String
+  comment        String?
+  toolsUsed      String[]
+  createdAt      DateTime         @default(now())
+
+  @@index([organizationId])
+  @@index([rating])
+  @@index([createdAt])
+  @@index([organizationId, rating])
+}

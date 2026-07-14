@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Serif Digits";
+  src: url(https://fonts.gstatic.com/s/dmserifdisplay/v17/-nFnOHM81r4j6k0gjAW3mujVU2B2K_J71djz.woff2) format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0024-0039, U+002C, U+002E, U+0025;
+}
+
+@theme {
+  --color-brand-paper: #F5F5F0;
+  --color-brand-cream: #FFFDF5;
+  --color-brand-bone: #F9F6F0;
+  --color-brand-ink: #1A1A1A;
+  --color-brand-gold: #BFA181;
+  --color-brand-beige: #EAE7DC;
+  --color-brand-sand: #D8D3C4;
+
+  --font-sans: "Aptos", "Aptos Display", "Calibri", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Serif Digits", "Playfair Display", serif;
+}
+
+.scrollbar-custom::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-custom::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-custom::-webkit-scrollbar-thumb {
+  background: rgba(191, 161, 129, 0.4);
+  border-radius: 10px;
+}
+
+.scrollbar-custom::-webkit-scrollbar-thumb:hover {
+  background: rgba(191, 161, 129, 0.6);
+}
+
+.scrollbar-custom {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(191, 161, 129, 0.4) transparent;
+}
+
+@layer base {
+  body {
+    @apply bg-brand-bone text-brand-ink font-sans antialiased;
+  }
+  
+  h1, h2, h3, h4 {
+    @apply font-serif tracking-tight;
+  }
+  .font-serif-italic {
+    @apply font-serif tracking-tight;
+  }
+}
+
+.editorial-card {
+  @apply bg-brand-cream border border-brand-sand shadow-sm rounded-3xl p-8;
+}
+
+.label-caps {
+  @apply text-[10px] uppercase tracking-[0.3em] font-semibold opacity-50;
+}
+
+.btn-primary {
+  @apply px-6 py-3 bg-brand-ink text-brand-paper rounded-full text-xs uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:opacity-50;
+}
+
+.btn-secondary {
+  @apply px-6 py-3 border border-brand-ink/10 rounded-full text-xs uppercase tracking-widest hover:border-brand-ink transition-all active:scale-95;
+}
+
+.audit-badge {
+  @apply px-3 py-1 rounded-full text-[9px] uppercase tracking-widest font-bold;
+}
+
+.glass-pill {
+  @apply bg-white/40 border border-white/60 px-4 py-2 rounded-full;
+}
+
+@keyframes fadeInTip {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}

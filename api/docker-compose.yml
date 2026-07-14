@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: royaltica-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: royaltica
+      POSTGRES_PASSWORD: royaltica
+      POSTGRES_DB: royaltica
+    ports:
+      - "5432:5432"
+    volumes:
+      - royaltica_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U royaltica -d royaltica"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: royaltica-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - royaltica_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  royaltica_pgdata:
+  royaltica_redisdata:

@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Primitives
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // 1. User Profiles
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) 
+        && incoming().email == request.auth.token.email
+        && incoming().role in ['corporate', 'provider']
+        && incoming().keys().hasAll(['email', 'role', 'createdAt'])
+        && incoming().keys().size() <= 6;
+      allow update: if isOwner(userId)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'role'])
+        && incoming().role in ['corporate', 'provider'];
+    }
+
+    // 2. Immutable Audits
+    match /audits/{auditId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); // In a real app, filter by org
+      allow create: if isSignedIn()
+        && isValidId(auditId)
+        && incoming().auditorId == request.auth.uid
+        && incoming().timestamp == request.time
+        && incoming().analysis.size() <= 5000
+        && incoming().keys().hasAll(['invoiceId', 'score', 'passed', 'timestamp', 'auditorId']);
+      // UPDATE and DELETE are strictly forbidden for audits
+      allow update, delete: if false;
+    }
+  }
+}
