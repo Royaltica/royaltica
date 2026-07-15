@@ -61,6 +61,29 @@ DATABASE_URL="<misma url pública>" npm run seed
 
 Esto borra y recrea los datos de demo (1 organización, 3 usuarios, 5 proveedores, 20 facturas) — no correrlo contra una base con datos reales de un cliente.
 
+### Rol de BD restringido (`royaltica_app`)
+
+Por default `DATABASE_URL` en producción usa el mismo rol owner que `DATABASE_ADMIN_URL` (ver `docs/SECURITY.md`). Para pasar al rol de mínimo privilegio:
+
+```bash
+cd api
+# 1. Genera una password fuerte:
+openssl rand -base64 24
+# Edita CAMBIA_ESTA_PASSWORD en prisma/create-restricted-role.sql con ese valor.
+
+# 2. Corre el script contra la URL pública de Postgres (Settings → Networking):
+psql "<url pública>" -f prisma/create-restricted-role.sql
+
+# 3. Apunta DATABASE_URL (NO DATABASE_ADMIN_URL) al nuevo rol en Railway:
+railway variables --set "DATABASE_URL=postgresql://royaltica_app:<password>@<host>:<port>/<db>?sslmode=require"
+
+# 4. Redeploy y verifica /health — si algo truena, DATABASE_ADMIN_URL sigue
+#    intacto con el rol owner para investigar sin bloquear producción.
+railway up
+```
+
+`DATABASE_ADMIN_URL` se queda con el rol owner original — lo sigue necesitando `prisma migrate deploy`. Solo `DATABASE_URL` (el que usa el runtime del backend en cada request) cambia al rol restringido.
+
 ### Redeploy
 
 ```bash
