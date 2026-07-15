@@ -7777,6 +7777,8 @@ function DashboardView({
         const unreadMsgs = SupplierMessageService.getUnreadMessages();
         if (unreadMsgs.length === 0) return null;
         return (
+          <div className="space-y-3">
+          <DemoModeNotice label="Vista previa · Mensajes de Proveedores" />
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
             className="bg-white/60 backdrop-blur-md rounded-[2.5rem] border border-brand-gold/20 shadow-sm overflow-hidden">
             <div className="px-8 py-5 flex items-center justify-between border-b border-brand-sand/20">
@@ -7826,6 +7828,7 @@ function DashboardView({
               </div>
             )}
           </motion.div>
+          </div>
         );
       })()}
 
