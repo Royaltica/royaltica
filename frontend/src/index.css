@@ -11,13 +11,14 @@
 }
 
 @theme {
-  --color-brand-paper: #F5F5F0;
-  --color-brand-cream: #FFFDF5;
-  --color-brand-bone: #F9F6F0;
-  --color-brand-ink: #1A1A1A;
-  --color-brand-gold: #BFA181;
-  --color-brand-beige: #EAE7DC;
-  --color-brand-sand: #D8D3C4;
+  /* Paleta de marca: Grafito + Cian. */
+  --color-brand-paper: #FFFFFF;
+  --color-brand-cream: #F0FDFF;
+  --color-brand-bone: #F9FAFB;
+  --color-brand-ink: #111827;
+  --color-brand-gold: #06B6D4;
+  --color-brand-beige: #E5E7EB;
+  --color-brand-sand: #E5E7EB;
 
   --font-sans: "Aptos", "Aptos Display", "Calibri", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Serif Digits", "Playfair Display", serif;
@@ -27,8 +28,8 @@
    inyectaba el editor de tema en Configuración → Diseño, ya eliminado). */
 :root {
   --brand-ink-text: #FFFFFF;
-  --brand-gold-text: #1A1A1A;
-  --brand-bone-text: #1A1A1A;
+  --brand-gold-text: #111827;
+  --brand-bone-text: #111827;
 }
 
 .scrollbar-custom::-webkit-scrollbar {
