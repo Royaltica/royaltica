@@ -4,6 +4,12 @@
 
 Royáltica actúa como una capa de eficiencia entre el corporativo, sus proveedores y el ERP existente. Automatiza el cumplimiento fiscal (REP, DIOT, 69-B), orquesta el flujo de aprobación de facturas y expone un portal de visibilidad para proveedores — sin reemplazar el ERP del cliente.
 
+| | |
+|---|---|
+| **Frontend en producción** | https://royaltica.vercel.app |
+| **Backend en producción** | https://royaltica-production.up.railway.app (`/health` para status, `/docs` para Swagger) |
+| **Estado** | Demo/staging desplegada y funcional — ver [Pendientes y roadmap](#pendientes-y-roadmap) antes de considerarla lista para clientes reales |
+
 ---
 
 ## Tabla de contenidos
@@ -14,6 +20,7 @@ Royáltica actúa como una capa de eficiencia entre el corporativo, sus proveedo
 - [Requisitos previos](#requisitos-previos)
 - [Configuración local (dev)](#configuración-local-dev)
 - [Variables de entorno](#variables-de-entorno)
+- [Despliegue](#despliegue)
 - [Roles y acceso](#roles-y-acceso)
 - [Módulos del backend](#módulos-del-backend)
 - [Módulos del frontend](#módulos-del-frontend)
@@ -24,6 +31,7 @@ Royáltica actúa como una capa de eficiencia entre el corporativo, sus proveedo
 - [Cómo trabajamos](#cómo-trabajamos)
 - [Objetivo final de producto](#objetivo-final-de-producto)
 - [Pendientes y roadmap](#pendientes-y-roadmap)
+- [Más documentación](#más-documentación)
 
 ---
 
@@ -46,8 +54,10 @@ Royáltica actúa como una capa de eficiencia entre el corporativo, sus proveedo
     └─────────────┘    └─────────────────┘
 ```
 
-- El frontend hace todas sus peticiones a rutas relativas `/api/*`; Vite las proxea al backend en desarrollo.
-- En producción, un reverse proxy (nginx/caddy) hace lo mismo.
+- El frontend hace todas sus peticiones a rutas relativas `/api/*`; en desarrollo Vite las proxea al backend (`vite.config.ts`).
+- En producción (Vercel), un `rewrite` de `vercel.json` hace lo mismo hacia el backend en Railway — no hay reverse proxy propio.
+- Postgres y Redis en producción corren como servicios administrados en Railway (no en Docker); en desarrollo local sí usan `docker-compose.yml`.
+- Row Level Security (RLS) está activa en Postgres para las tablas multi-tenant: cada request de un servicio abre su transacción con `PrismaService.withOrg()`, que fija `app.org_id` como defensa adicional al filtro manual por `organizationId`.
 - La IA de auditoría de facturas corre en Vertex AI (Google Cloud); si no hay credenciales, cae a modo simulación sin romper el flujo.
 - WhatsApp y Email degradan gracefully al modo stub si no hay token configurado.
 
@@ -87,24 +97,28 @@ Royáltica actúa como una capa de eficiencia entre el corporativo, sus proveedo
 royaltica/
 ├── frontend/                  # React 19 + Vite (portal corporativo y proveedor)
 │   ├── src/
-│   │   ├── App.tsx            # Componente raíz — toda la UI (~10k líneas)
+│   │   ├── App.tsx            # Componente raíz — toda la UI (~15,800 líneas,
+│   │   │                        ver docs/plan-division-apptsx.md para el plan de división)
 │   │   ├── main.tsx           # Entry point
 │   │   ├── types.ts           # Tipos TypeScript y datos mock
 │   │   ├── index.css          # Design tokens y estilos globales
+│   │   ├── lib/
+│   │   │   └── validators.ts  # validateRFC / validateCLABE (primera pieza extraída de App.tsx)
 │   │   └── services/
-│   │       ├── apiClient.ts   # Cliente HTTP hacia el backend
+│   │       ├── apiClient.ts   # Cliente HTTP hacia el backend (BASE = '/api')
 │   │       └── geminiService.ts # IA (modo mock en frontend, real en backend)
 │   ├── public/
 │   │   └── _headers           # Security headers para Netlify/Cloudflare
 │   ├── .env.example
+│   ├── vercel.json            # Config de deploy en Vercel (rewrite /api/* → backend Railway)
 │   ├── vite.config.ts
 │   └── package.json
 │
 ├── api/                       # NestJS backend
 │   ├── src/
-│   │   ├── main.ts            # Bootstrap: Helmet, CORS, throttler, Swagger
+│   │   ├── main.ts            # Bootstrap: Helmet, CORS, throttler, Swagger (Basic Auth en /docs)
 │   │   ├── app.module.ts      # Módulo raíz
-│   │   ├── auth/              # JWT + TOTP 2FA + dev-login
+│   │   ├── auth/              # JWT + TOTP 2FA + dev-login (ver Variables de entorno)
 │   │   ├── users/             # Gestión de usuarios por org
 │   │   ├── invoices/          # CRUD + bulk CFDI import (ZIP/XML)
 │   │   ├── suppliers/         # CRUD + scoring + KYC docs + 69-B
@@ -121,15 +135,17 @@ royaltica/
 │   │   ├── jobs/              # Cron jobs (vencimientos, REP reminders)
 │   │   ├── portal/            # Endpoints read-only para proveedores
 │   │   ├── organization/      # Settings de la org
-│   │   ├── activity-log/      # Log de auditoría (LOGIN, pagos, cambios)
+│   │   ├── activity/          # Log de auditoría (LOGIN, pagos, cambios)
 │   │   └── common/
-│   │       └── prisma/        # PrismaService con withOrg() para RLS
+│   │       └── prisma/        # PrismaService.withOrg() — RLS real, enganchado en todos los servicios
 │   ├── prisma/
 │   │   ├── schema.prisma      # Modelos de datos
-│   │   └── migrations/        # Migraciones SQL versionadas
+│   │   ├── seed.ts            # Datos de demo (1 org, 3 usuarios, 5 proveedores, 20 facturas)
+│   │   └── migrations/        # Migraciones SQL versionadas (incluye la de RLS)
 │   ├── scripts/
-│   │   └── backup-db.sh       # Script de backup automático (launchd)
-│   ├── docker-compose.yml     # PostgreSQL + Redis
+│   │   └── backup-db.sh       # Script de backup automático (launchd, entorno local)
+│   ├── Dockerfile             # Build multi-stage usado por Railway
+│   ├── docker-compose.yml     # PostgreSQL + Redis (solo desarrollo local)
 │   ├── .env.example           # Plantilla de variables de entorno
 │   └── package.json
 │
@@ -198,7 +214,7 @@ SQL
 # Iniciar en modo desarrollo
 npm run start:dev
 # Backend disponible en http://localhost:8080
-# Swagger docs en http://localhost:8080/api-docs (usuario: admin, contraseña: en .env)
+# Swagger docs en http://localhost:8080/docs (Basic Auth: SWAGGER_USER / SWAGGER_PASS del .env)
 ```
 
 ### 3. Frontend
@@ -218,51 +234,93 @@ npm run dev
 # Frontend disponible en http://localhost:5173
 ```
 
+### Sembrar datos de demo
+
+```bash
+npm run seed
+# Crea: 1 organización, 3 usuarios, 5 proveedores con KYC, 20 facturas, notificaciones
+```
+
 ### Login en desarrollo
 
-El proyecto usa `POST /auth/dev-login` en lugar de Firebase Auth real (para evitar depender del reloj del sistema en entornos de desarrollo).
+El proyecto usa `POST /auth/dev-login` en lugar de Firebase Auth real: emite un JWT por email, sin verificar contraseña contra Firebase (el frontend sí pide una contraseña de demo fija, pero es solo un gate visual — ver `DEMO_CREDENTIALS` en `App.tsx`). Usuarios creados por `npm run seed`:
 
 ```
-director@royaltica.com    → CORPORATE_ADMIN (org Royáltica Demo)
-operaciones@royaltica.com → CORPORATE_USER  (permisos limitados)
-proveedor@demo.com        → PROVIDER
-superadmin@royaltica.com  → SUPERADMIN
+director@royaltica.com          → CORPORATE_ADMIN (ve todas las áreas)
+analista@royaltica.com          → CORPORATE_USER  (permisos: finanzas, pagos, estados)
+proveedor@logisticaandrade.mx   → PROVIDER (portal de proveedor)
 ```
+
+`dev-login` está deshabilitado por código cuando `NODE_ENV=production`, salvo que se active explícitamente con `ALLOW_DEV_LOGIN=true` (ver [Variables de entorno](#variables-de-entorno)) — útil para un ambiente de demo temporal sin Firebase configurado, pero debe apagarse en cuanto haya login real, porque mientras esté prendida cualquiera con la URL puede entrar como cualquiera de estos usuarios solo sabiendo el email.
 
 ---
 
 ## Variables de entorno
 
-### Backend (`api/.env`)
+Validadas por Zod en `api/src/config/env.validation.ts` — si falta una obligatoria o el formato no calza, el backend no arranca (falla rápido en vez de correr mal configurado).
 
-Copia `api/.env.example` y rellena los valores. Los campos con `*` son obligatorios para arrancar:
+### Backend (`api/.env`) — obligatorias
 
-| Variable | Descripción | Obligatorio |
+| Variable | Descripción |
+|---|---|
+| `DATABASE_URL` | Conexión PostgreSQL (formato URL) |
+| `REDIS_URL` | Conexión Redis (rate limiting) |
+| `JWT_SECRET` | Secreto para firmar JWT (mínimo 16 caracteres) |
+
+### Backend — recomendadas / con default sensato
+
+| Variable | Descripción | Default |
 |---|---|---|
-| `DATABASE_URL` | Conexión PostgreSQL con rol `royaltica_app` (runtime) | * |
-| `DATABASE_ADMIN_URL` | Conexión con rol owner (solo para migraciones) | * |
-| `REDIS_URL` | Conexión Redis para rate limiting | * |
-| `JWT_SECRET` | Secreto para firmar JWT (mínimo 32 chars) | * |
-| `TOTP_ENCRYPTION_KEY` | Llave AES-256 para cifrar secretos TOTP (mínimo 32 chars) | Recomendado |
-| `SWAGGER_PASSWORD` | Password del panel Swagger | * |
-| `NODE_ENV` | `development` o `production` | * |
-| `ALLOWED_ORIGINS` | Lista de orígenes permitidos en CORS (separados por coma) | * en prod |
-| `VERTEX_PROJECT_ID` | Proyecto Google Cloud para Vertex AI | Opcional |
-| `VERTEX_LOCATION` | Región Vertex AI (ej. `us-central1`) | Opcional |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Ruta al JSON de service account de GCP | Opcional |
-| `WHATSAPP_PROVIDER` | `meta` o `twilio` | Opcional |
-| `WHATSAPP_TOKEN` | Token de WhatsApp Business API | Opcional |
-| `WHATSAPP_PHONE_ID` | Phone Number ID (Meta) o From number (Twilio) | Opcional |
-| `RESEND_API_KEY` | API key de Resend para emails | Opcional |
-| `ERP_PROVIDER` | `aspel`, `bind`, `odoo` o vacío | Opcional |
+| `NODE_ENV` | `development` \| `test` \| `production` | `development` |
+| `PORT` | Puerto HTTP | `8080` |
+| `ALLOWED_ORIGINS` | Orígenes permitidos en CORS, separados por coma. **Obligatorio en producción** (sin lista, el server no arranca; `*` no se acepta) | `http://localhost:5173,http://localhost:3000` |
+| `JWT_EXPIRES_IN` | Vigencia del JWT | `8h` |
+| `TOTP_ENCRYPTION_KEY` | Llave AES-256 para cifrar secretos TOTP (si falta, se deriva de `JWT_SECRET`) | — |
+| `SWAGGER_USER` / `SWAGGER_PASS` | Basic Auth para `/docs` | `admin` / `change-me` |
+| `SAT_VERIFY_MODE` | `mock` (default, valida formato) o `live` (pendiente de implementar) | `mock` |
+| `JOBS_ENABLED` | `false` desactiva los cron jobs (útil en CI) | `true` |
+
+### Backend — integraciones opcionales (degradan a modo stub si faltan)
+
+| Variable | Para qué |
+|---|---|
+| `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | Firebase Admin (login real). Sin esto, las rutas de auth vía Firebase devuelven 503 |
+| `ALLOW_DEV_LOGIN` | `true` permite `POST /auth/dev-login` aunque `NODE_ENV=production` (ver [Login en desarrollo](#login-en-desarrollo)). **Apagar en cuanto haya login real** |
+| `GCS_BUCKET_NAME`, `GCS_KEY_FILE` | Google Cloud Storage (documentos KYC). Sin esto, los archivos se registran en modo stub (`local://`) |
+| `VERTEX_PROJECT_ID`, `VERTEX_LOCATION`, `VERTEX_KEY_FILE` | Vertex AI (asistente de IA + auditoría forense). Si falta `VERTEX_PROJECT_ID`, el chat de IA devuelve 503 y la auditoría usa solo heurísticas |
+| `GEMINI_API_KEY` | Alternativa legada a Vertex (API key directa de Gemini) |
+| `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Envío de correo real (invitaciones, alertas). Sin `RESEND_API_KEY`, los correos se registran sin enviarse |
+| `FACTORAJE_API_URL`, `FACTORAJE_API_KEY` | Proveedor externo de factoraje. Sin esto, las dispersiones se simulan en modo stub |
+| `ERP_API_URL`, `ERP_API_KEY` | Conector ERP del corporativo (el proveedor se elige en `Organization.settings.erpProvider`, no por env var) |
+| `WHATSAPP_PROVIDER` (`meta` o `twilio`), `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_FROM` | Alertas críticas por WhatsApp. Sin `WHATSAPP_TOKEN`, se registran en modo stub |
+
+### Migraciones (no validada por Zod, solo la usan los scripts de Prisma)
+
+| Variable | Descripción |
+|---|---|
+| `DATABASE_ADMIN_URL` | Conexión con rol owner, usada por `npm run prisma:deploy` / `prisma:migrate` para aplicar migraciones (el runtime usa `DATABASE_URL`, que en producción debería tener menos privilegios) |
 
 ### Frontend (`frontend/.env`)
 
 | Variable | Descripción |
 |---|---|
-| `VITE_API_URL` | URL base del backend (solo en producción; en dev usa el proxy) |
+| `VITE_API_URL` | **No se usa actualmente en el código** (`apiClient.ts` tiene la ruta fija `/api`). En producción, el ruteo real hacia el backend lo hace el `rewrite` de `vercel.json`, no esta variable |
 
 **Importante:** NUNCA pongas API keys privadas en variables `VITE_*` — esas se incluyen en el bundle del navegador y son visibles públicamente.
+
+---
+
+## Despliegue
+
+Guía completa paso a paso en [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Resumen:
+
+| | Dónde | Notas |
+|---|---|---|
+| Frontend | Vercel (`vercel --prod` desde `frontend/`) | `vercel.json` trae el `rewrite` de `/api/*` hacia el backend — actualizar la URL ahí si el backend cambia de dominio |
+| Backend | Railway (Docker, `railway up` desde `api/`) | Genera dominio público con `railway domain`; healthcheck en `/health` |
+| Base de datos | Postgres + Redis administrados por Railway | Migraciones con `DATABASE_URL="$DATABASE_ADMIN_URL" npx prisma migrate deploy` |
+
+**Antes de considerar esto producción real** (no solo demo): configurar Firebase Admin real y apagar `ALLOW_DEV_LOGIN`, crear el rol de BD restringido `royaltica_app` en la base de producción (hoy corre con el rol owner), y resolver las vulnerabilidades de `npm audit` pendientes (ver [Pendientes y roadmap](#pendientes-y-roadmap)).
 
 ---
 
@@ -322,15 +380,17 @@ Los permisos de `CORPORATE_USER` se asignan al invitar (áreas: facturas, provee
 - **2FA TOTP** (RFC 6238): secreto cifrado AES-256-GCM en BD; Google Authenticator / Authy
 - **JWT** con expiración corta + refresh; token temporal de 5 min para el paso de 2FA
 - **Rate limiting**: global 100 req/min; estricto en auth (5/min en login y 2FA)
-- **Row Level Security** en PostgreSQL: aislamiento de datos por organización a nivel de BD
-- **Rol de BD de mínimo privilegio**: `royaltica_app` (NOSUPERUSER, NOBYPASSRLS) para el runtime
+- **Row Level Security** en PostgreSQL: cada servicio abre su transacción con `PrismaService.withOrg()`, que fija `app.org_id` — Postgres refuerza el aislamiento por organización aunque una query olvide el filtro manual (defensa en profundidad, no el único mecanismo)
 - **Helmet**: X-Frame-Options DENY, CSP frame-ancestors none, HSTS, nosniff, no-referrer
 - **CORS**: whitelist explícita de orígenes; bloquea wildcard en producción
 - **ValidationPipe**: whitelist + forbidNonWhitelisted en todos los endpoints
 - **Prisma parametrizado**: cero SQL crudo — sin riesgo de SQLi
 - **Sin secretos en el frontend**: el bundle del navegador no contiene ninguna API key
-- **Backups automáticos**: diario 03:00 AM con launchd, verificación de integridad, rotación 14 días
+- **Webhooks salientes firmados con HMAC-SHA256**: el secreto se muestra una sola vez al crear el endpoint
+- **Backups automáticos** (entorno local): diario 03:00 AM con launchd, verificación de integridad, rotación 14 días
 - **Log de auditoría**: ActivityLog registra logins, cambios críticos y acciones fiscales
+
+**Pendiente de endurecer** (ver [`docs/SECURITY.md`](docs/SECURITY.md) para el detalle): rol de BD de mínimo privilegio `royaltica_app` aún no creado en producción (corre con el rol owner), `ALLOW_DEV_LOGIN` activo mientras no haya Firebase real configurado, y vulnerabilidades de dependencias (`npm audit`) pendientes de resolver con `--force`.
 
 ---
 
@@ -367,6 +427,8 @@ npx prisma migrate dev --name nombre_migracion
 ---
 
 ## Backups
+
+**Nota:** lo siguiente aplica al Postgres local de `docker-compose`. La base de producción en Railway no usa este script — depende de los backups/snapshots administrados de Railway (revisar su configuración de retención en el dashboard, no asumir que hay uno automático hasta confirmarlo).
 
 El script `api/scripts/backup-db.sh` hace:
 1. `pg_dump` del contenedor Docker
@@ -423,13 +485,13 @@ Este proyecto se desarrolló en sesiones iterativas usando **Claude Code** (Anth
 - Estilo visual: editorial/luxury, glassmorphism sutil
 - Sin comentarios obvios; solo se comentan invariantes no obvias o workarounds
 
-**Ramas sugeridas:**
+**Ramas (uso real, no aspiracional):**
 ```
-main        → producción (protegida)
-develop     → integración
-feature/*   → features nuevas
-fix/*       → bugfixes
+main    → única rama estable, protegida. No hay rama develop.
+fix/*   → bugfixes y hardening, PR directo a main
+feature/* → features nuevas, PR directo a main
 ```
+Cada cambio va en su propia rama con PR (aunque sea de un desarrollador). Antes de mergear: `npm test` y `npm run lint` deben salir limpios (ver [Tests](#tests)).
 
 ---
 
@@ -450,11 +512,18 @@ Royáltica es una **capa de cumplimiento fiscal y orquestación de CxP** para co
 
 ## Pendientes y roadmap
 
+### Ya resuelto (no repetir el trabajo)
+- [x] Dependencia faltante `class-validator`/`class-transformer` (bloqueaba 9/17 suites de test)
+- [x] `PrismaService.withOrg()` enganchado en los 10 modelos con RLS (Supplier, Invoice, Payment, DiotDeclaration, FinancialStatement, WebhookEndpoint, AiFeedback, UsageEvent, User, ActivityLog)
+- [x] Deploy inicial: frontend en Vercel, backend + Postgres + Redis en Railway
+
 ### Inmediato
+- [ ] Configurar Firebase Admin real y apagar `ALLOW_DEV_LOGIN` — hoy el login de producción depende de ese flag temporal
+- [ ] Crear el rol de BD restringido `royaltica_app` en producción (hoy `DATABASE_URL` usa el rol owner)
+- [ ] Resolver vulnerabilidades de `npm audit` (29 en backend: 3 baja/22 moderada/4 alta; 3 en frontend) — requieren `--force` con breaking changes en `@nestjs/cli`, `@nestjs/platform-express`, `@nestjs/swagger`, `@nestjs/schedule` y `exceljs`
 - [ ] Conectar adapter ERP real (Aspel Plan Facture) — stubs listos, necesita credenciales del cliente
 - [ ] Activar WhatsApp real — stubs listos, necesita token Meta Business API o Twilio
 - [ ] Activar Resend (email real) — stub listo, necesita `RESEND_API_KEY`
-- [ ] Migrar `@nestjs/cli` a v11 para resolver 4 vulnerabilidades en dev tooling
 
 ### Roadmap corto plazo
 - [ ] Agente local para ERPs de escritorio (Aspel COI/SAE)
@@ -463,9 +532,20 @@ Royáltica es una **capa de cumplimiento fiscal y orquestación de CxP** para co
 - [ ] App móvil para aprobación de pagos (notificaciones push)
 
 ### Arquitectura futura
-- [ ] Dividir `frontend/src/App.tsx` en componentes separados por módulo
-- [ ] Adoptar `PrismaService.withOrg()` en todos los servicios (RLS por transacción)
-- [ ] CI/CD con GitHub Actions
+- [ ] Dividir `frontend/src/App.tsx` en componentes separados por módulo — plan detallado en `docs/plan-division-apptsx.md`, Fase A (extracción de `validators.ts`) ya arrancada
+- [ ] CI/CD con GitHub Actions (correr `npm test` + `npm run lint` en cada PR automáticamente)
+
+---
+
+## Más documentación
+
+| Documento | Contenido |
+|---|---|
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Flujo de ramas/PR, convenciones de commits, checklist antes de mergear |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Modelo de datos, multi-tenancy y RLS, límites entre módulos, decisiones de diseño |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Runbook completo de despliegue (Vercel + Railway), paso a paso |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Postura de seguridad, qué está implementado, qué falta, cómo reportar un hallazgo |
+| [`api/prisma/schema.prisma`](api/prisma/schema.prisma) | Fuente de verdad del modelo de datos (más confiable que cualquier diagrama) |
 
 ---
 
