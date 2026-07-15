@@ -769,10 +769,14 @@ export default function App() {
       setRole('provider');
     } else if (apiUser.role === 'SUPERADMIN') {
       setRole('admin');
-      setNeeds2FA(true);
+      // Solo se pide el segundo factor si la cuenta tiene 2FA TOTP activo.
+      // Si no lo tiene, la sesión ya quedó emitida en devLogin y entra directo
+      // (antes se mostraba siempre la pantalla y caía al código demo, lo que
+      // hacía fallar el código real de la app autenticadora).
+      setNeeds2FA(login.twoFactorRequired);
     } else {
       setRole('corporate');
-      setNeeds2FA(true);
+      setNeeds2FA(login.twoFactorRequired);
     }
   };
 

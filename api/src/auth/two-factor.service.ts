@@ -52,8 +52,11 @@ export class TwoFactorService {
       '';
     if (!material) throw new Error('JWT_SECRET requerido para cifrar secretos TOTP.');
     this.encKey = scryptSync(material, 'royaltica-totp-v1', 32);
-    // Tolerancia de ±1 ventana (30s) por deriva de reloj del teléfono.
-    authenticator.options = { window: 1 };
+    // Tolerancia de ±2 ventanas (±60s) por deriva de reloj entre el teléfono
+    // del usuario y el servidor (en la nube el reloj puede ir unos segundos
+    // adelantado/atrasado). ±60s sigue siendo seguro y evita el falso
+    // "código incorrecto" cuando el código en realidad es válido.
+    authenticator.options = { window: 2 };
   }
 
   /** Genera (o regenera) el secreto y lo guarda cifrado, aún sin activar. */
