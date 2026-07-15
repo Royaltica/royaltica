@@ -23,6 +23,14 @@
   --font-serif: "Serif Digits", "Playfair Display", serif;
 }
 
+/* Colores de texto con contraste sobre superficies de marca (antes los
+   inyectaba el editor de tema en Configuración → Diseño, ya eliminado). */
+:root {
+  --brand-ink-text: #FFFFFF;
+  --brand-gold-text: #1A1A1A;
+  --brand-bone-text: #1A1A1A;
+}
+
 .scrollbar-custom::-webkit-scrollbar {
   width: 6px;
 }

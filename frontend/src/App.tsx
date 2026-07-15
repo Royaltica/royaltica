@@ -115,7 +115,7 @@ import {
 import { onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
 import { auth, signInWithGoogle } from './lib/firebase.ts';
 import { MOCK_INVOICES, Invoice, InvoiceChangeLog, MOCK_SUPPLIERS, Supplier } from './types.ts';
-import { api, isRealId, type FinancialRatios, type AdminOrg, type AdminActivity, type AdminCostByFeature, type AdminOrgCost, type FactorajeItem, type NotificationItem, type DiotApiResult, type DiotEntryApi, type StatementApi, type ApiUserRow, type CorpFactoraje } from './services/apiClient.ts';
+import { api, isRealId, type FinancialRatios, type AdminOrg, type AdminActivity, type AdminCostByFeature, type AdminOrgCost, type FactorajeItem, type NotificationItem, type DiotApiResult, type DiotEntryApi, type StatementApi, type ApiUserRow, type CorpFactoraje, type PaymentRow, type PaymentDetail, type Paginated } from './services/apiClient.ts';
 import { auditInvoice, batchAuditInvoices, queryOperations, generateReport, ForensicAuditResult, ChatMessage, OperationsContext, ReportType, queryContabilidad, AccountingContext } from './services/geminiService.ts';
 import type { SATVerificationResult } from './services/satService.ts';
 import { validateRFC, validateCLABE } from './lib/validators.ts';
@@ -297,26 +297,6 @@ export interface PPDInvoice {
   claim_sent_at?: string;
 }
 
-// ─── Pagos Globales Types ─────────────────────────────────────────────────────
-export interface PaymentAllocation {
-  cfdi_uuid: string;
-  provider_id: string;
-  provider_name: string;
-  amount: number;
-}
-export interface BankTransaction {
-  id: string;
-  bank_tx_id: string;
-  total_amount: number;
-  description: string;
-  date: string;
-  status: 'pending_allocation' | 'pending_approval' | 'confirmed' | 'rejected';
-  requires_cfo_approval: boolean;
-  cfo_approved?: boolean;
-  allocations: PaymentAllocation[];
-  logged?: boolean;
-}
-
 // ─── In-memory stores ─────────────────────────────────────────────────────────
 let _ppdInvoices: PPDInvoice[] = [
   { id: 'PPD-001', provider_id: 'PROV-001', provider_name: 'Logística Global SA',    cfdi_uuid: 'A1B2-C3D4-E5F6', amount: 85400,  payment_date: '2024-04-01', days_since_payment: 9,  rep_status: 'pending' },
@@ -326,41 +306,8 @@ let _ppdInvoices: PPDInvoice[] = [
   { id: 'PPD-005', provider_id: 'PROV-012', provider_name: 'Software & Cloud',       cfdi_uuid: 'E5F6-G7H8-I9J0', amount: 92000,  payment_date: '2024-03-28', days_since_payment: 13, rep_status: 'received' },
   { id: 'PPD-006', provider_id: 'PROV-006', provider_name: 'Consultores Asociados',  cfdi_uuid: 'F6G7-H8I9-J0K1', amount: 45000,  payment_date: '2024-03-20', days_since_payment: 18, rep_status: 'risk_extinct', rep_xml_url: '/xml/rep_F6G7.xml' },
 ];
-let _bankTransactions: BankTransaction[] = [
-  {
-    id: 'BTX-001', bank_tx_id: 'BANAMEX-2024-04-15-001', total_amount: 312400,
-    description: 'Pago global proveedores semana 15', date: '2024-04-15',
-    status: 'confirmed', requires_cfo_approval: true, cfo_approved: true, logged: true,
-    allocations: [
-      { cfdi_uuid: 'FAC-AI-01', provider_id: 'PROV-001', provider_name: 'Logística Global SA',    amount: 157400 },
-      { cfdi_uuid: 'FAC-02-C1', provider_id: 'PROV-002', provider_name: 'Suministros Industriales', amount: 98000 },
-      { cfdi_uuid: 'FAC-03-C1', provider_id: 'PROV-003', provider_name: 'Tech Solutions MX',       amount: 57000 },
-    ]
-  },
-  {
-    id: 'BTX-002', bank_tx_id: 'BBVA-2024-04-18-003', total_amount: 180500,
-    description: 'Liquidación semana 16 – servicios', date: '2024-04-18',
-    status: 'pending_approval', requires_cfo_approval: false, logged: false,
-    allocations: [
-      { cfdi_uuid: 'FAC-07-A1', provider_id: 'PROV-007', provider_name: 'Seguridad Integral MX',  amount: 122000 },
-      { cfdi_uuid: 'FAC-05-P1', provider_id: 'PROV-005', provider_name: 'Marketing Digital SC',   amount: 58500 },
-    ]
-  },
-  {
-    id: 'BTX-003', bank_tx_id: 'SANTANDER-2024-04-20-007', total_amount: 310000,
-    description: 'Pago masivo contratos Q2', date: '2024-04-20',
-    status: 'pending_approval', requires_cfo_approval: true, cfo_approved: false, logged: false,
-    allocations: [
-      { cfdi_uuid: 'FAC-06-P1', provider_id: 'PROV-006', provider_name: 'Consultores Asociados',  amount: 155000 },
-      { cfdi_uuid: 'FAC-13-P1', provider_id: 'PROV-013', provider_name: 'Construcciones Modernas', amount: 155000 },
-    ]
-  },
-];
-
 type RepSubscriber = (ppd: PPDInvoice[]) => void;
-type BankSubscriber = (btx: BankTransaction[]) => void;
 const _repSubscribers: RepSubscriber[] = [];
-const _bankSubscribers: BankSubscriber[] = [];
 
 const REPMotorService = {
   getInvoices: () => [..._ppdInvoices],
@@ -385,32 +332,6 @@ const REPMotorService = {
   },
 };
 
-const BankTxService = {
-  getTransactions: () => [..._bankTransactions],
-  subscribe: (cb: BankSubscriber) => { _bankSubscribers.push(cb); },
-  unsubscribe: (cb: BankSubscriber) => { const i = _bankSubscribers.indexOf(cb); if (i !== -1) _bankSubscribers.splice(i, 1); },
-  approveCFO: (id: string) => {
-    _bankTransactions = _bankTransactions.map(t => t.id === id ? { ...t, cfo_approved: true, status: 'pending_allocation' as const } : t);
-    _bankSubscribers.forEach(cb => cb([..._bankTransactions]));
-  },
-  confirmCharge: (id: string) => {
-    _bankTransactions = _bankTransactions.map(t => {
-      if (t.id !== id) return t;
-      const confirmed = { ...t, status: 'confirmed' as const, logged: true };
-      t.allocations.forEach(alloc => {
-        DualLoggerService.logFiscalEvent({ provider_id: alloc.provider_id, provider_name: alloc.provider_name, event_type: 'PAGO_GLOBAL', cfdi_uuid: alloc.cfdi_uuid, amount: alloc.amount, storage_url: `/docs/pago_global_${t.bank_tx_id}.pdf`, status: 'Reportado al SAT' });
-      });
-      return confirmed;
-    });
-    _bankSubscribers.forEach(cb => cb([..._bankTransactions]));
-  },
-  addTransaction: (tx: Omit<BankTransaction, 'id'>) => {
-    const newTx: BankTransaction = { ...tx, id: `BTX-${Date.now()}` };
-    _bankTransactions = [newTx, ..._bankTransactions];
-    _bankSubscribers.forEach(cb => cb([..._bankTransactions]));
-    return newTx;
-  }
-};
 // Generate mock DIOT data from suppliers
 function generateMockDiotRows(suppliers: { name: string; rfc: string; id: string }[], month: number): DiotRow[] {
   const seed = month * 7;
@@ -2273,61 +2194,6 @@ function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, pe
   const canSee = (area: string) => isFullAccess || permissions.includes(area);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => window.innerWidth < 900);
   
-  // Dynamic Theme State
-  const DEFAULT_THEME = {
-    ink: '#1A1A1A',     // Primary Text / Sidebar / Cards
-    gold: '#C5A059',    // Accents / Buttons
-    bone: '#F8F5F0',    // Main Background
-    sand: '#E5E0D8',    // Borders / Subtle areas
-    paper: '#FFFFFF',   // Card background
-    cream: '#FDFBF7'    // Secondary Background
-  };
-
-  const [currentTheme, setCurrentTheme] = useState(() => {
-    try {
-      const saved = localStorage.getItem('royaltica_theme');
-      return saved ? JSON.parse(saved) : DEFAULT_THEME;
-    } catch { return DEFAULT_THEME; }
-  });
-  const [themeHistory, setThemeHistory] = useState([DEFAULT_THEME]);
-
-  // Inject CSS variables
-  useEffect(() => {
-    const root = document.documentElement;
-    root.style.setProperty('--brand-ink', currentTheme.ink);
-    root.style.setProperty('--brand-gold', currentTheme.gold);
-    root.style.setProperty('--brand-bone', currentTheme.bone);
-    root.style.setProperty('--brand-sand', currentTheme.sand);
-    root.style.setProperty('--brand-paper', currentTheme.paper);
-    root.style.setProperty('--brand-cream', currentTheme.cream);
-
-    // Calculate contrast and inject text-color variables
-    const getContrastColor = (hex: string) => {
-      const r = parseInt(hex.slice(1, 3), 16);
-      const g = parseInt(hex.slice(3, 5), 16);
-      const b = parseInt(hex.slice(5, 7), 16);
-      const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-      return yiq >= 128 ? '#1A1A1A' : '#FFFFFF';
-    };
-
-    root.style.setProperty('--brand-ink-text', getContrastColor(currentTheme.ink));
-    root.style.setProperty('--brand-gold-text', getContrastColor(currentTheme.gold));
-    root.style.setProperty('--brand-bone-text', getContrastColor(currentTheme.bone));
-  }, [currentTheme]);
-
-  const updateTheme = (newTheme: typeof DEFAULT_THEME) => {
-    setThemeHistory(prev => [...prev, currentTheme]);
-    setCurrentTheme(newTheme);
-  };
-
-  const undoTheme = () => {
-    if (themeHistory.length > 0) {
-      const prev = themeHistory[themeHistory.length - 1];
-      setCurrentTheme(prev);
-      setThemeHistory(prev => prev.slice(0, -1));
-    }
-  };
-
   // ─── Budget State (persisted in localStorage, aislado por usuario/org) ───
   const budgetKey = `royaltica_budget_${user.uid}`;
   const [totalBudget, setTotalBudget] = useState<number>(() => {
@@ -2830,10 +2696,6 @@ function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, pe
 
           {activeTab === 'settings' && (
               <SettingsView
-                currentTheme={currentTheme}
-                onThemeChange={updateTheme}
-                onUndo={undoTheme}
-                defaultTheme={DEFAULT_THEME}
                 totalBudget={totalBudget}
                 onBudgetChange={setTotalBudget}
               />
@@ -5582,21 +5444,13 @@ function UsersManager() {
 }
 
 function SettingsView({
-  currentTheme,
-  onThemeChange,
-  onUndo,
-  defaultTheme,
   totalBudget,
   onBudgetChange
 }: {
-  currentTheme: any,
-  onThemeChange: (t: any) => void,
-  onUndo: () => void,
-  defaultTheme: any,
   totalBudget: number,
   onBudgetChange: (b: number) => void
 }) {
-  const [activeSection, setActiveSection] = useState<'erp' | 'manual' | 'design' | 'auth' | 'budget' | 'usuarios' | 'organizacion' | 'integraciones'>('erp');
+  const [activeSection, setActiveSection] = useState<'erp' | 'manual' | 'auth' | 'budget' | 'usuarios' | 'organizacion' | 'integraciones'>('erp');
   const [archiveSearch, setArchiveSearch] = useState('');
   const [selectedArchiveSupplier, setSelectedArchiveSupplier] = useState<Supplier | null>(null);
   const [modalTab, setModalTab] = useState<'docs' | 'trail'>('docs');
@@ -5615,58 +5469,6 @@ function SettingsView({
     DualLoggerService.subscribe(handler);
     return () => DualLoggerService.unsubscribe(handler);
   }, []);
-  // Design Specific State
-  const [tempTheme, setTempTheme] = useState(currentTheme);
-  const [searchColor, setSearchColor] = useState('');
-  const [isSaved, setIsSaved] = useState(false);
-  // ─── New: Dark Mode & localStorage ───
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('royaltica_dark_mode') === 'true');
-  const [customLogo, setCustomLogo] = useState<string | null>(() => localStorage.getItem('royaltica_custom_logo'));
-  const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop');
-
-  useEffect(() => {
-    setTempTheme(currentTheme);
-  }, [currentTheme]);
-
-  // Save dark mode preference
-  useEffect(() => {
-    localStorage.setItem('royaltica_dark_mode', String(darkMode));
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [darkMode]);
-
-  const handleColorChange = (key: string, value: string) => {
-    const newTheme = { ...tempTheme, [key]: value };
-    setTempTheme(newTheme);
-    onThemeChange(newTheme); // Immediate preview
-    setIsSaved(false);
-  };
-
-  const saveSettings = () => {
-    // Persist theme to localStorage
-    localStorage.setItem('royaltica_theme', JSON.stringify(currentTheme));
-    localStorage.setItem('royaltica_dark_mode', String(darkMode));
-    if (customLogo) localStorage.setItem('royaltica_custom_logo', customLogo);
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 2000);
-  };
-
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        setCustomLogo(result);
-        localStorage.setItem('royaltica_custom_logo', result);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
   const erpOptions = [
     { name: 'SAP Business One', logo: 'https://upload.wikimedia.org/wikipedia/commons/5/59/SAP_2011_logo.svg', description: 'Integración vía API para empresas de alto crecimiento.' },
     { name: 'Oracle NetSuite', logo: 'https://upload.wikimedia.org/wikipedia/commons/5/52/NetSuite_Logo.svg', description: 'Sincronización automatizada de cuentas por pagar.' },
@@ -5845,8 +5647,7 @@ function SettingsView({
             { id: 'manual', label: 'Alta Manual', icon: <UserPlus size={14} /> },
             { id: 'usuarios', label: 'Usuarios', icon: <Users size={14} /> },
             { id: 'auth', label: 'Autorización', icon: <ShieldCheck size={14} /> },
-            { id: 'budget', label: 'Presupuesto', icon: <DollarSign size={14} /> },
-            { id: 'design', label: 'Diseño', icon: <Paintbrush size={14} /> }
+            { id: 'budget', label: 'Presupuesto', icon: <DollarSign size={14} /> }
           ].map(section => (
             <button
               key={section.id}
@@ -5863,258 +5664,9 @@ function SettingsView({
           ))}
         </div>
 
-        <div className="flex gap-2">
-          <button 
-            onClick={onUndo}
-            className="p-3 bg-brand-bone border border-brand-sand/20 rounded-xl text-brand-ink/40 hover:text-brand-ink hover:border-brand-gold transition-all"
-            title="Deshacer Cambio"
-          >
-            <RotateCcw size={16} />
-          </button>
-          <button 
-            onClick={saveSettings}
-            className={`flex items-center gap-2 px-6 py-3 rounded-xl text-[10px] uppercase font-black tracking-widest transition-all ${
-              isSaved ? 'bg-green-500 text-white' : 'bg-brand-ink text-brand-bone hover:bg-brand-gold hover:text-brand-ink'
-            }`}
-          >
-            {isSaved ? <CheckCircle2 size={14} /> : <Save size={14} />}
-            {isSaved ? 'Guardado' : 'Guardar Cambios'}
-          </button>
-        </div>
       </div>
 
       <AnimatePresence mode="wait">
-        {activeSection === 'design' && (
-          <motion.div
-            key="design"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="grid grid-cols-1 lg:grid-cols-12 gap-8"
-          >
-            {/* Royáltica Core Palette */}
-            <div className="lg:col-span-12 space-y-4">
-              <div className="flex items-center gap-4 mb-4">
-                <div className="px-3 py-1 bg-brand-gold text-brand-ink rounded-full text-[9px] font-black tracking-[0.2em] uppercase">Paleta Royáltica Core</div>
-                <div className="h-px flex-1 bg-brand-sand/30" />
-                <button 
-                  onClick={() => onThemeChange(defaultTheme)}
-                  className="text-[9px] font-black uppercase text-brand-ink/30 hover:text-brand-gold transition-colors"
-                >
-                  Restaurar Predeterminado
-                </button>
-              </div>
-              
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                {[
-                  { key: 'ink', label: 'Tinta (Primario)', desc: 'Barra lateral, cartas de acción, títulos fuertes. Define el tono corporativo.' },
-                  { key: 'gold', label: 'Oro (Acento)', desc: 'Botones principales, checkmarks de auditoría, indicadores de éxito.' },
-                  { key: 'bone', label: 'Hueso (Fondo)', desc: 'Color principal del lienzo de la aplicación. Reduce fatiga visual.' },
-                  { key: 'sand', label: 'Arena (Bordes)', desc: 'Utilizado en divisores, bordes de input y áreas de hover sutil.' },
-                  { key: 'paper', label: 'Papel (Cartas)', desc: 'Fondo de tarjetas y modales. Crea capas de profundidad.' },
-                  { key: 'cream', label: 'Crema (Acento suave)', desc: 'Fondos secundarios y áreas de información complementaria.' }
-                ].map((color) => (
-                  <div key={color.key} className="editorial-card !p-4 flex flex-col gap-3 group">
-                    <div className="relative aspect-square rounded-2xl shadow-inner border border-black/5 overflow-hidden">
-                       <div 
-                         className="absolute inset-0 transition-transform group-hover:scale-110" 
-                         style={{ backgroundColor: (currentTheme as any)[color.key] }} 
-                       />
-                       <input 
-                         type="color" 
-                         value={(currentTheme as any)[color.key]} 
-                         onChange={(e) => handleColorChange(color.key, e.target.value)}
-                         className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                       />
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="text-[10px] font-bold text-brand-ink uppercase">{color.label}</span>
-                        <span className="text-[8px] font-mono opacity-40 uppercase">{(currentTheme as any)[color.key]}</span>
-                      </div>
-                      <p className="text-[8px] leading-relaxed text-brand-ink/40">{color.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Customizer */}
-            <div className="lg:col-span-8 editorial-card">
-              <div className="space-y-8">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="text-2xl font-serif text-brand-ink mb-1">Editor de Interfaz</h3>
-                    <p className="text-[10px] text-brand-ink/40 uppercase tracking-widest">Personaliza elementos específicos del tablero</p>
-                  </div>
-                  <div className="relative w-64 flex gap-2">
-                    <div className="relative flex-1">
-                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-ink/20" />
-                      <input 
-                        type="text" 
-                        placeholder="# HEX Code (ej: #FF5500)" 
-                        value={searchColor}
-                        onChange={(e) => setSearchColor(e.target.value)}
-                        className="w-full bg-brand-bone border border-brand-sand/50 rounded-xl pl-10 pr-4 py-2 outline-none focus:border-brand-gold text-[10px] font-mono"
-                      />
-                    </div>
-                    {/^#[0-9A-F]{6}$/i.test(searchColor) && (
-                      <div className="flex gap-1">
-                        <button 
-                          onClick={() => handleColorChange('gold', searchColor)}
-                          className="px-2 py-1 bg-brand-gold text-brand-ink text-[8px] font-bold rounded-lg hover:opacity-80 transition-opacity"
-                        >
-                          Aplicar Oro
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-6">
-                    <h4 className="text-[9px] font-black uppercase tracking-[0.3em] text-brand-gold border-b border-brand-gold/20 pb-2">Ambiente General</h4>
-                    <div className="space-y-4">
-                      {['bone', 'ink'].map(key => (
-                        <div key={key} className="flex items-center justify-between p-4 bg-brand-bone rounded-2xl border border-brand-sand/30">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg border border-black/5 shadow-sm" style={{ backgroundColor: (currentTheme as any)[key] }} />
-                            <div>
-                              <p className="text-[11px] font-bold text-brand-ink capitalize">{key === 'bone' ? 'Lienzo de Escritorio' : 'Panel de Navegación'}</p>
-                              <p className="text-[8px] opacity-40 uppercase">Aumenta contraste automáticamente</p>
-                            </div>
-                          </div>
-                          <input 
-                             type="color" 
-                             value={(currentTheme as any)[key]} 
-                             onChange={(e) => handleColorChange(key, e.target.value)}
-                             className="w-8 h-8 rounded-full border-none cursor-pointer"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-6">
-                    <h4 className="text-[9px] font-black uppercase tracking-[0.3em] text-brand-gold border-b border-brand-gold/20 pb-2">Indicadores y Acción</h4>
-                    <div className="space-y-4">
-                       {['gold', 'paper'].map(key => (
-                        <div key={key} className="flex items-center justify-between p-4 bg-brand-bone rounded-2xl border border-brand-sand/30">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg border border-black/5 shadow-sm" style={{ backgroundColor: (currentTheme as any)[key] }} />
-                            <div>
-                               <p className="text-[11px] font-bold text-brand-ink capitalize">{key === 'gold' ? 'Botones y Call-to-action' : 'Superficie de Tarjetas'}</p>
-                               <p className="text-[8px] opacity-40 uppercase">Afecta interactividad visual</p>
-                            </div>
-                          </div>
-                          <input 
-                             type="color" 
-                             value={(currentTheme as any)[key]} 
-                             onChange={(e) => handleColorChange(key, e.target.value)}
-                             className="w-8 h-8 rounded-full border-none cursor-pointer"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Right sidebar: Dark mode, Logo, Preview */}
-            <div className="lg:col-span-4 flex flex-col gap-6">
-              {/* Dark Mode Toggle */}
-              <div className="editorial-card space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    {darkMode ? <Moon size={18} className="text-brand-gold" /> : <Sun size={18} className="text-brand-gold" />}
-                    <div>
-                      <p className="text-sm font-bold text-brand-ink">Modo Oscuro</p>
-                      <p className="text-[9px] text-brand-ink/40">{darkMode ? 'Activado' : 'Desactivado'}</p>
-                    </div>
-                  </div>
-                  <button onClick={() => setDarkMode(!darkMode)}
-                    className={`w-14 h-7 rounded-full transition-all relative ${darkMode ? 'bg-brand-gold' : 'bg-brand-sand/40'}`}>
-                    <motion.div animate={{ x: darkMode ? 28 : 2 }} className="w-6 h-6 bg-white rounded-full shadow-md absolute top-0.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Custom Logo */}
-              <div className="editorial-card space-y-4">
-                <h4 className="text-sm font-bold text-brand-ink flex items-center gap-2"><Image size={14} /> Logo Personalizado</h4>
-                <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 rounded-2xl border-2 border-dashed border-brand-sand/50 flex items-center justify-center overflow-hidden bg-brand-bone">
-                    {customLogo ? (
-                      <img src={customLogo} alt="Logo" className="w-full h-full object-contain" />
-                    ) : (
-                      <Image size={24} className="text-brand-ink/20" />
-                    )}
-                  </div>
-                  <div className="flex-1 space-y-2">
-                    <label className="flex items-center gap-2 px-4 py-2 bg-brand-ink text-brand-bone rounded-xl text-[10px] font-bold uppercase tracking-widest cursor-pointer hover:bg-brand-gold hover:text-brand-ink transition-all">
-                      <UploadCloud size={12} /> Subir Logo
-                      <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
-                    </label>
-                    {customLogo && (
-                      <button onClick={() => { setCustomLogo(null); localStorage.removeItem('royaltica_custom_logo'); }}
-                        className="text-[9px] text-red-500 hover:underline">Eliminar logo</button>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Preview Device Toggle */}
-              <div className="editorial-card space-y-4">
-                <h4 className="text-sm font-bold text-brand-ink flex items-center gap-2"><Eye size={14} /> Vista Previa</h4>
-                <div className="flex gap-2">
-                  <button onClick={() => setPreviewDevice('desktop')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${
-                      previewDevice === 'desktop' ? 'bg-brand-ink text-brand-bone' : 'bg-brand-bone text-brand-ink/40'
-                    }`}><Monitor size={14} /> Desktop</button>
-                  <button onClick={() => setPreviewDevice('mobile')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${
-                      previewDevice === 'mobile' ? 'bg-brand-ink text-brand-bone' : 'bg-brand-bone text-brand-ink/40'
-                    }`}><Smartphone size={14} /> Mobile</button>
-                </div>
-                {/* Mini preview */}
-                <div className={`rounded-2xl border border-brand-sand/30 overflow-hidden transition-all ${previewDevice === 'mobile' ? 'max-w-[200px] mx-auto' : ''}`}
-                  style={{ backgroundColor: currentTheme.bone }}>
-                  <div className="h-8 flex items-center gap-2 px-3" style={{ backgroundColor: currentTheme.ink }}>
-                    {customLogo ? <img src={customLogo} alt="" className="h-4 w-4 rounded object-contain" /> : <div className="w-4 h-4 rounded" style={{ backgroundColor: currentTheme.gold }} />}
-                    <div className="h-1.5 w-12 rounded-full" style={{ backgroundColor: currentTheme.gold, opacity: 0.4 }} />
-                  </div>
-                  <div className="p-3 space-y-2">
-                    <div className="h-2 w-20 rounded-full" style={{ backgroundColor: currentTheme.ink, opacity: 0.2 }} />
-                    <div className="flex gap-2">
-                      <div className="h-8 flex-1 rounded-lg" style={{ backgroundColor: currentTheme.paper, border: `1px solid ${currentTheme.sand}` }} />
-                      <div className="h-8 flex-1 rounded-lg" style={{ backgroundColor: currentTheme.paper, border: `1px solid ${currentTheme.sand}` }} />
-                    </div>
-                    <div className="h-6 rounded-lg flex items-center justify-center" style={{ backgroundColor: currentTheme.gold }}>
-                      <div className="h-1 w-8 rounded-full" style={{ backgroundColor: currentTheme.ink, opacity: 0.3 }} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Restore Default */}
-              <div className="editorial-card bg-brand-ink text-center space-y-4 relative overflow-hidden">
-                <div className="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_center,_var(--brand-gold),transparent)]" />
-                <div className="relative z-10 space-y-3">
-                  <h3 className="text-lg font-serif text-brand-bone">Previsualización en Vivo</h3>
-                  <p className="text-[9px] text-brand-bone/40 uppercase tracking-[0.2em] leading-relaxed">
-                    Los cambios se aplican instantáneamente. Se guardan en localStorage.
-                  </p>
-                  <button onClick={() => onThemeChange(defaultTheme)}
-                    className="px-6 py-3 border border-brand-bone/20 text-brand-bone text-[8px] font-black uppercase tracking-widest rounded-xl hover:bg-brand-bone hover:text-brand-ink transition-all">
-                    Regresar a Original
-                  </button>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-
         {/* Existing Sections (ERP, Manual, Archive) remain same... */}
         {activeSection === 'erp' && (
           <motion.div key="erp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-8">
@@ -10473,69 +10025,87 @@ function REPMotorPanel() {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ─── PagosGlobalesPanel ───────────────────────────────────────────────────────
-function PagosGlobalesPanel() {
-  const [txs, setTxs] = React.useState<BankTransaction[]>(BankTxService.getTransactions());
+// ─── HistorialPagosPanel ──────────────────────────────────────────────────────
+// Historial real de pagos (GET /payments): lista paginada con filtros por
+// rango de fechas y ruta, detalle expandible con las facturas (CFDI) de cada
+// pago y exportación CSV. Un "pago" agrupa 1..N facturas (pago global).
+function HistorialPagosPanel() {
+  const [page, setPage] = React.useState(1);
+  const [dateFrom, setDateFrom] = React.useState('');
+  const [dateTo, setDateTo] = React.useState('');
+  const [route, setRoute] = React.useState<'' | 'TRANSFER' | 'CREDIT'>('');
+  const [result, setResult] = React.useState<Paginated<PaymentRow> | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
   const [expanded, setExpanded] = React.useState<string | null>(null);
-  const [acting, setActing] = React.useState<string | null>(null);
-  const [showForm, setShowForm] = React.useState(false);
-  // New payment form state
-  const [formTxId, setFormTxId] = React.useState('');
-  const [formTotal, setFormTotal] = React.useState('');
-  const [formDesc, setFormDesc] = React.useState('');
-  const [formAllocs, setFormAllocs] = React.useState<{cfdi: string; prov: string; amount: string}[]>([
-    {cfdi: '', prov: '', amount: ''}
-  ]);
+  const [details, setDetails] = React.useState<Record<string, PaymentDetail>>({});
+  const [detailLoading, setDetailLoading] = React.useState<string | null>(null);
+  const [exporting, setExporting] = React.useState(false);
 
   React.useEffect(() => {
-    BankTxService.subscribe(setTxs);
-    return () => BankTxService.unsubscribe(setTxs);
-  }, []);
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    api
+      .getPayments({
+        page,
+        limit: 10,
+        route: route || undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+      })
+      .then(res => { if (!cancelled) setResult(res); })
+      .catch(err => { if (!cancelled) setError(err.message ?? 'No se pudo cargar el historial de pagos.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [page, route, dateFrom, dateTo]);
 
-  const TX_STATUS: Record<BankTransaction['status'], {label: string; badge: string}> = {
-    pending_allocation: { label: 'Pendiente',      badge: 'bg-yellow-100 text-yellow-700' },
-    pending_approval:   { label: 'Pend. Aprobación',badge: 'bg-orange-100 text-orange-700' },
-    confirmed:          { label: 'Confirmado ✓',   badge: 'bg-green-100 text-green-700' },
-    rejected:           { label: 'Rechazado',      badge: 'bg-red-100 text-red-700' },
+  const toggleDetail = (id: string) => {
+    if (expanded === id) { setExpanded(null); return; }
+    setExpanded(id);
+    if (!details[id]) {
+      setDetailLoading(id);
+      api.getPayment(id)
+        .then(d => setDetails(prev => ({ ...prev, [id]: d })))
+        .catch(() => undefined)
+        .finally(() => setDetailLoading(null));
+    }
   };
 
-  const handleConfirm = (id: string) => {
-    setActing(id);
-    setTimeout(() => { BankTxService.confirmCharge(id); setActing(null); }, 1000);
-  };
-  const handleCFO = (id: string) => {
-    setActing(id + '_cfo');
-    setTimeout(() => { BankTxService.approveCFO(id); setActing(null); }, 800);
+  const handleExport = async () => {
+    setExporting(true);
+    try { await api.exportPaymentsCsv(); } catch { /* la descarga falló; el usuario puede reintentar */ }
+    setExporting(false);
   };
 
-  const formAllocTotal = formAllocs.reduce((s, a) => s + (parseFloat(a.amount) || 0), 0);
-  const formTotalNum   = parseFloat(formTotal) || 0;
-  const formValid      = formTxId && formTotalNum > 0 && Math.abs(formAllocTotal - formTotalNum) < 0.01 && formAllocs.every(a => a.cfdi && a.prov && parseFloat(a.amount) > 0);
-
-  const handleSubmitForm = () => {
-    if (!formValid) return;
-    BankTxService.addTransaction({
-      bank_tx_id: formTxId, total_amount: formTotalNum, description: formDesc, date: new Date().toISOString().slice(0,10),
-      status: formTotalNum > 250000 ? 'pending_approval' : 'pending_allocation',
-      requires_cfo_approval: formTotalNum > 250000, cfo_approved: false, logged: false,
-      allocations: formAllocs.map(a => ({ cfdi_uuid: a.cfdi, provider_id: 'PROV-NEW', provider_name: a.prov, amount: parseFloat(a.amount) }))
-    });
-    setShowForm(false); setFormTxId(''); setFormTotal(''); setFormDesc('');
-    setFormAllocs([{cfdi:'',prov:'',amount:''}]);
+  const PAY_STATUS: Record<PaymentRow['status'], { label: string; badge: string }> = {
+    SCHEDULED:  { label: 'Programado',   badge: 'bg-blue-100 text-blue-700' },
+    PROCESSING: { label: 'Procesando',   badge: 'bg-yellow-100 text-yellow-700' },
+    COMPLETED:  { label: 'Completado ✓', badge: 'bg-green-100 text-green-700' },
+    FAILED:     { label: 'Fallido',      badge: 'bg-red-100 text-red-700' },
   };
+  const ROUTE_LABEL: Record<PaymentRow['route'], string> = {
+    TRANSFER: 'Transferencia',
+    CREDIT: 'Crédito',
+  };
+  const fmtDate = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
-  const totalPending   = txs.filter(t => t.status !== 'confirmed').reduce((s,t) => s+t.total_amount, 0);
-  const totalConfirmed = txs.filter(t => t.status === 'confirmed').reduce((s,t) => s+t.total_amount, 0);
+  const rows = result?.data ?? [];
+  const meta = result?.meta;
+  const pageAmount = rows.reduce((s, p) => s + p.totalAmount, 0);
+
+  const resetFilters = () => { setDateFrom(''); setDateTo(''); setRoute(''); setPage(1); };
+  const hasFilters = dateFrom || dateTo || route;
 
   return (
     <div className="space-y-6">
-      {/* Stats + Actions */}
+      {/* Stats + Export */}
       <div className="flex flex-col md:flex-row gap-4 items-start justify-between">
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           {[
-            { label: 'Total Transacciones', val: txs.length,             color: 'text-brand-ink',  bg: 'bg-white border-brand-sand/30' },
-            { label: 'Monto Pendiente',     val: CURRENCY_FORMATTER.format(totalPending),  color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200' },
-            { label: 'Monto Confirmado',    val: CURRENCY_FORMATTER.format(totalConfirmed),color: 'text-green-600',  bg: 'bg-green-50 border-green-200' },
+            { label: 'Pagos registrados', val: meta ? String(meta.total) : '—', color: 'text-brand-ink', bg: 'bg-white border-brand-sand/30' },
+            { label: 'Monto (página actual)', val: CURRENCY_FORMATTER.format(pageAmount), color: 'text-green-600', bg: 'bg-green-50 border-green-200' },
           ].map(s => (
             <div key={s.label} className={`p-4 rounded-2xl border ${s.bg} text-center`}>
               <p className={`text-base font-bold font-serif ${s.color}`}>{s.val}</p>
@@ -10543,136 +10113,146 @@ function PagosGlobalesPanel() {
             </div>
           ))}
         </div>
-        <button onClick={() => setShowForm(f => !f)} className="flex items-center gap-2 px-5 py-3 bg-brand-gold text-brand-ink rounded-xl text-[10px] font-bold uppercase tracking-widest hover:scale-105 transition-all shadow-sm">
-          <Plus size={14}/> Nuevo Pago Global
+        <button onClick={handleExport} disabled={exporting}
+          className="flex items-center gap-2 px-5 py-3 bg-brand-ink text-brand-bone rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-gold hover:text-brand-ink transition-all shadow-sm disabled:opacity-50">
+          <Download size={14}/> {exporting ? 'Exportando…' : 'Exportar CSV'}
         </button>
       </div>
 
-      {/* New Payment Form */}
-      <AnimatePresence>
-        {showForm && (
-          <motion.div initial={{opacity:0,y:-8}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-8}}
-            className="editorial-card border border-brand-gold/30 space-y-4">
-            <p className="text-sm font-bold text-brand-ink flex items-center gap-2"><Plus size={14}/> Nueva Orden de Pago Global</p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <input value={formTxId} onChange={e=>setFormTxId(e.target.value)} placeholder="Bank TX ID (ej. BANAMEX-2024-...)" className="px-4 py-2.5 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold"/>
-              <input value={formTotal} onChange={e=>setFormTotal(e.target.value)} type="number" placeholder="Monto Total Egreso Bancario" className="px-4 py-2.5 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold"/>
-              <input value={formDesc} onChange={e=>setFormDesc(e.target.value)} placeholder="Descripción" className="px-4 py-2.5 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold"/>
-            </div>
-            <div className="space-y-2">
-              <p className="label-caps text-brand-ink/40">Asignaciones CFDI</p>
-              {formAllocs.map((a, i) => (
-                <div key={i} className="grid grid-cols-3 gap-2">
-                  <input value={a.cfdi} onChange={e=>{const n=[...formAllocs];n[i]={...n[i],cfdi:e.target.value};setFormAllocs(n);}} placeholder="CFDI UUID" className="px-3 py-2 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold"/>
-                  <input value={a.prov} onChange={e=>{const n=[...formAllocs];n[i]={...n[i],prov:e.target.value};setFormAllocs(n);}} placeholder="Proveedor" className="px-3 py-2 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold"/>
-                  <input value={a.amount} onChange={e=>{const n=[...formAllocs];n[i]={...n[i],amount:e.target.value};setFormAllocs(n);}} type="number" placeholder="Monto" className="px-3 py-2 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold"/>
-                </div>
-              ))}
-              <button onClick={()=>setFormAllocs(p=>[...p,{cfdi:'',prov:'',amount:''}])} className="text-[9px] font-bold text-brand-gold hover:underline uppercase tracking-widest">+ Agregar CFDI</button>
-            </div>
-            {/* Validation bar */}
-            {formTotalNum > 0 && (
-              <div className={`flex items-center gap-3 p-3 rounded-xl border text-xs font-bold ${Math.abs(formAllocTotal-formTotalNum)<0.01 ? 'bg-green-50 border-green-200 text-green-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
-                {Math.abs(formAllocTotal-formTotalNum)<0.01 ? <CheckCircle2 size={14}/> : <AlertTriangle size={14}/>}
-                Asignado: {CURRENCY_FORMATTER.format(formAllocTotal)} / Total: {CURRENCY_FORMATTER.format(formTotalNum)}
-                {Math.abs(formAllocTotal-formTotalNum)>0.01 && <span className="ml-auto">Diferencia: {CURRENCY_FORMATTER.format(Math.abs(formAllocTotal-formTotalNum))}</span>}
-              </div>
-            )}
-            {formTotalNum > 250000 && (
-              <div className="flex items-center gap-2 p-3 bg-orange-50 border border-orange-200 rounded-xl text-xs text-orange-700 font-bold">
-                <AlertTriangle size={14}/> Monto {'>'} $250,000 MXN — Se enviará Actionable Card al CFO para aprobación antes de liberar layout bancario.
-              </div>
-            )}
-            <div className="flex gap-3">
-              <button onClick={handleSubmitForm} disabled={!formValid} className="px-6 py-2.5 bg-brand-ink text-brand-bone rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-gold hover:text-brand-ink transition-all disabled:opacity-40">Crear Orden</button>
-              <button onClick={()=>setShowForm(false)} className="px-6 py-2.5 bg-brand-sand/30 text-brand-ink rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-sand transition-all">Cancelar</button>
-            </div>
-          </motion.div>
+      {/* Filtros */}
+      <div className="flex flex-wrap items-end gap-3 p-4 bg-white border border-brand-sand/30 rounded-2xl">
+        <div className="space-y-1">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-brand-ink/40">Desde</p>
+          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }}
+            className="px-3 py-2 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold"/>
+        </div>
+        <div className="space-y-1">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-brand-ink/40">Hasta</p>
+          <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }}
+            className="px-3 py-2 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold"/>
+        </div>
+        <div className="space-y-1">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-brand-ink/40">Ruta</p>
+          <select value={route} onChange={e => { setRoute(e.target.value as '' | 'TRANSFER' | 'CREDIT'); setPage(1); }}
+            className="px-3 py-2 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold bg-white">
+            <option value="">Todas</option>
+            <option value="TRANSFER">Transferencia</option>
+            <option value="CREDIT">Crédito</option>
+          </select>
+        </div>
+        {hasFilters && (
+          <button onClick={resetFilters}
+            className="flex items-center gap-1.5 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-brand-ink/40 hover:text-brand-ink transition-all">
+            <X size={12}/> Limpiar filtros
+          </button>
         )}
-      </AnimatePresence>
+      </div>
 
-      {/* Collapsible Tree */}
+      {/* Tabla de pagos */}
       <div className="editorial-card !p-0 overflow-hidden shadow-xl shadow-brand-sand/30 border border-brand-sand/50">
         <div className="px-6 py-3 bg-white/50 border-b border-brand-sand/20 flex items-center justify-between">
-          <p className="text-sm font-bold text-brand-ink">Árbol de Transacciones Bancarias → CFDIs</p>
-          <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"/><span className="text-[9px] font-bold text-brand-ink/40 uppercase tracking-wider">En vivo</span></div>
+          <p className="text-sm font-bold text-brand-ink">Historial de Pagos → Facturas (CFDI)</p>
+          <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"/><span className="text-[9px] font-bold text-brand-ink/40 uppercase tracking-wider">Datos reales</span></div>
         </div>
-        <div className="divide-y divide-brand-sand/20">
-          {txs.map(tx => {
-            const isOpen = expanded === tx.id;
-            const allocSum = tx.allocations.reduce((s,a)=>s+a.amount, 0);
-            const sumOk    = Math.abs(allocSum - tx.total_amount) < 0.01;
-            const st = TX_STATUS[tx.status];
-            const needsCFO = tx.requires_cfo_approval && !tx.cfo_approved;
-            return (
-              <div key={tx.id}>
-                {/* Parent Row */}
-                <div className="flex items-center gap-4 px-6 py-4 hover:bg-brand-gold/5 transition-all cursor-pointer group" onClick={()=>setExpanded(isOpen ? null : tx.id)}>
-                  <div className={`transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}><ChevronRight size={16} className="text-brand-ink/30 group-hover:text-brand-gold"/></div>
-                  <div className="flex-1 grid grid-cols-4 gap-4 items-center">
-                    <div>
-                      <p className="text-[10px] font-bold font-mono text-brand-ink">{tx.bank_tx_id}</p>
-                      <p className="text-[9px] text-brand-ink/30 font-serif">{tx.date}</p>
-                    </div>
-                    <p className="text-[11px] text-brand-ink/60 truncate">{tx.description}</p>
-                    <p className="text-sm font-bold font-serif text-brand-ink">{CURRENCY_FORMATTER.format(tx.total_amount)}</p>
-                    <div className="flex items-center gap-2 justify-end">
-                      {!sumOk && <span className="text-[8px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">⚠ Suma difiere</span>}
-                      <span className={`text-[8px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${st.badge}`}>{st.label}</span>
-                      <span className="text-[9px] text-brand-ink/30">{tx.allocations.length} CFDIs</span>
-                    </div>
-                  </div>
-                </div>
-                {/* CFO Approval Card */}
-                {needsCFO && (
-                  <div className="mx-6 mb-3 flex items-center gap-3 p-3 bg-orange-50 border border-orange-200 rounded-xl">
-                    <AlertTriangle size={14} className="text-orange-600 flex-shrink-0"/>
-                    <p className="text-[10px] text-orange-700 font-bold flex-1">Requiere aprobación CFO — Pago mayor a $250,000 MXN. Layout bancario bloqueado.</p>
-                    <button onClick={()=>handleCFO(tx.id)} disabled={acting===tx.id+'_cfo'} className="px-4 py-2 bg-orange-600 text-white rounded-lg text-[9px] font-bold uppercase tracking-widest hover:bg-orange-700 transition-all disabled:opacity-50">
-                      {acting===tx.id+'_cfo' ? '...' : 'Aprobar como CFO'}
-                    </button>
-                  </div>
-                )}
-                {/* Children CFDIs */}
-                <AnimatePresence>
-                  {isOpen && (
-                    <motion.div initial={{height:0,opacity:0}} animate={{height:'auto',opacity:1}} exit={{height:0,opacity:0}} className="overflow-hidden bg-brand-bone/40">
-                      <div className="ml-10 mr-6 mb-3 divide-y divide-brand-sand/10 rounded-2xl overflow-hidden border border-brand-sand/20">
-                        {tx.allocations.map((alloc,i) => (
-                          <div key={i} className="flex items-center gap-4 px-5 py-3 bg-white/60 hover:bg-brand-gold/5 transition-all">
-                            <div className="w-px h-4 bg-brand-sand/40"/>
-                            <div className="flex-1 grid grid-cols-3 gap-4">
-                              <div><p className="text-[10px] font-bold text-brand-ink">{alloc.provider_name}</p><p className="text-[9px] text-brand-ink/30 font-mono">{alloc.provider_id}</p></div>
-                              <span className="text-[9px] font-mono text-brand-ink/50 bg-brand-sand/20 px-2 py-0.5 rounded-lg self-center">{alloc.cfdi_uuid}</span>
-                              <p className="text-sm font-bold font-serif text-brand-ink text-right">{CURRENCY_FORMATTER.format(alloc.amount)}</p>
-                            </div>
-                          </div>
-                        ))}
-                        {/* Confirm Button */}
-                        {tx.status !== 'confirmed' && sumOk && !needsCFO && (
-                          <div className="px-5 py-3 bg-white/60 flex justify-end">
-                            <button onClick={()=>handleConfirm(tx.id)} disabled={acting===tx.id} className="flex items-center gap-2 px-5 py-2 bg-brand-ink text-brand-bone rounded-xl text-[9px] font-bold uppercase tracking-widest hover:bg-brand-gold hover:text-brand-ink transition-all disabled:opacity-50">
-                              {acting===tx.id ? <motion.div animate={{rotate:360}} transition={{repeat:Infinity,duration:1,ease:'linear'}} className="w-3 h-3 border-2 border-brand-ink/30 border-t-brand-ink rounded-full"/> : <CheckCircle2 size={12}/>}
-                              {acting===tx.id ? 'Procesando...' : 'Confirmar Cargo Bancario'}
-                            </button>
-                          </div>
-                        )}
-                        {tx.status === 'confirmed' && tx.logged && (
-                          <div className="px-5 py-2 bg-green-50 text-green-700 text-[9px] font-bold flex items-center gap-2">
-                            <CheckCircle2 size={12}/> Cargo confirmado · {tx.allocations.length} logs inyectados al Ledger Maestro y expedientes de proveedores
-                          </div>
-                        )}
+
+        {error && (
+          <div className="px-6 py-4 flex items-center gap-2 text-xs text-red-700 bg-red-50">
+            <AlertTriangle size={14}/> {error}
+          </div>
+        )}
+        {loading && !error && (
+          <div className="px-6 py-8 flex items-center justify-center gap-3 text-xs text-brand-ink/40">
+            <motion.div animate={{rotate:360}} transition={{repeat:Infinity,duration:1,ease:'linear'}} className="w-4 h-4 border-2 border-brand-ink/20 border-t-brand-gold rounded-full"/>
+            Cargando historial…
+          </div>
+        )}
+        {!loading && !error && rows.length === 0 && (
+          <div className="px-6 py-10 text-center space-y-1">
+            <p className="text-sm font-serif text-brand-ink/60">Sin pagos {hasFilters ? 'con estos filtros' : 'registrados todavía'}.</p>
+            <p className="text-[10px] text-brand-ink/30">Los pagos que realices desde Facturas por Pagar aparecerán aquí.</p>
+          </div>
+        )}
+
+        {!loading && !error && rows.length > 0 && (
+          <div className="divide-y divide-brand-sand/20">
+            {rows.map(p => {
+              const isOpen = expanded === p.id;
+              const st = PAY_STATUS[p.status];
+              const detail = details[p.id];
+              return (
+                <div key={p.id}>
+                  {/* Fila del pago */}
+                  <div className="flex items-center gap-4 px-6 py-4 hover:bg-brand-gold/5 transition-all cursor-pointer group" onClick={() => toggleDetail(p.id)}>
+                    <div className={`transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}><ChevronRight size={16} className="text-brand-ink/30 group-hover:text-brand-gold"/></div>
+                    <div className="flex-1 grid grid-cols-2 md:grid-cols-5 gap-4 items-center">
+                      <div>
+                        <p className="text-[10px] font-bold font-mono text-brand-ink">{p.id.slice(0, 8).toUpperCase()}</p>
+                        <p className="text-[9px] text-brand-ink/30 font-serif">{fmtDate(p.createdAt)}</p>
                       </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            );
-          })}
-        </div>
-        <div className="px-6 py-3 bg-brand-bone/50 border-t border-brand-sand/20">
-          <p className="text-[8px] text-brand-ink/30 font-serif">* Regla estricta: Si suma de asignaciones ≠ egreso bancario total, la orden es rechazada. Pagos {'>'} $250,000 MXN requieren Actionable Card al CFO.</p>
-        </div>
+                      <p className="text-[11px] text-brand-ink/60">{ROUTE_LABEL[p.route] ?? p.route}{p.transactionRef ? ` · Ref: ${p.transactionRef}` : ''}</p>
+                      <p className="text-sm font-bold font-serif text-brand-ink">{CURRENCY_FORMATTER.format(p.totalAmount)}</p>
+                      <p className="text-[10px] text-brand-ink/40">{p.processedAt ? `Procesado ${fmtDate(p.processedAt)}` : p.scheduledDate ? `Programado ${fmtDate(p.scheduledDate)}` : '—'}</p>
+                      <div className="flex items-center gap-2 justify-end">
+                        <span className={`text-[8px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${st.badge}`}>{st.label}</span>
+                        <span className="text-[9px] text-brand-ink/30">{p.invoiceCount} {p.invoiceCount === 1 ? 'factura' : 'facturas'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Facturas del pago */}
+                  <AnimatePresence>
+                    {isOpen && (
+                      <motion.div initial={{height:0,opacity:0}} animate={{height:'auto',opacity:1}} exit={{height:0,opacity:0}} className="overflow-hidden bg-brand-bone/40">
+                        <div className="ml-10 mr-6 mb-3 divide-y divide-brand-sand/10 rounded-2xl overflow-hidden border border-brand-sand/20">
+                          {detailLoading === p.id && !detail && (
+                            <div className="px-5 py-4 bg-white/60 flex items-center gap-3 text-[10px] text-brand-ink/40">
+                              <motion.div animate={{rotate:360}} transition={{repeat:Infinity,duration:1,ease:'linear'}} className="w-3 h-3 border-2 border-brand-ink/20 border-t-brand-gold rounded-full"/>
+                              Cargando facturas del pago…
+                            </div>
+                          )}
+                          {detail?.invoices.map(inv => (
+                            <div key={inv.id} className="flex items-center gap-4 px-5 py-3 bg-white/60 hover:bg-brand-gold/5 transition-all">
+                              <div className="w-px h-4 bg-brand-sand/40"/>
+                              <div className="flex-1 grid grid-cols-3 gap-4">
+                                <div>
+                                  <p className="text-[10px] font-bold text-brand-ink">{inv.supplier?.name ?? 'Proveedor'}</p>
+                                  <p className="text-[9px] text-brand-ink/30 font-mono">{inv.folio ? `Folio ${inv.folio}` : inv.id.slice(0, 8)}</p>
+                                </div>
+                                <span className="text-[9px] font-mono text-brand-ink/50 bg-brand-sand/20 px-2 py-0.5 rounded-lg self-center truncate">{inv.cfdiUuid}</span>
+                                <p className="text-sm font-bold font-serif text-brand-ink text-right">{CURRENCY_FORMATTER.format(Number(inv.total))}</p>
+                              </div>
+                            </div>
+                          ))}
+                          {detail && (
+                            <div className="px-5 py-2 bg-brand-bone/60 text-[9px] text-brand-ink/40 flex items-center justify-between">
+                              <span>{detail.creator ? `Creado por ${detail.creator.name}` : ''}{detail.notes ? ` · ${detail.notes}` : ''}</span>
+                              <span className="font-bold">{detail.invoices.length} CFDI · {CURRENCY_FORMATTER.format(detail.totalAmount)}</span>
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Paginación */}
+        {meta && meta.totalPages > 1 && (
+          <div className="px-6 py-3 bg-brand-bone/50 border-t border-brand-sand/20 flex items-center justify-between">
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              className="flex items-center gap-1 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-brand-ink/60 hover:text-brand-ink disabled:opacity-30 transition-all">
+              <ChevronLeft size={12}/> Anterior
+            </button>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-brand-ink/40">Página {meta.page} de {meta.totalPages}</p>
+            <button onClick={() => setPage(p => Math.min(meta.totalPages, p + 1))} disabled={page >= meta.totalPages}
+              className="flex items-center gap-1 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-brand-ink/60 hover:text-brand-ink disabled:opacity-30 transition-all">
+              Siguiente <ChevronRight size={12}/>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -12451,7 +12031,7 @@ function FiscalAuditDashboard() {
     { id: 'diot',            label: 'DIOT',               icon: <Database size={14} /> },
     { id: 'factoraje',       label: 'Anticipos',          icon: <DollarSign size={14} /> },
     { id: 'erp',             label: 'Conectividad ERP',   icon: <Webhook size={14} /> },
-    { id: 'pagos_globales',  label: 'Pagos Globales',     icon: <Layers size={14} /> },
+    { id: 'pagos_globales',  label: 'Historial de Pagos', icon: <History size={14} /> },
   ] as const;
 
   return (
@@ -12462,7 +12042,7 @@ function FiscalAuditDashboard() {
           <span className="label-caps mb-2 block">Registro Dual Inmutable</span>
           <h2 className="text-4xl font-serif text-brand-ink">Auditoría Fiscal</h2>
           <p className="text-sm text-brand-ink/40 font-serif mt-1">
-            Trazabilidad completa de REPs, DIOT, Pagos Globales y Sincronización ERP reportados al SAT.
+            Trazabilidad completa de REPs, DIOT, Historial de Pagos y Sincronización ERP reportados al SAT.
           </p>
         </div>
 
@@ -12591,10 +12171,7 @@ function FiscalAuditDashboard() {
           <REPMotorPanel />
         </div>
       ) : activeSection === 'pagos_globales' ? (
-        <div className="space-y-4">
-          <DemoModeNotice label="Vista previa · Pagos Globales" />
-          <PagosGlobalesPanel />
-        </div>
+        <HistorialPagosPanel />
       ) : activeSection === 'diot' ? (
         <DiotCompilerPanel />
       ) : activeSection === 'factoraje' ? (
