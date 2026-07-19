@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../common/prisma/prisma.service';
 import type { Env } from '../config/env.validation';
 
@@ -54,6 +55,23 @@ const CFDI_UUID_RE =
 /** RFC de persona moral (12) o física (13). */
 const RFC_RE = /^[A-ZÑ&]{3,4}\d{6}[A-Z\d]{3}$/i;
 
+/** Endpoint SOAP público del SAT para consultar el estatus de un CFDI. */
+const SAT_CONSULTA_URL =
+  'https://consultaqr.facturaelectronica.sat.gob.mx/ConsultaCFDIService.svc';
+const SAT_CONSULTA_SOAP_ACTION =
+  'http://tempuri.org/IConsultaCFDIService/Consulta';
+
+/**
+ * CSV oficial de la lista 69-B (contribuyentes con operaciones inexistentes).
+ * HTTP a propósito: el servidor del SAT (IIS legado) rechaza el handshake
+ * TLS moderno de Node y el listado es público (sin datos sensibles).
+ */
+const SAT_69B_CSV_URL =
+  'http://omawww.sat.gob.mx/cifras_sat/Documents/Listado_Completo_69-B.csv';
+
+/** Timeout para llamadas al SAT (sus servicios suelen ser lentos). */
+const SAT_HTTP_TIMEOUT_MS = 15_000;
+
 /**
  * Verificación del estatus de un CFDI ante el SAT.
  *
@@ -62,9 +80,10 @@ const RFC_RE = /^[A-ZÑ&]{3,4}\d{6}[A-Z\d]{3}$/i;
  * No realiza ninguna llamada de red, por lo que el flujo de auditoría es
  * determinista y reproducible en desarrollo/pruebas.
  *
- * Modo 'live': aquí se conectará el servicio de consulta del SAT
- * (servicio SOAP `consultaqr.facturaelectronica.sat.gob.mx`). Mientras no
- * esté implementado, devuelve 'No Verificado' y advierte en el log.
+ * Modo 'live': consulta el servicio SOAP público del SAT
+ * (`consultaqr.facturaelectronica.sat.gob.mx`). Si el SAT no responde o
+ * devuelve algo inesperado, se degrada a 'No Verificado' (la auditoría lo
+ * trata como discrepancia, nunca como bloqueo silencioso).
  */
 @Injectable()
 export class SatService {
@@ -84,17 +103,65 @@ export class SatService {
     const mode = this.mode;
 
     if (mode === 'live') {
-      // TODO(Prompt futuro): integrar servicio SOAP del SAT.
-      this.logger.warn(
-        'SAT_VERIFY_MODE=live aún no implementado; se devuelve "No Verificado".',
-      );
-      return { status: 'No Verificado', verifiedAt, mode };
+      const status = await this.consultaSat(input);
+      return { status, verifiedAt, mode };
     }
 
     const status: SatStatus = CFDI_UUID_RE.test(input.cfdiUuid)
       ? 'Vigente'
       : 'No Encontrado';
     return { status, verifiedAt, mode };
+  }
+
+  /**
+   * Llama al servicio SOAP `Consulta` del SAT con la "expresión impresa"
+   * del CFDI (misma cadena del QR: re/rr/tt/id) y extrae `<Estado>`.
+   */
+  private async consultaSat(input: SatVerifyInput): Promise<SatStatus> {
+    if (!CFDI_UUID_RE.test(input.cfdiUuid)) return 'No Encontrado';
+
+    const expresion =
+      `?re=${input.rfcEmisor.toUpperCase()}` +
+      `&rr=${input.rfcReceptor.toUpperCase()}` +
+      `&tt=${input.total.toFixed(6)}` +
+      `&id=${input.cfdiUuid.toUpperCase()}`;
+
+    const envelope =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tem="http://tempuri.org/">' +
+      '<soap:Body><tem:Consulta><tem:expresionImpresa>' +
+      `<![CDATA[${expresion}]]>` +
+      '</tem:expresionImpresa></tem:Consulta></soap:Body></soap:Envelope>';
+
+    try {
+      const res = await fetch(SAT_CONSULTA_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml; charset=utf-8',
+          SOAPAction: SAT_CONSULTA_SOAP_ACTION,
+        },
+        body: envelope,
+        signal: AbortSignal.timeout(SAT_HTTP_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        this.logger.warn(`Consulta SAT respondió HTTP ${res.status}.`);
+        return 'No Verificado';
+      }
+      const xml = await res.text();
+      const estado = /<(?:\w+:)?Estado>([^<]+)<\/(?:\w+:)?Estado>/i.exec(
+        xml,
+      )?.[1];
+      if (estado === 'Vigente') return 'Vigente';
+      if (estado === 'Cancelado') return 'Cancelado';
+      if (estado === 'No Encontrado') return 'No Encontrado';
+      this.logger.warn(`Consulta SAT: estado inesperado "${estado ?? '∅'}".`);
+      return 'No Verificado';
+    } catch (err) {
+      this.logger.warn(
+        `Consulta SAT falló: ${err instanceof Error ? err.message : err}`,
+      );
+      return 'No Verificado';
+    }
   }
 
   /**
@@ -121,27 +188,48 @@ export class SatService {
   }
 
   /**
-   * Verifica que el RFC exista y esté activo en el padrón del SAT.
-   * En modo 'mock' valida el formato del RFC. En 'live' consultaría el
-   * servicio del SAT (pendiente).
+   * Versión por lotes de `check69b`: cruza varios RFC contra la lista 69-B
+   * en una sola consulta. Devuelve un Map por RFC (mayúsculas) solo con los
+   * que están listados como riesgo (PRESUNTO/DEFINITIVO); los RFC limpios no
+   * aparecen en el Map (equivale a "fuera de la lista").
+   */
+  async check69bBatch(
+    rfcs: string[],
+  ): Promise<Map<string, { listed: true; status: string; name: string | null }>> {
+    const unique = [...new Set(rfcs.map((r) => r.toUpperCase()))].filter(
+      Boolean,
+    );
+    if (unique.length === 0) return new Map();
+    const entries = await this.prisma.sat69bEntry.findMany({
+      where: {
+        rfc: { in: unique },
+        status: { in: ['PRESUNTO', 'DEFINITIVO'] },
+      },
+      select: { rfc: true, status: true, name: true },
+    });
+    return new Map(
+      entries.map((e) => [
+        e.rfc,
+        { listed: true as const, status: e.status, name: e.name },
+      ]),
+    );
+  }
+
+  /**
+   * Valida el formato del RFC. El padrón del SAT no expone un servicio
+   * público sin captcha para consultar si un RFC está activo, así que en
+   * ambos modos solo se valida estructura; la señal fuerte de riesgo la da
+   * `check69b` (lista real) y `verifyCfdi` (un CFDI Vigente implica que el
+   * emisor existe ante el SAT).
    */
   async checkRfcActive(rfc: string): Promise<CheckRfcResult> {
     const normalized = rfc.toUpperCase();
-    const mode = this.mode;
-
-    if (mode === 'live') {
-      this.logger.warn(
-        'SAT_VERIFY_MODE=live aún no implementado para padrón RFC.',
-      );
-      return { rfc: normalized, active: false, status: 'No Verificado', mode };
-    }
-
     const valid = RFC_RE.test(normalized);
     return {
       rfc: normalized,
       active: valid,
-      status: valid ? 'Activo' : 'RFC inválido',
-      mode,
+      status: valid ? 'Formato válido' : 'RFC inválido',
+      mode: this.mode,
     };
   }
 
@@ -179,4 +267,123 @@ export class SatService {
     this.logger.log(`Lista 69-B sincronizada: ${synced} entradas.`);
     return { synced };
   }
+
+  /**
+   * Descarga el CSV oficial de la lista 69-B del SAT y actualiza la caché
+   * local `Sat69bEntry`. El archivo viene en Windows-1252 con campos
+   * entrecomillados; se toman RFC, nombre y situación. Corre cada noche
+   * (cron) y puede dispararse manualmente vía POST /sat/sync-69b/download.
+   */
+  async sync69bFromSat(): Promise<{ synced: number; skipped: number }> {
+    this.logger.log('Descargando lista 69-B del SAT…');
+    const res = await fetch(SAT_69B_CSV_URL, {
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) {
+      throw new Error(`Descarga 69-B falló: HTTP ${res.status}`);
+    }
+    const csv = new TextDecoder('windows-1252').decode(
+      await res.arrayBuffer(),
+    );
+
+    const syncedAt = new Date();
+    const entries: { rfc: string; name: string | null; status: string }[] = [];
+    let skipped = 0;
+
+    for (const line of csv.split(/\r?\n/)) {
+      const cols = parseCsvLine(line);
+      // Layout oficial: No, RFC, Nombre, Situación, … (encabezados y notas
+      // se descartan porque su columna 2 no es un RFC válido).
+      const rfc = cols[1]?.trim().toUpperCase() ?? '';
+      if (!RFC_RE.test(rfc)) {
+        skipped++;
+        continue;
+      }
+      const status = normalize69bStatus(cols[3] ?? '');
+      if (!status) {
+        skipped++;
+        continue;
+      }
+      entries.push({ rfc, name: cols[2]?.trim() || null, status });
+    }
+
+    // Upsert por lotes: la lista trae ~13k filas y puede tener RFC repetidos
+    // (última publicación gana).
+    const byRfc = new Map(entries.map((e) => [e.rfc, e]));
+    const unique = [...byRfc.values()];
+    const CHUNK = 500;
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      await this.prisma.$transaction(
+        unique.slice(i, i + CHUNK).map((e) =>
+          this.prisma.sat69bEntry.upsert({
+            where: { rfc: e.rfc },
+            create: { ...e, syncedAt },
+            update: { name: e.name, status: e.status, syncedAt },
+          }),
+        ),
+      );
+    }
+
+    this.logger.log(
+      `Lista 69-B del SAT sincronizada: ${unique.length} RFC (${skipped} filas descartadas).`,
+    );
+    return { synced: unique.length, skipped };
+  }
+
+  /** Sincronización nocturna de la lista 69-B (respeta JOBS_ENABLED). */
+  @Cron(CronExpression.EVERY_DAY_AT_3AM, { name: 'sat-69b-sync' })
+  async nightly69bSync(): Promise<void> {
+    const enabled =
+      this.config.get('JOBS_ENABLED', { infer: true }) === 'true';
+    if (!enabled) return;
+    try {
+      await this.sync69bFromSat();
+    } catch (err) {
+      this.logger.error(
+        `Sincronización nocturna 69-B falló: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+}
+
+/** Situación del contribuyente en el CSV → estatus interno. */
+function normalize69bStatus(raw: string): string | null {
+  const s = raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+  if (s.includes('DEFINITIVO')) return 'DEFINITIVO';
+  if (s.includes('PRESUNTO')) return 'PRESUNTO';
+  if (s.includes('DESVIRTUADO')) return 'DESVIRTUADO';
+  if (s.includes('SENTENCIA')) return 'SENTENCIA_FAVORABLE';
+  return null;
+}
+
+/** Parser mínimo de una línea CSV con campos entrecomillados. */
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      out.push(field);
+      field = '';
+    } else {
+      field += ch;
+    }
+  }
+  out.push(field);
+  return out;
 }

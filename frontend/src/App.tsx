@@ -2885,32 +2885,36 @@ function SidebarLink({ icon, label, active, collapsed, onClick }: { icon: React.
 }
 
 // Badge de score 0-100 del proveedor + recálculo (POST /suppliers/:id/score).
-function SupplierScoreBadge({ supplierId, initialScore }: { supplierId: string; initialScore?: number }) {
-  const [score, setScore] = React.useState<number | undefined>(initialScore);
-  const [busy, setBusy] = React.useState(false);
-  React.useEffect(() => { setScore(initialScore); }, [initialScore, supplierId]);
+/**
+ * Checklist real de cumplimiento del proveedor (reemplaza el "Score" 0-100,
+ * que no tenía suficientes variables para ser una calificación honesta).
+ * Cuenta factores verificables + documentos KYC cargados en el expediente,
+ * y muestra "cumplidos/total" (ej. 3/5). Sin datos inventados.
+ */
+function getSupplierChecklist(supplier: Supplier): { passed: number; total: number } {
+  const factors = [
+    supplier.sat69b?.rfcValid === true,
+    supplier.sat69b ? !supplier.sat69b.listed : false,
+    supplier.isApproved,
+  ];
+  const docs = supplier.documents.map(d => d.status === 'Validado');
+  const all = [...factors, ...docs];
+  return { passed: all.filter(Boolean).length, total: all.length };
+}
 
-  const recompute = async () => {
-    if (!isRealId(supplierId)) return;
-    setBusy(true);
-    try { const r = await api.recomputeSupplierScore(supplierId); setScore(r.score); }
-    catch { /* ignore */ }
-    finally { setBusy(false); }
-  };
-
-  const color = score === undefined ? 'bg-brand-sand/40 text-brand-ink/40 border-brand-sand'
-    : score >= 80 ? 'bg-green-100 text-green-700 border-green-300'
-    : score >= 50 ? 'bg-yellow-100 text-yellow-700 border-yellow-300'
-    : 'bg-red-100 text-red-600 border-red-300';
+function SupplierChecklistBadge({ supplier }: { supplier: Supplier }) {
+  const { passed, total } = getSupplierChecklist(supplier);
+  const complete = total > 0 && passed === total;
+  const color = total === 0 ? 'bg-brand-sand/40 text-brand-ink/40 border-brand-sand'
+    : complete ? 'bg-green-100 text-green-700 border-green-300'
+    : passed === 0 ? 'bg-red-100 text-red-600 border-red-300'
+    : 'bg-yellow-100 text-yellow-700 border-yellow-300';
 
   return (
-    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] uppercase font-bold tracking-widest border ${color}`}>
-      Score: {score !== undefined ? score : '—'}
-      {isRealId(supplierId) && (
-        <button onClick={recompute} disabled={busy} title="Recalcular score" className="hover:opacity-70 disabled:opacity-40">
-          {busy ? <Loader2 size={9} className="animate-spin" /> : <RefreshCw size={9} />}
-        </button>
-      )}
+    <span title="Factores de cumplimiento (RFC, 69-B, aprobación) + documentos KYC validados sobre el total del expediente."
+      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] uppercase font-bold tracking-widest border ${color}`}>
+      {complete ? <CheckCircle2 size={10} /> : <ListChecks size={10} />}
+      {passed}/{total} verificados
     </span>
   );
 }
@@ -3022,7 +3026,15 @@ function SupplierDirectoryView({
                       className={`hover:bg-brand-gold/5 cursor-pointer transition-all duration-200 ${selectedSupplier?.id === s.id ? 'bg-brand-gold/10' : ''}`}
                     >
                       <td className="px-6 py-3">
-                        <p className="text-sm font-bold text-brand-ink">{s.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-bold text-brand-ink">{s.name}</p>
+                          {s.sat69b?.listed && (
+                            <span title={`RFC en lista 69-B del SAT (${s.sat69b.status}).`}
+                              className="text-[7px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200 inline-flex items-center gap-0.5">
+                              <AlertTriangle size={8} /> 69-B
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[9px] text-brand-ink/40 uppercase font-serif">{s.category}</p>
                       </td>
                       <td className="px-6 py-3 text-[11px] font-mono tracking-tighter opacity-70">{s.rfc}</td>
@@ -3061,7 +3073,8 @@ function SupplierDirectoryView({
                     <span className="px-3 py-1 bg-brand-gold/20 rounded-full text-[8px] uppercase font-bold tracking-widest text-brand-ink border border-brand-gold/30">
                       ID: {selectedSupplier.id}
                     </span>
-                    <SupplierScoreBadge supplierId={selectedSupplier.id} initialScore={selectedSupplier.score} />
+                    <SupplierChecklistBadge supplier={selectedSupplier} />
+                    <SupplierSatBadge supplier={selectedSupplier} />
                   </div>
                   <h3 className="text-5xl text-brand-ink leading-none font-serif">{selectedSupplier.name}</h3>
                   <div className="grid grid-cols-2 gap-x-12 gap-y-6 pt-4">
@@ -3094,6 +3107,29 @@ function SupplierDirectoryView({
                       </div>
                     ))}
                   </div>
+                  {selectedSupplier.sat69b && (
+                    <div className={`mt-2 p-4 rounded-2xl border ${selectedSupplier.sat69b.listed ? 'bg-red-50 border-red-200' : 'bg-white border-brand-sand/40'}`}>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-brand-ink/40 mb-3">Verificación SAT del proveedor</p>
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-white flex-shrink-0 ${selectedSupplier.sat69b.rfcValid ? 'bg-green-500' : 'bg-amber-400'}`}>
+                            {selectedSupplier.sat69b.rfcValid ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}
+                          </div>
+                          <span className="text-[11px] text-brand-ink/70 flex-1"><b>RFC del proveedor:</b> {selectedSupplier.rfc} — {selectedSupplier.sat69b.rfcValid ? 'formato válido y verificado.' : 'formato no válido, revisar.'}</span>
+                        </div>
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-white flex-shrink-0 ${selectedSupplier.sat69b.listed ? 'bg-red-500' : 'bg-green-500'}`}>
+                            {selectedSupplier.sat69b.listed ? <Ban size={11} /> : <CheckCircle2 size={11} />}
+                          </div>
+                          <span className="text-[11px] text-brand-ink/70 flex-1">
+                            <b>Lista negra 69-B (EFOS):</b> {selectedSupplier.sat69b.listed
+                              ? `RFC en la lista con estatus ${selectedSupplier.sat69b.status}. Riesgo fiscal: la deducción de sus facturas podría no ser procedente.`
+                              : 'Aprobado. El RFC NO aparece en la lista negra 69-B del SAT.'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-4 pt-8 border-t border-brand-sand/60">
@@ -3223,6 +3259,172 @@ function SupplierDirectoryView({
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/**
+ * Badge de riesgo fiscal por factura: CFDI cancelado ante el SAT (único
+ * chequeo que es propiedad de la factura). La verificación 69-B es del
+ * proveedor y se muestra en su expediente, no aquí. No renderiza nada si el
+ * CFDI está vigente, para no ensuciar las filas sanas.
+ */
+function SatRiskBadges({ inv }: { inv: Invoice }) {
+  if (inv.satStatus !== 'Cancelado') return null;
+  return (
+    <span title="El SAT reporta este CFDI como cancelado."
+      className="text-[7px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-600 text-white">
+      SAT: CANCELADA
+    </span>
+  );
+}
+
+/**
+ * Badge de verificación SAT a nivel PROVEEDOR: RFC en lista negra 69-B
+ * (EFOS/EDOS) y validez del RFC. Se calcula una vez por proveedor (su RFC no
+ * cambia), no por factura. `compact` muestra solo el estado crítico.
+ */
+function SupplierSatBadge({ supplier, compact }: { supplier: Supplier; compact?: boolean }) {
+  const sat = supplier.sat69b;
+  if (!sat) return null;
+  if (sat.listed) {
+    return (
+      <span title={`RFC en lista 69-B del SAT (${sat.status}). Riesgo fiscal: la deducción de sus facturas podría no ser procedente.`}
+        className="text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200 inline-flex items-center gap-1">
+        <AlertTriangle size={9} /> Lista 69-B · {sat.status === 'DEFINITIVO' ? 'Definitivo' : 'Presunto'}
+      </span>
+    );
+  }
+  if (compact) return null;
+  return (
+    <span title="RFC con formato válido y fuera de la lista negra 69-B del SAT."
+      className="text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200 inline-flex items-center gap-1">
+      <ShieldCheck size={9} /> SAT verificado
+    </span>
+  );
+}
+
+type ComplianceCheckStatus = 'ok' | 'fail' | 'warn' | 'pending';
+interface ComplianceCheck {
+  label: string;
+  status: ComplianceCheckStatus;
+  detail: string;
+}
+
+/**
+ * Verificación de cumplimiento POR FACTURA: solo el estatus del CFDI ante el
+ * SAT (consulta SOAP en tiempo real), que es lo único único por factura. La
+ * verificación 69-B/RFC es del proveedor y vive en su expediente.
+ */
+function getComplianceChecks(inv: Invoice): ComplianceCheck[] {
+  const sat = inv.satStatus;
+  return [
+    {
+      label: 'Estatus del CFDI ante el SAT',
+      status: sat === 'Vigente' ? 'ok' : sat === 'Cancelado' ? 'fail' : (sat === 'No Encontrado' || sat === 'No Verificado') ? 'warn' : 'pending',
+      detail:
+        sat === 'Vigente' ? 'CFDI vigente. Verificado en tiempo real en el portal del SAT.'
+        : sat === 'Cancelado' ? 'El SAT reporta este CFDI como CANCELADO. No debe procederse con el pago.'
+        : sat === 'No Encontrado' ? 'El SAT no localizó este folio fiscal. Confirmar el UUID con el proveedor.'
+        : sat === 'No Verificado' ? 'No fue posible contactar el servicio del SAT al momento de la auditoría. Reintentar verificación.'
+        : 'Pendiente de consulta ante el SAT.',
+    },
+  ];
+}
+
+const COMPLIANCE_STYLES: Record<ComplianceCheckStatus, { ring: string; dot: string; icon: React.ReactNode; tag: string }> = {
+  ok: { ring: 'border-green-200 bg-green-50/60', dot: 'bg-green-500 text-white', icon: <CheckCircle2 size={12} />, tag: 'text-green-700' },
+  fail: { ring: 'border-red-200 bg-red-50', dot: 'bg-red-500 text-white', icon: <Ban size={12} />, tag: 'text-red-700' },
+  warn: { ring: 'border-amber-200 bg-amber-50', dot: 'bg-amber-400 text-white', icon: <AlertTriangle size={12} />, tag: 'text-amber-700' },
+  pending: { ring: 'border-brand-sand/40 bg-brand-bone/50', dot: 'bg-brand-sand/50 text-brand-ink/40', icon: <Clock size={12} />, tag: 'text-brand-ink/40' },
+};
+
+/**
+ * Mini-ventana con el detalle de verificación de una factura. En validadas
+ * muestra el CFDI verificado ante el SAT; en pendientes añade la sección de
+ * auditoría documental que explica qué discrepancia no está aprobando.
+ * Reutiliza los datos reales del backend (satStatus por consulta SOAP).
+ */
+function ComplianceDetailModal({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
+  const checks = getComplianceChecks(inv);
+  const hasIssue = inv.forensicStatus === 'BLOCKED' || inv.forensicStatus === 'DISCREPANCY';
+  return (
+    <motion.div key="compliance-modal" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[120] flex items-center justify-center p-6 bg-brand-ink/60 backdrop-blur-sm"
+      onClick={onClose}>
+      <motion.div initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 20 }}
+        className="bg-brand-paper rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-brand-sand/30"
+        onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="p-5 border-b border-brand-sand/30 flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${hasIssue ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+              <ShieldCheck size={20} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-brand-ink" style={{ fontFamily: '"Playfair Display", serif' }}>
+                Verificación de Cumplimiento SAT
+              </h3>
+              <p className="text-[11px] text-brand-ink/50 mt-0.5">{inv.id} · {inv.provider}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-brand-sand/30 transition-colors text-brand-ink/40">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Verificaciones SAT */}
+        <div className="p-5 space-y-3 max-h-[60vh] overflow-y-auto scrollbar-custom">
+          <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-brand-ink/40">Verificaciones en tiempo real</p>
+          {checks.map((c, i) => {
+            const s = COMPLIANCE_STYLES[c.status];
+            return (
+              <div key={i} className={`p-3 rounded-xl border ${s.ring}`}>
+                <div className="flex items-center gap-2.5 mb-1">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${s.dot}`}>{s.icon}</div>
+                  <span className="text-xs font-bold text-brand-ink flex-1">{c.label}</span>
+                  <span className={`text-[8px] font-black uppercase tracking-wider ${s.tag}`}>
+                    {c.status === 'ok' ? 'Aprobado' : c.status === 'fail' ? 'Rechazado' : c.status === 'warn' ? 'Revisar' : 'Pendiente'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-brand-ink/60 leading-relaxed pl-[34px]">{c.detail}</p>
+              </div>
+            );
+          })}
+
+          {/* Detalle documental / forense (lo que no está aprobando) */}
+          {hasIssue && (
+            <>
+              <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-brand-ink/40 pt-2">Auditoría documental</p>
+              <div className="p-3 rounded-xl border border-red-200 bg-red-50">
+                <div className="flex items-center gap-2.5 mb-1">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 bg-red-500 text-white">
+                    <FileText size={12} />
+                  </div>
+                  <span className="text-xs font-bold text-brand-ink flex-1">
+                    {inv.forensicStatus === 'BLOCKED' ? 'Factura bloqueada' : 'Discrepancia detectada'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-brand-ink/70 leading-relaxed pl-[34px]">
+                  {inv.auditAnalysis || 'Se detectó una inconsistencia en la validación documental (orden de compra, precios o integridad).'}
+                </p>
+              </div>
+              {inv.forensicSolution && (
+                <div className="p-3 bg-brand-ink rounded-xl text-brand-paper">
+                  <p className="text-[9px] font-bold text-brand-gold mb-1 uppercase tracking-wider">Acción requerida</p>
+                  <p className="text-[11px] opacity-80 leading-relaxed">{inv.forensicSolution}</p>
+                </div>
+              )}
+            </>
+          )}
+
+          {inv.satVerifiedAt && (
+            <p className="text-[9px] text-brand-ink/30 pt-1 flex items-center gap-1">
+              <Clock size={9} /> Última verificación SAT: {new Date(inv.satVerifiedAt).toLocaleString('es-MX')}
+            </p>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -3616,6 +3818,7 @@ function PendingInvoicesView({ invoices, totalBudget, onAuditRequest, onBatchPro
                         >
                            <div className="flex items-center gap-2">
                              <span className="text-sm font-bold text-brand-ink hover:underline">{inv.id}</span>
+                             <SatRiskBadges inv={inv} />
                            </div>
                            <span className="text-[10px] text-brand-ink/40 uppercase font-serif">{inv.provider}</span>
                            <span className="text-[9px] opacity-30 mt-1">Subida el: {inv.date}</span>
@@ -8242,6 +8445,7 @@ function AuditsView({
   onApproveWithAnimation?: (inv: Invoice) => void
 }) {
   const [showAuthStatus, setShowAuthStatus] = useState<string | null>(null);
+  const [complianceInv, setComplianceInv] = useState<Invoice | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('all');
 
@@ -8533,6 +8737,7 @@ function AuditsView({
                             }`}>
                               {isFullyValidated ? 'VALIDADA' : inv.forensicStatus === 'VALIDATED' ? 'PARCIAL' : 'EN PROCESO'}
                             </span>
+                            <SatRiskBadges inv={inv} />
                           </div>
                           <span className="text-[10px] text-brand-ink/40 font-serif mt-0.5">{inv.provider}</span>
                         </div>
@@ -8561,7 +8766,8 @@ function AuditsView({
                               onClick: () => setViewingDocs({ title: `Integridad y OC - ${inv.id}`, docs: [{ id: 'po-1', name: `PO_${inv.poNumber}.pdf`, date: inv.date, type: 'application/pdf' }] }) },
                             { label: 'Precio IA', sub: 'Estabilidad y contratos', ok: inv.forensicStatus === 'VALIDATED' || !inv.forensicStatus, warn: inv.forensicStatus === 'DISCREPANCY',
                               onClick: () => setViewingDocs({ title: `Precios - ${inv.provider}`, docs: [{ id: 'hist-1', name: 'PRECIOS_CONTRATO.pdf', date: inv.date, type: 'application/pdf' }] }) },
-                            { label: 'Estatus SAT', sub: inv.satStatus || 'Pendiente', ok: inv.satStatus === 'Vigente', fail: inv.satStatus === 'Cancelado', warn: inv.satStatus === 'No Encontrado', pending: !inv.satStatus || inv.satStatus === 'Pendiente' },
+                            { label: 'Estatus SAT', sub: inv.satStatus || 'Pendiente', ok: inv.satStatus === 'Vigente', fail: inv.satStatus === 'Cancelado', warn: inv.satStatus === 'No Encontrado', pending: !inv.satStatus || inv.satStatus === 'Pendiente',
+                              onClick: () => setComplianceInv(inv) },
                             { label: 'Firmas', sub: `${sigs} de 2 autorizaciones`, ok: sigs >= 2, warn: sigs === 1,
                               onClick: () => setShowAuthStatus(inv.id) },
                           ].map((check, ci) => (
@@ -8678,9 +8884,12 @@ function AuditsView({
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-bold text-brand-ink">{inv.id}</span>
-                            <span className={`text-[8px] font-bold px-2 py-0.5 rounded-md ${inv.forensicStatus === 'BLOCKED' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>
+                            <button onClick={() => setComplianceInv(inv)} title="Ver detalle de la incidencia y verificación SAT"
+                              className={`text-[8px] font-bold px-2 py-0.5 rounded-md inline-flex items-center gap-1 transition-all hover:brightness-95 hover:ring-1 cursor-pointer ${inv.forensicStatus === 'BLOCKED' ? 'bg-red-100 text-red-600 hover:ring-red-300' : 'bg-amber-100 text-amber-700 hover:ring-amber-300'}`}>
                               {inv.forensicStatus === 'BLOCKED' ? 'BLOQUEADA' : 'DISCREPANCIA'}
-                            </span>
+                              <Info size={9} />
+                            </button>
+                            <SatRiskBadges inv={inv} />
                             {ClarificationService.hasClari(inv.id) && (() => {
                               const cl = ClarificationService.getByInvoice(inv.id)[0];
                               return cl?.status === 'pending' ? (
@@ -8834,6 +9043,15 @@ function AuditsView({
           )}
         </>
       )}
+
+      <AnimatePresence>
+        {complianceInv && (
+          <ComplianceDetailModal
+            inv={complianceInv}
+            onClose={() => setComplianceInv(null)}
+          />
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showAuthStatus && (
@@ -13175,6 +13393,36 @@ function ProviderDashboard({ user, supplier, onLogout, onBackToRole }: { user: F
                   </button>
                 )}
               </div>
+
+              {/* Verificación SAT del proveedor (69-B + RFC) */}
+              {supplier.sat69b && (
+                <div className={`rounded-2xl border p-6 space-y-4 ${supplier.sat69b.listed ? 'bg-red-50 border-red-200' : 'bg-white/70 backdrop-blur-sm border-brand-sand/20'}`}>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/40">Verificación ante el SAT</h3>
+                    <span className={`text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${supplier.sat69b.listed ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                      {supplier.sat69b.listed ? <><AlertTriangle size={9} /> Atención</> : <><ShieldCheck size={9} /> Verificado</>}
+                    </span>
+                  </div>
+                  <div className="space-y-2.5">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white flex-shrink-0 ${supplier.sat69b.rfcValid ? 'bg-green-500' : 'bg-amber-400'}`}>
+                        {supplier.sat69b.rfcValid ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
+                      </div>
+                      <span className="text-[11px] text-brand-ink/70"><b>RFC:</b> {supplier.rfc} — {supplier.sat69b.rfcValid ? 'formato válido y verificado.' : 'formato no válido.'}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white flex-shrink-0 ${supplier.sat69b.listed ? 'bg-red-500' : 'bg-green-500'}`}>
+                        {supplier.sat69b.listed ? <Ban size={12} /> : <CheckCircle2 size={12} />}
+                      </div>
+                      <span className="text-[11px] text-brand-ink/70">
+                        <b>Lista negra 69-B (EFOS):</b> {supplier.sat69b.listed
+                          ? `Tu RFC aparece en la lista con estatus ${supplier.sat69b.status}. Regulariza tu situación ante el SAT para no afectar la deducibilidad de tus facturas.`
+                          : 'Aprobado. Tu RFC NO aparece en la lista negra 69-B del SAT.'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Documents (KYC reales — Portal del Proveedor) */}
               <div className="bg-white/70 backdrop-blur-sm rounded-2xl border border-brand-sand/20 p-6 space-y-4">

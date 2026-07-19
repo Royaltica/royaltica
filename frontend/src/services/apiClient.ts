@@ -1276,6 +1276,7 @@ interface ApiSupplier {
   clabeInterbancaria?: string | null;
   bankName?: string | null;
   documents?: ApiSupplierDocument[];
+  sat69b?: { listed: boolean; status: string | null; rfcValid: boolean } | null;
 }
 
 /** Etiquetas legibles de los tipos de documento KYC (enum backend → UI). */
@@ -1307,5 +1308,6 @@ export function mapSupplier(s: ApiSupplier): Supplier {
       type: DOC_TYPE_LABEL[d.type] ?? d.type,
       status: d.status === 'VALIDATED' ? 'Validado' : 'Pendiente',
     })),
+    sat69b: s.sat69b ?? null,
   };
 }
