@@ -178,6 +178,18 @@ export const api = {
     return { user: result.user, twoFactorRequired: false, tempToken: null };
   },
 
+  /** Login real: intercambia un ID token de Firebase por la sesión del backend. */
+  async verifyToken(idToken: string): Promise<LoginResult> {
+    const result = await request<ApiAuthResult>('POST', '/auth/verify-token', {
+      idToken,
+    });
+    if (result.twoFactorRequired) {
+      return { user: result.user, twoFactorRequired: true, tempToken: result.tempToken ?? null };
+    }
+    setToken(result.accessToken);
+    return { user: result.user, twoFactorRequired: false, tempToken: null };
+  },
+
   /** Segundo paso del login: código TOTP + token temporal → sesión completa. */
   async complete2fa(tempToken: string, code: string): Promise<ApiUser> {
     const result = await request<ApiAuthResult>('POST', '/auth/2fa/complete', { tempToken, code }, null);
