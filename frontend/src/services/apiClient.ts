@@ -128,9 +128,38 @@ export interface LoginResult {
   tempToken: string | null;
 }
 
-interface Paginated<T> {
+export interface Paginated<T> {
   data: T[];
   meta: { total: number; page: number; limit: number; totalPages: number };
+}
+
+// ── Historial de pagos ─────────────────────────────────────
+
+/** Un pago (global o individual) tal como lo devuelve GET /payments. */
+export interface PaymentRow {
+  id: string;
+  status: 'SCHEDULED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  route: 'TRANSFER' | 'CREDIT';
+  totalAmount: number;
+  invoiceCount: number;
+  scheduledDate: string | null;
+  processedAt: string | null;
+  transactionRef: string | null;
+  notes: string | null;
+  createdAt: string;
+}
+
+/** Detalle de un pago: incluye las facturas (CFDI) que lo componen. */
+export interface PaymentDetail extends Omit<PaymentRow, 'invoiceCount'> {
+  invoices: {
+    id: string;
+    cfdiUuid: string;
+    folio: string | null;
+    total: string | number;
+    status: string;
+    supplier: { id: string; name: string } | null;
+  }[];
+  creator: { id: string; name: string } | null;
 }
 
 // ── Autenticación ──────────────────────────────────────────
@@ -301,6 +330,40 @@ export const api = {
       status: 'COMPLETED',
     });
     return { paymentId: payment.id };
+  },
+
+  // ── Historial de pagos ──────────────────────────────────
+
+  /**
+   * Historial de pagos paginado, con filtros opcionales por rango de fechas
+   * (de creación) y ruta (TRANSFER/CREDIT). Cada fila trae el número de
+   * facturas incluidas en el pago.
+   */
+  async getPayments(params: {
+    page?: number;
+    limit?: number;
+    route?: 'TRANSFER' | 'CREDIT';
+    dateFrom?: string;
+    dateTo?: string;
+  } = {}): Promise<Paginated<PaymentRow>> {
+    const qs = new URLSearchParams();
+    qs.set('page', String(params.page ?? 1));
+    qs.set('limit', String(params.limit ?? 10));
+    if (params.route) qs.set('route', params.route);
+    // Las fechas llegan como 'YYYY-MM-DD' (input type="date"); se convierten a
+    // ISO UTC cubriendo el día local completo (dateTo inclusivo).
+    if (params.dateFrom) {
+      qs.set('dateFrom', new Date(`${params.dateFrom}T00:00:00`).toISOString());
+    }
+    if (params.dateTo) {
+      qs.set('dateTo', new Date(`${params.dateTo}T23:59:59.999`).toISOString());
+    }
+    return request<Paginated<PaymentRow>>('GET', `/payments?${qs.toString()}`);
+  },
+
+  /** Detalle de un pago con sus facturas (UUID CFDI, folio, proveedor, monto). */
+  async getPayment(id: string): Promise<PaymentDetail> {
+    return request<PaymentDetail>('GET', `/payments/${id}`);
   },
 
   // ── DIOT (Declaración Informativa de Operaciones con Terceros) ──
@@ -1225,6 +1288,7 @@ interface ApiSupplier {
   clabeInterbancaria?: string | null;
   bankName?: string | null;
   documents?: ApiSupplierDocument[];
+  sat69b?: { listed: boolean; status: string | null; rfcValid: boolean } | null;
 }
 
 /** Etiquetas legibles de los tipos de documento KYC (enum backend → UI). */
@@ -1256,5 +1320,6 @@ export function mapSupplier(s: ApiSupplier): Supplier {
       type: DOC_TYPE_LABEL[d.type] ?? d.type,
       status: d.status === 'VALIDATED' ? 'Validado' : 'Pendiente',
     })),
+    sat69b: s.sat69b ?? null,
   };
 }

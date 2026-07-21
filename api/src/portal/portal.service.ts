@@ -14,6 +14,10 @@ import { QueryPaymentsDto } from '../payments/dto/query-payments.dto';
 import { UpdateProviderProfileDto } from './dto/update-profile.dto';
 import { DocumentsService } from '../suppliers/documents/documents.service';
 import { UploadDocumentDto } from '../suppliers/dto/upload-document.dto';
+import { SatService } from '../sat/sat.service';
+
+/** RFC de persona moral (12) o física (13). */
+const RFC_RE = /^[A-ZÑ&]{3,4}\d{6}[A-Z\d]{3}$/i;
 
 interface SupplierContext {
   supplierId: string;
@@ -30,6 +34,7 @@ export class PortalService {
     private readonly prisma: PrismaService,
     private readonly factoraje: FactorajeService,
     private readonly documents: DocumentsService,
+    private readonly sat: SatService,
   ) {}
 
   // ── Documentos KYC del proveedor (sube/lista/borra los SUYOS) ──────
@@ -66,10 +71,10 @@ export class PortalService {
     );
   }
 
-  /** Perfil del proveedor + sus documentos KYC. */
+  /** Perfil del proveedor + sus documentos KYC + verificación SAT (69-B). */
   async getProfile(user: AuthenticatedUser) {
     const { supplierId } = await this.requireSupplier(user);
-    return this.prisma.supplier.findUnique({
+    const supplier = await this.prisma.supplier.findUnique({
       where: { id: supplierId },
       include: {
         documents: {
@@ -78,6 +83,17 @@ export class PortalService {
         },
       },
     });
+    if (!supplier) return supplier;
+    const efos = await this.sat.check69bBatch([supplier.rfc]);
+    const entry = efos.get(supplier.rfc.toUpperCase());
+    return {
+      ...supplier,
+      sat69b: {
+        listed: entry != null,
+        status: entry?.status ?? null,
+        rfcValid: RFC_RE.test(supplier.rfc),
+      },
+    };
   }
 
   /** El proveedor actualiza sus propios datos bancarios (CLABE / banco). */

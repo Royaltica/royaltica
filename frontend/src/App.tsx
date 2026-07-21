@@ -115,7 +115,7 @@ import {
 import { onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
 import { auth, signInWithGoogle, signInWithEmail } from './lib/firebase.ts';
 import { MOCK_INVOICES, Invoice, InvoiceChangeLog, MOCK_SUPPLIERS, Supplier } from './types.ts';
-import { api, isRealId, type FinancialRatios, type AdminOrg, type AdminActivity, type AdminCostByFeature, type AdminOrgCost, type FactorajeItem, type NotificationItem, type DiotApiResult, type DiotEntryApi, type StatementApi, type ApiUserRow, type CorpFactoraje } from './services/apiClient.ts';
+import { api, isRealId, type FinancialRatios, type AdminOrg, type AdminActivity, type AdminCostByFeature, type AdminOrgCost, type FactorajeItem, type NotificationItem, type DiotApiResult, type DiotEntryApi, type StatementApi, type ApiUserRow, type CorpFactoraje, type PaymentRow, type PaymentDetail, type Paginated } from './services/apiClient.ts';
 import { auditInvoice, batchAuditInvoices, queryOperations, generateReport, ForensicAuditResult, ChatMessage, OperationsContext, ReportType, queryContabilidad, AccountingContext } from './services/geminiService.ts';
 import type { SATVerificationResult } from './services/satService.ts';
 import { validateRFC, validateCLABE } from './lib/validators.ts';
@@ -1775,61 +1775,6 @@ function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, pe
   const canSee = (area: string) => isFullAccess || permissions.includes(area);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => window.innerWidth < 900);
   
-  // Dynamic Theme State
-  const DEFAULT_THEME = {
-    ink: '#1A1A1A',     // Primary Text / Sidebar / Cards
-    gold: '#C5A059',    // Accents / Buttons
-    bone: '#F8F5F0',    // Main Background
-    sand: '#E5E0D8',    // Borders / Subtle areas
-    paper: '#FFFFFF',   // Card background
-    cream: '#FDFBF7'    // Secondary Background
-  };
-
-  const [currentTheme, setCurrentTheme] = useState(() => {
-    try {
-      const saved = localStorage.getItem('royaltica_theme');
-      return saved ? JSON.parse(saved) : DEFAULT_THEME;
-    } catch { return DEFAULT_THEME; }
-  });
-  const [themeHistory, setThemeHistory] = useState([DEFAULT_THEME]);
-
-  // Inject CSS variables
-  useEffect(() => {
-    const root = document.documentElement;
-    root.style.setProperty('--brand-ink', currentTheme.ink);
-    root.style.setProperty('--brand-gold', currentTheme.gold);
-    root.style.setProperty('--brand-bone', currentTheme.bone);
-    root.style.setProperty('--brand-sand', currentTheme.sand);
-    root.style.setProperty('--brand-paper', currentTheme.paper);
-    root.style.setProperty('--brand-cream', currentTheme.cream);
-
-    // Calculate contrast and inject text-color variables
-    const getContrastColor = (hex: string) => {
-      const r = parseInt(hex.slice(1, 3), 16);
-      const g = parseInt(hex.slice(3, 5), 16);
-      const b = parseInt(hex.slice(5, 7), 16);
-      const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-      return yiq >= 128 ? '#1A1A1A' : '#FFFFFF';
-    };
-
-    root.style.setProperty('--brand-ink-text', getContrastColor(currentTheme.ink));
-    root.style.setProperty('--brand-gold-text', getContrastColor(currentTheme.gold));
-    root.style.setProperty('--brand-bone-text', getContrastColor(currentTheme.bone));
-  }, [currentTheme]);
-
-  const updateTheme = (newTheme: typeof DEFAULT_THEME) => {
-    setThemeHistory(prev => [...prev, currentTheme]);
-    setCurrentTheme(newTheme);
-  };
-
-  const undoTheme = () => {
-    if (themeHistory.length > 0) {
-      const prev = themeHistory[themeHistory.length - 1];
-      setCurrentTheme(prev);
-      setThemeHistory(prev => prev.slice(0, -1));
-    }
-  };
-
   // ─── Budget State (persisted in localStorage, aislado por usuario/org) ───
   const budgetKey = `royaltica_budget_${user.uid}`;
   const [totalBudget, setTotalBudget] = useState<number>(() => {
@@ -2332,10 +2277,6 @@ function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, pe
 
           {activeTab === 'settings' && (
               <SettingsView
-                currentTheme={currentTheme}
-                onThemeChange={updateTheme}
-                onUndo={undoTheme}
-                defaultTheme={DEFAULT_THEME}
                 totalBudget={totalBudget}
                 onBudgetChange={setTotalBudget}
               />
@@ -2525,32 +2466,36 @@ function SidebarLink({ icon, label, active, collapsed, onClick }: { icon: React.
 }
 
 // Badge de score 0-100 del proveedor + recálculo (POST /suppliers/:id/score).
-function SupplierScoreBadge({ supplierId, initialScore }: { supplierId: string; initialScore?: number }) {
-  const [score, setScore] = React.useState<number | undefined>(initialScore);
-  const [busy, setBusy] = React.useState(false);
-  React.useEffect(() => { setScore(initialScore); }, [initialScore, supplierId]);
+/**
+ * Checklist real de cumplimiento del proveedor (reemplaza el "Score" 0-100,
+ * que no tenía suficientes variables para ser una calificación honesta).
+ * Cuenta factores verificables + documentos KYC cargados en el expediente,
+ * y muestra "cumplidos/total" (ej. 3/5). Sin datos inventados.
+ */
+function getSupplierChecklist(supplier: Supplier): { passed: number; total: number } {
+  const factors = [
+    supplier.sat69b?.rfcValid === true,
+    supplier.sat69b ? !supplier.sat69b.listed : false,
+    supplier.isApproved,
+  ];
+  const docs = supplier.documents.map(d => d.status === 'Validado');
+  const all = [...factors, ...docs];
+  return { passed: all.filter(Boolean).length, total: all.length };
+}
 
-  const recompute = async () => {
-    if (!isRealId(supplierId)) return;
-    setBusy(true);
-    try { const r = await api.recomputeSupplierScore(supplierId); setScore(r.score); }
-    catch { /* ignore */ }
-    finally { setBusy(false); }
-  };
-
-  const color = score === undefined ? 'bg-brand-sand/40 text-brand-ink/40 border-brand-sand'
-    : score >= 80 ? 'bg-green-100 text-green-700 border-green-300'
-    : score >= 50 ? 'bg-yellow-100 text-yellow-700 border-yellow-300'
-    : 'bg-red-100 text-red-600 border-red-300';
+function SupplierChecklistBadge({ supplier }: { supplier: Supplier }) {
+  const { passed, total } = getSupplierChecklist(supplier);
+  const complete = total > 0 && passed === total;
+  const color = total === 0 ? 'bg-brand-sand/40 text-brand-ink/40 border-brand-sand'
+    : complete ? 'bg-green-100 text-green-700 border-green-300'
+    : passed === 0 ? 'bg-red-100 text-red-600 border-red-300'
+    : 'bg-yellow-100 text-yellow-700 border-yellow-300';
 
   return (
-    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] uppercase font-bold tracking-widest border ${color}`}>
-      Score: {score !== undefined ? score : '—'}
-      {isRealId(supplierId) && (
-        <button onClick={recompute} disabled={busy} title="Recalcular score" className="hover:opacity-70 disabled:opacity-40">
-          {busy ? <Loader2 size={9} className="animate-spin" /> : <RefreshCw size={9} />}
-        </button>
-      )}
+    <span title="Factores de cumplimiento (RFC, 69-B, aprobación) + documentos KYC validados sobre el total del expediente."
+      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] uppercase font-bold tracking-widest border ${color}`}>
+      {complete ? <CheckCircle2 size={10} /> : <ListChecks size={10} />}
+      {passed}/{total} verificados
     </span>
   );
 }
@@ -2662,7 +2607,15 @@ function SupplierDirectoryView({
                       className={`hover:bg-brand-gold/5 cursor-pointer transition-all duration-200 ${selectedSupplier?.id === s.id ? 'bg-brand-gold/10' : ''}`}
                     >
                       <td className="px-6 py-3">
-                        <p className="text-sm font-bold text-brand-ink">{s.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-bold text-brand-ink">{s.name}</p>
+                          {s.sat69b?.listed && (
+                            <span title={`RFC en lista 69-B del SAT (${s.sat69b.status}).`}
+                              className="text-[7px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200 inline-flex items-center gap-0.5">
+                              <AlertTriangle size={8} /> 69-B
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[9px] text-brand-ink/40 uppercase font-serif">{s.category}</p>
                       </td>
                       <td className="px-6 py-3 text-[11px] font-mono tracking-tighter opacity-70">{s.rfc}</td>
@@ -2701,7 +2654,8 @@ function SupplierDirectoryView({
                     <span className="px-3 py-1 bg-brand-gold/20 rounded-full text-[8px] uppercase font-bold tracking-widest text-brand-ink border border-brand-gold/30">
                       ID: {selectedSupplier.id}
                     </span>
-                    <SupplierScoreBadge supplierId={selectedSupplier.id} initialScore={selectedSupplier.score} />
+                    <SupplierChecklistBadge supplier={selectedSupplier} />
+                    <SupplierSatBadge supplier={selectedSupplier} />
                   </div>
                   <h3 className="text-5xl text-brand-ink leading-none font-serif">{selectedSupplier.name}</h3>
                   <div className="grid grid-cols-2 gap-x-12 gap-y-6 pt-4">
@@ -2734,6 +2688,29 @@ function SupplierDirectoryView({
                       </div>
                     ))}
                   </div>
+                  {selectedSupplier.sat69b && (
+                    <div className={`mt-2 p-4 rounded-2xl border ${selectedSupplier.sat69b.listed ? 'bg-red-50 border-red-200' : 'bg-white border-brand-sand/40'}`}>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-brand-ink/40 mb-3">Verificación SAT del proveedor</p>
+                      <div className="space-y-2.5">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-white flex-shrink-0 ${selectedSupplier.sat69b.rfcValid ? 'bg-green-500' : 'bg-amber-400'}`}>
+                            {selectedSupplier.sat69b.rfcValid ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}
+                          </div>
+                          <span className="text-[11px] text-brand-ink/70 flex-1"><b>RFC del proveedor:</b> {selectedSupplier.rfc} — {selectedSupplier.sat69b.rfcValid ? 'formato válido y verificado.' : 'formato no válido, revisar.'}</span>
+                        </div>
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-5 h-5 rounded-full flex items-center justify-center text-white flex-shrink-0 ${selectedSupplier.sat69b.listed ? 'bg-red-500' : 'bg-green-500'}`}>
+                            {selectedSupplier.sat69b.listed ? <Ban size={11} /> : <CheckCircle2 size={11} />}
+                          </div>
+                          <span className="text-[11px] text-brand-ink/70 flex-1">
+                            <b>Lista negra 69-B (EFOS):</b> {selectedSupplier.sat69b.listed
+                              ? `RFC en la lista con estatus ${selectedSupplier.sat69b.status}. Riesgo fiscal: la deducción de sus facturas podría no ser procedente.`
+                              : 'Aprobado. El RFC NO aparece en la lista negra 69-B del SAT.'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-4 pt-8 border-t border-brand-sand/60">
@@ -2863,6 +2840,172 @@ function SupplierDirectoryView({
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+/**
+ * Badge de riesgo fiscal por factura: CFDI cancelado ante el SAT (único
+ * chequeo que es propiedad de la factura). La verificación 69-B es del
+ * proveedor y se muestra en su expediente, no aquí. No renderiza nada si el
+ * CFDI está vigente, para no ensuciar las filas sanas.
+ */
+function SatRiskBadges({ inv }: { inv: Invoice }) {
+  if (inv.satStatus !== 'Cancelado') return null;
+  return (
+    <span title="El SAT reporta este CFDI como cancelado."
+      className="text-[7px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-600 text-white">
+      SAT: CANCELADA
+    </span>
+  );
+}
+
+/**
+ * Badge de verificación SAT a nivel PROVEEDOR: RFC en lista negra 69-B
+ * (EFOS/EDOS) y validez del RFC. Se calcula una vez por proveedor (su RFC no
+ * cambia), no por factura. `compact` muestra solo el estado crítico.
+ */
+function SupplierSatBadge({ supplier, compact }: { supplier: Supplier; compact?: boolean }) {
+  const sat = supplier.sat69b;
+  if (!sat) return null;
+  if (sat.listed) {
+    return (
+      <span title={`RFC en lista 69-B del SAT (${sat.status}). Riesgo fiscal: la deducción de sus facturas podría no ser procedente.`}
+        className="text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200 inline-flex items-center gap-1">
+        <AlertTriangle size={9} /> Lista 69-B · {sat.status === 'DEFINITIVO' ? 'Definitivo' : 'Presunto'}
+      </span>
+    );
+  }
+  if (compact) return null;
+  return (
+    <span title="RFC con formato válido y fuera de la lista negra 69-B del SAT."
+      className="text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200 inline-flex items-center gap-1">
+      <ShieldCheck size={9} /> SAT verificado
+    </span>
+  );
+}
+
+type ComplianceCheckStatus = 'ok' | 'fail' | 'warn' | 'pending';
+interface ComplianceCheck {
+  label: string;
+  status: ComplianceCheckStatus;
+  detail: string;
+}
+
+/**
+ * Verificación de cumplimiento POR FACTURA: solo el estatus del CFDI ante el
+ * SAT (consulta SOAP en tiempo real), que es lo único único por factura. La
+ * verificación 69-B/RFC es del proveedor y vive en su expediente.
+ */
+function getComplianceChecks(inv: Invoice): ComplianceCheck[] {
+  const sat = inv.satStatus;
+  return [
+    {
+      label: 'Estatus del CFDI ante el SAT',
+      status: sat === 'Vigente' ? 'ok' : sat === 'Cancelado' ? 'fail' : (sat === 'No Encontrado' || sat === 'No Verificado') ? 'warn' : 'pending',
+      detail:
+        sat === 'Vigente' ? 'CFDI vigente. Verificado en tiempo real en el portal del SAT.'
+        : sat === 'Cancelado' ? 'El SAT reporta este CFDI como CANCELADO. No debe procederse con el pago.'
+        : sat === 'No Encontrado' ? 'El SAT no localizó este folio fiscal. Confirmar el UUID con el proveedor.'
+        : sat === 'No Verificado' ? 'No fue posible contactar el servicio del SAT al momento de la auditoría. Reintentar verificación.'
+        : 'Pendiente de consulta ante el SAT.',
+    },
+  ];
+}
+
+const COMPLIANCE_STYLES: Record<ComplianceCheckStatus, { ring: string; dot: string; icon: React.ReactNode; tag: string }> = {
+  ok: { ring: 'border-green-200 bg-green-50/60', dot: 'bg-green-500 text-white', icon: <CheckCircle2 size={12} />, tag: 'text-green-700' },
+  fail: { ring: 'border-red-200 bg-red-50', dot: 'bg-red-500 text-white', icon: <Ban size={12} />, tag: 'text-red-700' },
+  warn: { ring: 'border-amber-200 bg-amber-50', dot: 'bg-amber-400 text-white', icon: <AlertTriangle size={12} />, tag: 'text-amber-700' },
+  pending: { ring: 'border-brand-sand/40 bg-brand-bone/50', dot: 'bg-brand-sand/50 text-brand-ink/40', icon: <Clock size={12} />, tag: 'text-brand-ink/40' },
+};
+
+/**
+ * Mini-ventana con el detalle de verificación de una factura. En validadas
+ * muestra el CFDI verificado ante el SAT; en pendientes añade la sección de
+ * auditoría documental que explica qué discrepancia no está aprobando.
+ * Reutiliza los datos reales del backend (satStatus por consulta SOAP).
+ */
+function ComplianceDetailModal({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
+  const checks = getComplianceChecks(inv);
+  const hasIssue = inv.forensicStatus === 'BLOCKED' || inv.forensicStatus === 'DISCREPANCY';
+  return (
+    <motion.div key="compliance-modal" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[120] flex items-center justify-center p-6 bg-brand-ink/60 backdrop-blur-sm"
+      onClick={onClose}>
+      <motion.div initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 20 }}
+        className="bg-brand-paper rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-brand-sand/30"
+        onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="p-5 border-b border-brand-sand/30 flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${hasIssue ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+              <ShieldCheck size={20} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-brand-ink" style={{ fontFamily: '"Playfair Display", serif' }}>
+                Verificación de Cumplimiento SAT
+              </h3>
+              <p className="text-[11px] text-brand-ink/50 mt-0.5">{inv.id} · {inv.provider}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-brand-sand/30 transition-colors text-brand-ink/40">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Verificaciones SAT */}
+        <div className="p-5 space-y-3 max-h-[60vh] overflow-y-auto scrollbar-custom">
+          <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-brand-ink/40">Verificaciones en tiempo real</p>
+          {checks.map((c, i) => {
+            const s = COMPLIANCE_STYLES[c.status];
+            return (
+              <div key={i} className={`p-3 rounded-xl border ${s.ring}`}>
+                <div className="flex items-center gap-2.5 mb-1">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${s.dot}`}>{s.icon}</div>
+                  <span className="text-xs font-bold text-brand-ink flex-1">{c.label}</span>
+                  <span className={`text-[8px] font-black uppercase tracking-wider ${s.tag}`}>
+                    {c.status === 'ok' ? 'Aprobado' : c.status === 'fail' ? 'Rechazado' : c.status === 'warn' ? 'Revisar' : 'Pendiente'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-brand-ink/60 leading-relaxed pl-[34px]">{c.detail}</p>
+              </div>
+            );
+          })}
+
+          {/* Detalle documental / forense (lo que no está aprobando) */}
+          {hasIssue && (
+            <>
+              <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-brand-ink/40 pt-2">Auditoría documental</p>
+              <div className="p-3 rounded-xl border border-red-200 bg-red-50">
+                <div className="flex items-center gap-2.5 mb-1">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 bg-red-500 text-white">
+                    <FileText size={12} />
+                  </div>
+                  <span className="text-xs font-bold text-brand-ink flex-1">
+                    {inv.forensicStatus === 'BLOCKED' ? 'Factura bloqueada' : 'Discrepancia detectada'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-brand-ink/70 leading-relaxed pl-[34px]">
+                  {inv.auditAnalysis || 'Se detectó una inconsistencia en la validación documental (orden de compra, precios o integridad).'}
+                </p>
+              </div>
+              {inv.forensicSolution && (
+                <div className="p-3 bg-brand-ink rounded-xl text-brand-paper">
+                  <p className="text-[9px] font-bold text-brand-gold mb-1 uppercase tracking-wider">Acción requerida</p>
+                  <p className="text-[11px] opacity-80 leading-relaxed">{inv.forensicSolution}</p>
+                </div>
+              )}
+            </>
+          )}
+
+          {inv.satVerifiedAt && (
+            <p className="text-[9px] text-brand-ink/30 pt-1 flex items-center gap-1">
+              <Clock size={9} /> Última verificación SAT: {new Date(inv.satVerifiedAt).toLocaleString('es-MX')}
+            </p>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -3256,6 +3399,7 @@ function PendingInvoicesView({ invoices, totalBudget, onAuditRequest, onBatchPro
                         >
                            <div className="flex items-center gap-2">
                              <span className="text-sm font-bold text-brand-ink hover:underline">{inv.id}</span>
+                             <SatRiskBadges inv={inv} />
                            </div>
                            <span className="text-[10px] text-brand-ink/40 uppercase font-serif">{inv.provider}</span>
                            <span className="text-[9px] opacity-30 mt-1">Subida el: {inv.date}</span>
@@ -5084,21 +5228,13 @@ function UsersManager() {
 }
 
 function SettingsView({
-  currentTheme,
-  onThemeChange,
-  onUndo,
-  defaultTheme,
   totalBudget,
   onBudgetChange
 }: {
-  currentTheme: any,
-  onThemeChange: (t: any) => void,
-  onUndo: () => void,
-  defaultTheme: any,
   totalBudget: number,
   onBudgetChange: (b: number) => void
 }) {
-  const [activeSection, setActiveSection] = useState<'erp' | 'manual' | 'design' | 'auth' | 'budget' | 'usuarios' | 'organizacion' | 'integraciones'>('erp');
+  const [activeSection, setActiveSection] = useState<'erp' | 'manual' | 'auth' | 'budget' | 'usuarios' | 'organizacion' | 'integraciones'>('erp');
   const [archiveSearch, setArchiveSearch] = useState('');
   const [selectedArchiveSupplier, setSelectedArchiveSupplier] = useState<Supplier | null>(null);
   const [modalTab, setModalTab] = useState<'docs' | 'trail'>('docs');
@@ -5117,58 +5253,6 @@ function SettingsView({
     DualLoggerService.subscribe(handler);
     return () => DualLoggerService.unsubscribe(handler);
   }, []);
-  // Design Specific State
-  const [tempTheme, setTempTheme] = useState(currentTheme);
-  const [searchColor, setSearchColor] = useState('');
-  const [isSaved, setIsSaved] = useState(false);
-  // ─── New: Dark Mode & localStorage ───
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('royaltica_dark_mode') === 'true');
-  const [customLogo, setCustomLogo] = useState<string | null>(() => localStorage.getItem('royaltica_custom_logo'));
-  const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop');
-
-  useEffect(() => {
-    setTempTheme(currentTheme);
-  }, [currentTheme]);
-
-  // Save dark mode preference
-  useEffect(() => {
-    localStorage.setItem('royaltica_dark_mode', String(darkMode));
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [darkMode]);
-
-  const handleColorChange = (key: string, value: string) => {
-    const newTheme = { ...tempTheme, [key]: value };
-    setTempTheme(newTheme);
-    onThemeChange(newTheme); // Immediate preview
-    setIsSaved(false);
-  };
-
-  const saveSettings = () => {
-    // Persist theme to localStorage
-    localStorage.setItem('royaltica_theme', JSON.stringify(currentTheme));
-    localStorage.setItem('royaltica_dark_mode', String(darkMode));
-    if (customLogo) localStorage.setItem('royaltica_custom_logo', customLogo);
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 2000);
-  };
-
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        setCustomLogo(result);
-        localStorage.setItem('royaltica_custom_logo', result);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
   const erpOptions = [
     { name: 'SAP Business One', logo: 'https://upload.wikimedia.org/wikipedia/commons/5/59/SAP_2011_logo.svg', description: 'Integración vía API para empresas de alto crecimiento.' },
     { name: 'Oracle NetSuite', logo: 'https://upload.wikimedia.org/wikipedia/commons/5/52/NetSuite_Logo.svg', description: 'Sincronización automatizada de cuentas por pagar.' },
@@ -5347,8 +5431,7 @@ function SettingsView({
             { id: 'manual', label: 'Alta Manual', icon: <UserPlus size={14} /> },
             { id: 'usuarios', label: 'Usuarios', icon: <Users size={14} /> },
             { id: 'auth', label: 'Autorización', icon: <ShieldCheck size={14} /> },
-            { id: 'budget', label: 'Presupuesto', icon: <DollarSign size={14} /> },
-            { id: 'design', label: 'Diseño', icon: <Paintbrush size={14} /> }
+            { id: 'budget', label: 'Presupuesto', icon: <DollarSign size={14} /> }
           ].map(section => (
             <button
               key={section.id}
@@ -5365,258 +5448,9 @@ function SettingsView({
           ))}
         </div>
 
-        <div className="flex gap-2">
-          <button 
-            onClick={onUndo}
-            className="p-3 bg-brand-bone border border-brand-sand/20 rounded-xl text-brand-ink/40 hover:text-brand-ink hover:border-brand-gold transition-all"
-            title="Deshacer Cambio"
-          >
-            <RotateCcw size={16} />
-          </button>
-          <button 
-            onClick={saveSettings}
-            className={`flex items-center gap-2 px-6 py-3 rounded-xl text-[10px] uppercase font-black tracking-widest transition-all ${
-              isSaved ? 'bg-green-500 text-white' : 'bg-brand-ink text-brand-bone hover:bg-brand-gold hover:text-brand-ink'
-            }`}
-          >
-            {isSaved ? <CheckCircle2 size={14} /> : <Save size={14} />}
-            {isSaved ? 'Guardado' : 'Guardar Cambios'}
-          </button>
-        </div>
       </div>
 
       <AnimatePresence mode="wait">
-        {activeSection === 'design' && (
-          <motion.div
-            key="design"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="grid grid-cols-1 lg:grid-cols-12 gap-8"
-          >
-            {/* Royáltica Core Palette */}
-            <div className="lg:col-span-12 space-y-4">
-              <div className="flex items-center gap-4 mb-4">
-                <div className="px-3 py-1 bg-brand-gold text-brand-ink rounded-full text-[9px] font-black tracking-[0.2em] uppercase">Paleta Royáltica Core</div>
-                <div className="h-px flex-1 bg-brand-sand/30" />
-                <button 
-                  onClick={() => onThemeChange(defaultTheme)}
-                  className="text-[9px] font-black uppercase text-brand-ink/30 hover:text-brand-gold transition-colors"
-                >
-                  Restaurar Predeterminado
-                </button>
-              </div>
-              
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-                {[
-                  { key: 'ink', label: 'Tinta (Primario)', desc: 'Barra lateral, cartas de acción, títulos fuertes. Define el tono corporativo.' },
-                  { key: 'gold', label: 'Oro (Acento)', desc: 'Botones principales, checkmarks de auditoría, indicadores de éxito.' },
-                  { key: 'bone', label: 'Hueso (Fondo)', desc: 'Color principal del lienzo de la aplicación. Reduce fatiga visual.' },
-                  { key: 'sand', label: 'Arena (Bordes)', desc: 'Utilizado en divisores, bordes de input y áreas de hover sutil.' },
-                  { key: 'paper', label: 'Papel (Cartas)', desc: 'Fondo de tarjetas y modales. Crea capas de profundidad.' },
-                  { key: 'cream', label: 'Crema (Acento suave)', desc: 'Fondos secundarios y áreas de información complementaria.' }
-                ].map((color) => (
-                  <div key={color.key} className="editorial-card !p-4 flex flex-col gap-3 group">
-                    <div className="relative aspect-square rounded-2xl shadow-inner border border-black/5 overflow-hidden">
-                       <div 
-                         className="absolute inset-0 transition-transform group-hover:scale-110" 
-                         style={{ backgroundColor: (currentTheme as any)[color.key] }} 
-                       />
-                       <input 
-                         type="color" 
-                         value={(currentTheme as any)[color.key]} 
-                         onChange={(e) => handleColorChange(color.key, e.target.value)}
-                         className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                       />
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <span className="text-[10px] font-bold text-brand-ink uppercase">{color.label}</span>
-                        <span className="text-[8px] font-mono opacity-40 uppercase">{(currentTheme as any)[color.key]}</span>
-                      </div>
-                      <p className="text-[8px] leading-relaxed text-brand-ink/40">{color.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Customizer */}
-            <div className="lg:col-span-8 editorial-card">
-              <div className="space-y-8">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="text-2xl font-serif text-brand-ink mb-1">Editor de Interfaz</h3>
-                    <p className="text-[10px] text-brand-ink/40 uppercase tracking-widest">Personaliza elementos específicos del tablero</p>
-                  </div>
-                  <div className="relative w-64 flex gap-2">
-                    <div className="relative flex-1">
-                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-ink/20" />
-                      <input 
-                        type="text" 
-                        placeholder="# HEX Code (ej: #FF5500)" 
-                        value={searchColor}
-                        onChange={(e) => setSearchColor(e.target.value)}
-                        className="w-full bg-brand-bone border border-brand-sand/50 rounded-xl pl-10 pr-4 py-2 outline-none focus:border-brand-gold text-[10px] font-mono"
-                      />
-                    </div>
-                    {/^#[0-9A-F]{6}$/i.test(searchColor) && (
-                      <div className="flex gap-1">
-                        <button 
-                          onClick={() => handleColorChange('gold', searchColor)}
-                          className="px-2 py-1 bg-brand-gold text-brand-ink text-[8px] font-bold rounded-lg hover:opacity-80 transition-opacity"
-                        >
-                          Aplicar Oro
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-6">
-                    <h4 className="text-[9px] font-black uppercase tracking-[0.3em] text-brand-gold border-b border-brand-gold/20 pb-2">Ambiente General</h4>
-                    <div className="space-y-4">
-                      {['bone', 'ink'].map(key => (
-                        <div key={key} className="flex items-center justify-between p-4 bg-brand-bone rounded-2xl border border-brand-sand/30">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg border border-black/5 shadow-sm" style={{ backgroundColor: (currentTheme as any)[key] }} />
-                            <div>
-                              <p className="text-[11px] font-bold text-brand-ink capitalize">{key === 'bone' ? 'Lienzo de Escritorio' : 'Panel de Navegación'}</p>
-                              <p className="text-[8px] opacity-40 uppercase">Aumenta contraste automáticamente</p>
-                            </div>
-                          </div>
-                          <input 
-                             type="color" 
-                             value={(currentTheme as any)[key]} 
-                             onChange={(e) => handleColorChange(key, e.target.value)}
-                             className="w-8 h-8 rounded-full border-none cursor-pointer"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-6">
-                    <h4 className="text-[9px] font-black uppercase tracking-[0.3em] text-brand-gold border-b border-brand-gold/20 pb-2">Indicadores y Acción</h4>
-                    <div className="space-y-4">
-                       {['gold', 'paper'].map(key => (
-                        <div key={key} className="flex items-center justify-between p-4 bg-brand-bone rounded-2xl border border-brand-sand/30">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg border border-black/5 shadow-sm" style={{ backgroundColor: (currentTheme as any)[key] }} />
-                            <div>
-                               <p className="text-[11px] font-bold text-brand-ink capitalize">{key === 'gold' ? 'Botones y Call-to-action' : 'Superficie de Tarjetas'}</p>
-                               <p className="text-[8px] opacity-40 uppercase">Afecta interactividad visual</p>
-                            </div>
-                          </div>
-                          <input 
-                             type="color" 
-                             value={(currentTheme as any)[key]} 
-                             onChange={(e) => handleColorChange(key, e.target.value)}
-                             className="w-8 h-8 rounded-full border-none cursor-pointer"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Right sidebar: Dark mode, Logo, Preview */}
-            <div className="lg:col-span-4 flex flex-col gap-6">
-              {/* Dark Mode Toggle */}
-              <div className="editorial-card space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    {darkMode ? <Moon size={18} className="text-brand-gold" /> : <Sun size={18} className="text-brand-gold" />}
-                    <div>
-                      <p className="text-sm font-bold text-brand-ink">Modo Oscuro</p>
-                      <p className="text-[9px] text-brand-ink/40">{darkMode ? 'Activado' : 'Desactivado'}</p>
-                    </div>
-                  </div>
-                  <button onClick={() => setDarkMode(!darkMode)}
-                    className={`w-14 h-7 rounded-full transition-all relative ${darkMode ? 'bg-brand-gold' : 'bg-brand-sand/40'}`}>
-                    <motion.div animate={{ x: darkMode ? 28 : 2 }} className="w-6 h-6 bg-white rounded-full shadow-md absolute top-0.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Custom Logo */}
-              <div className="editorial-card space-y-4">
-                <h4 className="text-sm font-bold text-brand-ink flex items-center gap-2"><Image size={14} /> Logo Personalizado</h4>
-                <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 rounded-2xl border-2 border-dashed border-brand-sand/50 flex items-center justify-center overflow-hidden bg-brand-bone">
-                    {customLogo ? (
-                      <img src={customLogo} alt="Logo" className="w-full h-full object-contain" />
-                    ) : (
-                      <Image size={24} className="text-brand-ink/20" />
-                    )}
-                  </div>
-                  <div className="flex-1 space-y-2">
-                    <label className="flex items-center gap-2 px-4 py-2 bg-brand-ink text-brand-bone rounded-xl text-[10px] font-bold uppercase tracking-widest cursor-pointer hover:bg-brand-gold hover:text-brand-ink transition-all">
-                      <UploadCloud size={12} /> Subir Logo
-                      <input type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
-                    </label>
-                    {customLogo && (
-                      <button onClick={() => { setCustomLogo(null); localStorage.removeItem('royaltica_custom_logo'); }}
-                        className="text-[9px] text-red-500 hover:underline">Eliminar logo</button>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Preview Device Toggle */}
-              <div className="editorial-card space-y-4">
-                <h4 className="text-sm font-bold text-brand-ink flex items-center gap-2"><Eye size={14} /> Vista Previa</h4>
-                <div className="flex gap-2">
-                  <button onClick={() => setPreviewDevice('desktop')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${
-                      previewDevice === 'desktop' ? 'bg-brand-ink text-brand-bone' : 'bg-brand-bone text-brand-ink/40'
-                    }`}><Monitor size={14} /> Desktop</button>
-                  <button onClick={() => setPreviewDevice('mobile')}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${
-                      previewDevice === 'mobile' ? 'bg-brand-ink text-brand-bone' : 'bg-brand-bone text-brand-ink/40'
-                    }`}><Smartphone size={14} /> Mobile</button>
-                </div>
-                {/* Mini preview */}
-                <div className={`rounded-2xl border border-brand-sand/30 overflow-hidden transition-all ${previewDevice === 'mobile' ? 'max-w-[200px] mx-auto' : ''}`}
-                  style={{ backgroundColor: currentTheme.bone }}>
-                  <div className="h-8 flex items-center gap-2 px-3" style={{ backgroundColor: currentTheme.ink }}>
-                    {customLogo ? <img src={customLogo} alt="" className="h-4 w-4 rounded object-contain" /> : <div className="w-4 h-4 rounded" style={{ backgroundColor: currentTheme.gold }} />}
-                    <div className="h-1.5 w-12 rounded-full" style={{ backgroundColor: currentTheme.gold, opacity: 0.4 }} />
-                  </div>
-                  <div className="p-3 space-y-2">
-                    <div className="h-2 w-20 rounded-full" style={{ backgroundColor: currentTheme.ink, opacity: 0.2 }} />
-                    <div className="flex gap-2">
-                      <div className="h-8 flex-1 rounded-lg" style={{ backgroundColor: currentTheme.paper, border: `1px solid ${currentTheme.sand}` }} />
-                      <div className="h-8 flex-1 rounded-lg" style={{ backgroundColor: currentTheme.paper, border: `1px solid ${currentTheme.sand}` }} />
-                    </div>
-                    <div className="h-6 rounded-lg flex items-center justify-center" style={{ backgroundColor: currentTheme.gold }}>
-                      <div className="h-1 w-8 rounded-full" style={{ backgroundColor: currentTheme.ink, opacity: 0.3 }} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Restore Default */}
-              <div className="editorial-card bg-brand-ink text-center space-y-4 relative overflow-hidden">
-                <div className="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_center,_var(--brand-gold),transparent)]" />
-                <div className="relative z-10 space-y-3">
-                  <h3 className="text-lg font-serif text-brand-bone">Previsualización en Vivo</h3>
-                  <p className="text-[9px] text-brand-bone/40 uppercase tracking-[0.2em] leading-relaxed">
-                    Los cambios se aplican instantáneamente. Se guardan en localStorage.
-                  </p>
-                  <button onClick={() => onThemeChange(defaultTheme)}
-                    className="px-6 py-3 border border-brand-bone/20 text-brand-bone text-[8px] font-black uppercase tracking-widest rounded-xl hover:bg-brand-bone hover:text-brand-ink transition-all">
-                    Regresar a Original
-                  </button>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-
         {/* Existing Sections (ERP, Manual, Archive) remain same... */}
         {activeSection === 'erp' && (
           <motion.div key="erp" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-8">
@@ -7556,6 +7390,7 @@ function AuditsView({
   onApproveWithAnimation?: (inv: Invoice) => void
 }) {
   const [showAuthStatus, setShowAuthStatus] = useState<string | null>(null);
+  const [complianceInv, setComplianceInv] = useState<Invoice | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('all');
 
@@ -7847,6 +7682,7 @@ function AuditsView({
                             }`}>
                               {isFullyValidated ? 'VALIDADA' : inv.forensicStatus === 'VALIDATED' ? 'PARCIAL' : 'EN PROCESO'}
                             </span>
+                            <SatRiskBadges inv={inv} />
                           </div>
                           <span className="text-[10px] text-brand-ink/40 font-serif mt-0.5">{inv.provider}</span>
                         </div>
@@ -7875,7 +7711,8 @@ function AuditsView({
                               onClick: () => setViewingDocs({ title: `Integridad y OC - ${inv.id}`, docs: [{ id: 'po-1', name: `PO_${inv.poNumber}.pdf`, date: inv.date, type: 'application/pdf' }] }) },
                             { label: 'Precio IA', sub: 'Estabilidad y contratos', ok: inv.forensicStatus === 'VALIDATED' || !inv.forensicStatus, warn: inv.forensicStatus === 'DISCREPANCY',
                               onClick: () => setViewingDocs({ title: `Precios - ${inv.provider}`, docs: [{ id: 'hist-1', name: 'PRECIOS_CONTRATO.pdf', date: inv.date, type: 'application/pdf' }] }) },
-                            { label: 'Estatus SAT', sub: inv.satStatus || 'Pendiente', ok: inv.satStatus === 'Vigente', fail: inv.satStatus === 'Cancelado', warn: inv.satStatus === 'No Encontrado', pending: !inv.satStatus || inv.satStatus === 'Pendiente' },
+                            { label: 'Estatus SAT', sub: inv.satStatus || 'Pendiente', ok: inv.satStatus === 'Vigente', fail: inv.satStatus === 'Cancelado', warn: inv.satStatus === 'No Encontrado', pending: !inv.satStatus || inv.satStatus === 'Pendiente',
+                              onClick: () => setComplianceInv(inv) },
                             { label: 'Firmas', sub: `${sigs} de 2 autorizaciones`, ok: sigs >= 2, warn: sigs === 1,
                               onClick: () => setShowAuthStatus(inv.id) },
                           ].map((check, ci) => (
@@ -7992,9 +7829,12 @@ function AuditsView({
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-bold text-brand-ink">{inv.id}</span>
-                            <span className={`text-[8px] font-bold px-2 py-0.5 rounded-md ${inv.forensicStatus === 'BLOCKED' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'}`}>
+                            <button onClick={() => setComplianceInv(inv)} title="Ver detalle de la incidencia y verificación SAT"
+                              className={`text-[8px] font-bold px-2 py-0.5 rounded-md inline-flex items-center gap-1 transition-all hover:brightness-95 hover:ring-1 cursor-pointer ${inv.forensicStatus === 'BLOCKED' ? 'bg-red-100 text-red-600 hover:ring-red-300' : 'bg-amber-100 text-amber-700 hover:ring-amber-300'}`}>
                               {inv.forensicStatus === 'BLOCKED' ? 'BLOQUEADA' : 'DISCREPANCIA'}
-                            </span>
+                              <Info size={9} />
+                            </button>
+                            <SatRiskBadges inv={inv} />
                             {ClarificationService.hasClari(inv.id) && (() => {
                               const cl = ClarificationService.getByInvoice(inv.id)[0];
                               return cl?.status === 'pending' ? (
@@ -8148,6 +7988,15 @@ function AuditsView({
           )}
         </>
       )}
+
+      <AnimatePresence>
+        {complianceInv && (
+          <ComplianceDetailModal
+            inv={complianceInv}
+            onClose={() => setComplianceInv(null)}
+          />
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showAuthStatus && (
@@ -8432,6 +8281,235 @@ function StatusBadge({ status }: { status: Invoice['status'] }) {
     rejected: 'Rechazada'
   };
   return <span className={`audit-badge ml-2 ${styles[status]}`}>{labels[status]}</span>;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// ─── HistorialPagosPanel ──────────────────────────────────────────────────────
+// Historial real de pagos (GET /payments): lista paginada con filtros por
+// rango de fechas y ruta, detalle expandible con las facturas (CFDI) de cada
+// pago y exportación CSV. Un "pago" agrupa 1..N facturas (pago global).
+function HistorialPagosPanel() {
+  const [page, setPage] = React.useState(1);
+  const [dateFrom, setDateFrom] = React.useState('');
+  const [dateTo, setDateTo] = React.useState('');
+  const [route, setRoute] = React.useState<'' | 'TRANSFER' | 'CREDIT'>('');
+  const [result, setResult] = React.useState<Paginated<PaymentRow> | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [expanded, setExpanded] = React.useState<string | null>(null);
+  const [details, setDetails] = React.useState<Record<string, PaymentDetail>>({});
+  const [detailLoading, setDetailLoading] = React.useState<string | null>(null);
+  const [exporting, setExporting] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    api
+      .getPayments({
+        page,
+        limit: 10,
+        route: route || undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+      })
+      .then(res => { if (!cancelled) setResult(res); })
+      .catch(err => { if (!cancelled) setError(err.message ?? 'No se pudo cargar el historial de pagos.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [page, route, dateFrom, dateTo]);
+
+  const toggleDetail = (id: string) => {
+    if (expanded === id) { setExpanded(null); return; }
+    setExpanded(id);
+    if (!details[id]) {
+      setDetailLoading(id);
+      api.getPayment(id)
+        .then(d => setDetails(prev => ({ ...prev, [id]: d })))
+        .catch(() => undefined)
+        .finally(() => setDetailLoading(null));
+    }
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try { await api.exportPaymentsCsv(); } catch { /* la descarga falló; el usuario puede reintentar */ }
+    setExporting(false);
+  };
+
+  const PAY_STATUS: Record<PaymentRow['status'], { label: string; badge: string }> = {
+    SCHEDULED:  { label: 'Programado',   badge: 'bg-blue-100 text-blue-700' },
+    PROCESSING: { label: 'Procesando',   badge: 'bg-yellow-100 text-yellow-700' },
+    COMPLETED:  { label: 'Completado ✓', badge: 'bg-green-100 text-green-700' },
+    FAILED:     { label: 'Fallido',      badge: 'bg-red-100 text-red-700' },
+  };
+  const ROUTE_LABEL: Record<PaymentRow['route'], string> = {
+    TRANSFER: 'Transferencia',
+    CREDIT: 'Crédito',
+  };
+  const fmtDate = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+
+  const rows = result?.data ?? [];
+  const meta = result?.meta;
+  const pageAmount = rows.reduce((s, p) => s + p.totalAmount, 0);
+
+  const resetFilters = () => { setDateFrom(''); setDateTo(''); setRoute(''); setPage(1); };
+  const hasFilters = dateFrom || dateTo || route;
+
+  return (
+    <div className="space-y-6">
+      {/* Stats + Export */}
+      <div className="flex flex-col md:flex-row gap-4 items-start justify-between">
+        <div className="grid grid-cols-2 gap-4">
+          {[
+            { label: 'Pagos registrados', val: meta ? String(meta.total) : '—', color: 'text-brand-ink', bg: 'bg-white border-brand-sand/30' },
+            { label: 'Monto (página actual)', val: CURRENCY_FORMATTER.format(pageAmount), color: 'text-green-600', bg: 'bg-green-50 border-green-200' },
+          ].map(s => (
+            <div key={s.label} className={`p-4 rounded-2xl border ${s.bg} text-center`}>
+              <p className={`text-base font-bold font-serif ${s.color}`}>{s.val}</p>
+              <p className="text-[9px] uppercase font-bold tracking-widest text-brand-ink/40 mt-0.5">{s.label}</p>
+            </div>
+          ))}
+        </div>
+        <button onClick={handleExport} disabled={exporting}
+          className="flex items-center gap-2 px-5 py-3 bg-brand-ink text-brand-bone rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-gold hover:text-brand-ink transition-all shadow-sm disabled:opacity-50">
+          <Download size={14}/> {exporting ? 'Exportando…' : 'Exportar CSV'}
+        </button>
+      </div>
+
+      {/* Filtros */}
+      <div className="flex flex-wrap items-end gap-3 p-4 bg-white border border-brand-sand/30 rounded-2xl">
+        <div className="space-y-1">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-brand-ink/40">Desde</p>
+          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }}
+            className="px-3 py-2 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold"/>
+        </div>
+        <div className="space-y-1">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-brand-ink/40">Hasta</p>
+          <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }}
+            className="px-3 py-2 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold"/>
+        </div>
+        <div className="space-y-1">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-brand-ink/40">Ruta</p>
+          <select value={route} onChange={e => { setRoute(e.target.value as '' | 'TRANSFER' | 'CREDIT'); setPage(1); }}
+            className="px-3 py-2 border border-brand-sand rounded-xl text-xs focus:outline-none focus:border-brand-gold bg-white">
+            <option value="">Todas</option>
+            <option value="TRANSFER">Transferencia</option>
+            <option value="CREDIT">Crédito</option>
+          </select>
+        </div>
+        {hasFilters && (
+          <button onClick={resetFilters}
+            className="flex items-center gap-1.5 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-brand-ink/40 hover:text-brand-ink transition-all">
+            <X size={12}/> Limpiar filtros
+          </button>
+        )}
+      </div>
+
+      {/* Tabla de pagos */}
+      <div className="editorial-card !p-0 overflow-hidden shadow-xl shadow-brand-sand/30 border border-brand-sand/50">
+        <div className="px-6 py-3 bg-white/50 border-b border-brand-sand/20 flex items-center justify-between">
+          <p className="text-sm font-bold text-brand-ink">Historial de Pagos → Facturas (CFDI)</p>
+          <div className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"/><span className="text-[9px] font-bold text-brand-ink/40 uppercase tracking-wider">Datos reales</span></div>
+        </div>
+
+        {error && (
+          <div className="px-6 py-4 flex items-center gap-2 text-xs text-red-700 bg-red-50">
+            <AlertTriangle size={14}/> {error}
+          </div>
+        )}
+        {loading && !error && (
+          <div className="px-6 py-8 flex items-center justify-center gap-3 text-xs text-brand-ink/40">
+            <motion.div animate={{rotate:360}} transition={{repeat:Infinity,duration:1,ease:'linear'}} className="w-4 h-4 border-2 border-brand-ink/20 border-t-brand-gold rounded-full"/>
+            Cargando historial…
+          </div>
+        )}
+        {!loading && !error && rows.length === 0 && (
+          <div className="px-6 py-10 text-center space-y-1">
+            <p className="text-sm font-serif text-brand-ink/60">Sin pagos {hasFilters ? 'con estos filtros' : 'registrados todavía'}.</p>
+            <p className="text-[10px] text-brand-ink/30">Los pagos que realices desde Facturas por Pagar aparecerán aquí.</p>
+          </div>
+        )}
+
+        {!loading && !error && rows.length > 0 && (
+          <div className="divide-y divide-brand-sand/20">
+            {rows.map(p => {
+              const isOpen = expanded === p.id;
+              const st = PAY_STATUS[p.status];
+              const detail = details[p.id];
+              return (
+                <div key={p.id}>
+                  <div className="flex items-center gap-4 px-6 py-4 hover:bg-brand-gold/5 transition-all cursor-pointer group" onClick={() => toggleDetail(p.id)}>
+                    <div className={`transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}><ChevronRight size={16} className="text-brand-ink/30 group-hover:text-brand-gold"/></div>
+                    <div className="flex-1 grid grid-cols-2 md:grid-cols-5 gap-4 items-center">
+                      <div>
+                        <p className="text-[10px] font-bold font-mono text-brand-ink">{p.id.slice(0, 8).toUpperCase()}</p>
+                        <p className="text-[9px] text-brand-ink/30 font-serif">{fmtDate(p.createdAt)}</p>
+                      </div>
+                      <p className="text-[11px] text-brand-ink/60">{ROUTE_LABEL[p.route] ?? p.route}{p.transactionRef ? ` · Ref: ${p.transactionRef}` : ''}</p>
+                      <p className="text-sm font-bold font-serif text-brand-ink">{CURRENCY_FORMATTER.format(p.totalAmount)}</p>
+                      <p className="text-[10px] text-brand-ink/40">{p.processedAt ? `Procesado ${fmtDate(p.processedAt)}` : p.scheduledDate ? `Programado ${fmtDate(p.scheduledDate)}` : '—'}</p>
+                      <div className="flex items-center gap-2 justify-end">
+                        <span className={`text-[8px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${st.badge}`}>{st.label}</span>
+                        <span className="text-[9px] text-brand-ink/30">{p.invoiceCount} {p.invoiceCount === 1 ? 'factura' : 'facturas'}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <AnimatePresence>
+                    {isOpen && (
+                      <motion.div initial={{height:0,opacity:0}} animate={{height:'auto',opacity:1}} exit={{height:0,opacity:0}} className="overflow-hidden bg-brand-bone/40">
+                        <div className="ml-10 mr-6 mb-3 divide-y divide-brand-sand/10 rounded-2xl overflow-hidden border border-brand-sand/20">
+                          {detailLoading === p.id && !detail && (
+                            <div className="px-5 py-4 bg-white/60 flex items-center gap-3 text-[10px] text-brand-ink/40">
+                              <motion.div animate={{rotate:360}} transition={{repeat:Infinity,duration:1,ease:'linear'}} className="w-3 h-3 border-2 border-brand-ink/20 border-t-brand-gold rounded-full"/>
+                              Cargando facturas del pago…
+                            </div>
+                          )}
+                          {detail?.invoices.map(inv => (
+                            <div key={inv.id} className="flex items-center gap-4 px-5 py-3 bg-white/60 hover:bg-brand-gold/5 transition-all">
+                              <div className="w-px h-4 bg-brand-sand/40"/>
+                              <div className="flex-1 grid grid-cols-3 gap-4">
+                                <div>
+                                  <p className="text-[10px] font-bold text-brand-ink">{inv.supplier?.name ?? 'Proveedor'}</p>
+                                  <p className="text-[9px] text-brand-ink/30 font-mono">{inv.folio ? `Folio ${inv.folio}` : inv.id.slice(0, 8)}</p>
+                                </div>
+                                <span className="text-[9px] font-mono text-brand-ink/50 bg-brand-sand/20 px-2 py-0.5 rounded-lg self-center truncate">{inv.cfdiUuid}</span>
+                                <p className="text-sm font-bold font-serif text-brand-ink text-right">{CURRENCY_FORMATTER.format(Number(inv.total))}</p>
+                              </div>
+                            </div>
+                          ))}
+                          {detail && (
+                            <div className="px-5 py-2 bg-brand-bone/60 text-[9px] text-brand-ink/40 flex items-center justify-between">
+                              <span>{detail.creator ? `Creado por ${detail.creator.name}` : ''}{detail.notes ? ` · ${detail.notes}` : ''}</span>
+                              <span className="font-bold">{detail.invoices.length} CFDI · {CURRENCY_FORMATTER.format(detail.totalAmount)}</span>
+                            </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {meta && meta.totalPages > 1 && (
+          <div className="px-6 py-3 bg-brand-bone/50 border-t border-brand-sand/20 flex items-center justify-between">
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              className="flex items-center gap-1 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-brand-ink/60 hover:text-brand-ink disabled:opacity-30 transition-all">
+              <ChevronLeft size={12}/> Anterior
+            </button>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-brand-ink/40">Página {meta.page} de {meta.totalPages}</p>
+            <button onClick={() => setPage(p => Math.min(meta.totalPages, p + 1))} disabled={page >= meta.totalPages}
+              className="flex items-center gap-1 px-4 py-2 text-[9px] font-bold uppercase tracking-widest text-brand-ink/60 hover:text-brand-ink disabled:opacity-30 transition-all">
+              Siguiente <ChevronRight size={12}/>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // ─── ContabilidadView ─────────────────────────────────────────────────────────
@@ -10206,7 +10284,7 @@ function FiscalAuditDashboard() {
     { id: 'diot',            label: 'DIOT',               icon: <Database size={14} /> },
     { id: 'factoraje',       label: 'Anticipos',          icon: <DollarSign size={14} /> },
     { id: 'erp',             label: 'Conectividad ERP',   icon: <Webhook size={14} /> },
-    { id: 'pagos_globales',  label: 'Pagos Globales',     icon: <Layers size={14} /> },
+    { id: 'pagos_globales',  label: 'Historial de Pagos', icon: <History size={14} /> },
   ] as const;
 
   return (
@@ -10217,7 +10295,7 @@ function FiscalAuditDashboard() {
           <span className="label-caps mb-2 block">Registro Dual Inmutable</span>
           <h2 className="text-4xl font-serif text-brand-ink">Auditoría Fiscal</h2>
           <p className="text-sm text-brand-ink/40 font-serif mt-1">
-            Trazabilidad completa de REPs, DIOT, Pagos Globales y Sincronización ERP reportados al SAT.
+            Trazabilidad completa de REPs, DIOT, Historial de Pagos y Sincronización ERP reportados al SAT.
           </p>
         </div>
 
@@ -10346,10 +10424,7 @@ function FiscalAuditDashboard() {
           <REPMotorPanel />
         </div>
       ) : activeSection === 'pagos_globales' ? (
-        <div className="space-y-4">
-          <DemoModeNotice label="Vista previa · Pagos Globales" />
-          <PagosGlobalesPanel />
-        </div>
+        <HistorialPagosPanel />
       ) : activeSection === 'diot' ? (
         <DiotCompilerPanel />
       ) : activeSection === 'factoraje' ? (
@@ -11353,6 +11428,36 @@ function ProviderDashboard({ user, supplier, onLogout, onBackToRole }: { user: F
                   </button>
                 )}
               </div>
+
+              {/* Verificación SAT del proveedor (69-B + RFC) */}
+              {supplier.sat69b && (
+                <div className={`rounded-2xl border p-6 space-y-4 ${supplier.sat69b.listed ? 'bg-red-50 border-red-200' : 'bg-white/70 backdrop-blur-sm border-brand-sand/20'}`}>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-[10px] font-bold uppercase tracking-wider text-brand-ink/40">Verificación ante el SAT</h3>
+                    <span className={`text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${supplier.sat69b.listed ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                      {supplier.sat69b.listed ? <><AlertTriangle size={9} /> Atención</> : <><ShieldCheck size={9} /> Verificado</>}
+                    </span>
+                  </div>
+                  <div className="space-y-2.5">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white flex-shrink-0 ${supplier.sat69b.rfcValid ? 'bg-green-500' : 'bg-amber-400'}`}>
+                        {supplier.sat69b.rfcValid ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
+                      </div>
+                      <span className="text-[11px] text-brand-ink/70"><b>RFC:</b> {supplier.rfc} — {supplier.sat69b.rfcValid ? 'formato válido y verificado.' : 'formato no válido.'}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white flex-shrink-0 ${supplier.sat69b.listed ? 'bg-red-500' : 'bg-green-500'}`}>
+                        {supplier.sat69b.listed ? <Ban size={12} /> : <CheckCircle2 size={12} />}
+                      </div>
+                      <span className="text-[11px] text-brand-ink/70">
+                        <b>Lista negra 69-B (EFOS):</b> {supplier.sat69b.listed
+                          ? `Tu RFC aparece en la lista con estatus ${supplier.sat69b.status}. Regulariza tu situación ante el SAT para no afectar la deducibilidad de tus facturas.`
+                          : 'Aprobado. Tu RFC NO aparece en la lista negra 69-B del SAT.'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Documents (KYC reales — Portal del Proveedor) */}
               <div className="bg-white/70 backdrop-blur-sm rounded-2xl border border-brand-sand/20 p-6 space-y-4">

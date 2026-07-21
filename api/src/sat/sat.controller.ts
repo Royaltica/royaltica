@@ -22,11 +22,22 @@ export class SatController {
     return { ...active, list69b: blacklist };
   }
 
-  /** Sincroniza la lista 69-B (solo administradores). */
+  /** Sincroniza la lista 69-B con entradas manuales (solo administradores). */
   @Post('sync-69b')
   @UseGuards(RolesGuard)
   @Roles('CORPORATE_ADMIN', 'SUPERADMIN')
   sync69b(@Body() dto: Sync69bDto) {
     return this.sat.sync69b(dto.entries);
+  }
+
+  /**
+   * Descarga y sincroniza la lista 69-B oficial del SAT ahora mismo
+   * (además del cron nocturno). Solo administradores.
+   */
+  @Post('sync-69b/download')
+  @UseGuards(RolesGuard)
+  @Roles('CORPORATE_ADMIN', 'SUPERADMIN')
+  sync69bDownload() {
+    return this.sat.sync69bFromSat();
   }
 }

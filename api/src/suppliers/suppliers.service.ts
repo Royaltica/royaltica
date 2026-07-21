@@ -8,6 +8,7 @@ import type { Prisma, Supplier } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { WEBHOOK_EVENTS } from '../webhooks/webhook-events';
+import { SatService } from '../sat/sat.service';
 import {
   buildPaginated,
   type Paginated,
@@ -29,6 +30,7 @@ export class SuppliersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly webhooks: WebhooksService,
+    private readonly sat: SatService,
   ) {}
 
   async create(admin: AuthenticatedUser, dto: CreateSupplierDto) {
@@ -116,12 +118,30 @@ export class SuppliersService {
       },
     );
 
+    const efos = await this.sat.check69bBatch(rows.map((r) => r.rfc));
     const data = rows.map((r) => ({
       ...serialize(r),
       documentsCount: r._count.documents,
       invoicesCount: r._count.invoices,
+      sat69b: this.buildSat69b(r.rfc, efos.get(r.rfc.toUpperCase())),
     }));
     return buildPaginated(data, total, query.page, query.limit);
+  }
+
+  /**
+   * Estatus de verificación SAT a nivel proveedor (se calcula por RFC, no por
+   * factura): validez de formato del RFC y presencia en la lista negra 69-B.
+   */
+  private buildSat69b(
+    rfc: string,
+    entry?: { status: string },
+  ): { listed: boolean; status: string | null; rfcValid: boolean } {
+    const rfcValid = /^[A-ZÑ&]{3,4}\d{6}[A-Z\d]{3}$/i.test(rfc);
+    return {
+      listed: entry != null,
+      status: entry?.status ?? null,
+      rfcValid,
+    };
   }
 
   async findOne(admin: AuthenticatedUser, id: string) {
@@ -138,7 +158,11 @@ export class SuppliersService {
       }),
     );
     if (!supplier) throw new NotFoundException('Proveedor no encontrado.');
-    return serialize(supplier);
+    const efos = await this.sat.check69bBatch([supplier.rfc]);
+    return {
+      ...serialize(supplier),
+      sat69b: this.buildSat69b(supplier.rfc, efos.get(supplier.rfc.toUpperCase())),
+    };
   }
 
   async update(admin: AuthenticatedUser, id: string, dto: UpdateSupplierDto) {

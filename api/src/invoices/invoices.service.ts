@@ -155,7 +155,16 @@ export class InvoicesService {
       },
     );
 
-    return buildPaginated(rows.map(serialize), total, query.page, query.limit);
+    // La verificación 69-B es una propiedad del PROVEEDOR (su RFC no cambia
+    // entre facturas), así que se expone en /suppliers y /portal/profile, no
+    // aquí: repetirla por factura sería trabajo redundante. Por factura solo
+    // importa el estatus del CFDI (satStatus), que sí es único por UUID.
+    return buildPaginated(
+      rows.map(serialize),
+      total,
+      query.page,
+      query.limit,
+    );
   }
 
   async findOne(user: AuthenticatedUser, id: string) {

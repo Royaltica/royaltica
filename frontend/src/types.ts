@@ -16,6 +16,9 @@ export interface Supplier {
   clabe?: string;
   bankName?: string;
   score?: number;
+  // Verificación SAT a nivel proveedor (por RFC, no por factura):
+  // listed = RFC en lista negra 69-B; rfcValid = formato de RFC válido.
+  sat69b?: { listed: boolean; status: string | null; rfcValid: boolean } | null;
 }
 
 export interface AuthorizationStatus {
@@ -57,7 +60,7 @@ export interface Invoice {
   documentUrl?: string;
   // ─── CFDI / SAT Verification ───
   cfdiUUID?: string;         // Folio fiscal from TimbreFiscalDigital XML node
-  satStatus?: 'Vigente' | 'Cancelado' | 'No Encontrado' | 'Pendiente';
+  satStatus?: 'Vigente' | 'Cancelado' | 'No Encontrado' | 'No Verificado' | 'Pendiente';
   satVerifiedAt?: string;    // ISO timestamp of last SAT verification
   satCancelable?: string;    // "Cancelable sin aceptación" | "Cancelable con aceptación" | etc.
   // ─── Other fields ───

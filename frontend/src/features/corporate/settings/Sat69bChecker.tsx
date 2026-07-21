@@ -38,7 +38,7 @@ export function Sat69bChecker() {
       {result && (
         <div className="flex flex-wrap gap-2">
           <span className={`text-[9px] font-bold px-3 py-1.5 rounded-full ${result.active ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-            {result.active ? 'RFC ACTIVO' : 'RFC no activo / desconocido'}
+            {result.active ? 'RFC CON FORMATO VÁLIDO' : 'RFC inválido'}
           </span>
           <span className={`text-[9px] font-bold px-3 py-1.5 rounded-full ${listed ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
             {listed ? '⚠ EN LISTA 69-B (EFOS)' : 'Fuera de lista 69-B'}

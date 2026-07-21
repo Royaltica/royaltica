@@ -2,6 +2,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { SuppliersService } from './suppliers.service';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { SatService } from '../sat/sat.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 
 const admin: AuthenticatedUser = {
@@ -40,9 +41,11 @@ describe('SuppliersService', () => {
       fn(prisma),
     );
     const webhooks = { dispatch: jest.fn().mockResolvedValue(undefined) };
+    const sat = { check69bBatch: jest.fn().mockResolvedValue(new Map()) };
     service = new SuppliersService(
       prisma as unknown as PrismaService,
       webhooks as unknown as WebhooksService,
+      sat as unknown as SatService,
     );
   });
 
