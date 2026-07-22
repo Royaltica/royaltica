@@ -1,10 +1,9 @@
 {
-  "projectId": "gen-lang-client-0467403288",
-  "appId": "1:616114090070:web:4661bd2a28b2403962cbf7",
-  "apiKey": "AIzaSyBr2_Ywxc_peTrGkYoj5k1nOeugYs1FkdQ",
-  "authDomain": "gen-lang-client-0467403288.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-ada61563-41bc-4cfe-a398-9269ae18efd4",
-  "storageBucket": "gen-lang-client-0467403288.firebasestorage.app",
-  "messagingSenderId": "616114090070",
-  "measurementId": ""
+  "apiKey": "AIzaSyBZ5hwMzKlFG8u35OeDP8vaGy7_89NFhDw",
+  "authDomain": "royaltica1.firebaseapp.com",
+  "projectId": "royaltica1",
+  "storageBucket": "royaltica1.firebasestorage.app",
+  "messagingSenderId": "86891671135",
+  "appId": "1:86891671135:web:a2d5a8629dcae5a180b5ea",
+  "measurementId": "G-F3NQLB8FQQ"
 }
