@@ -68,6 +68,12 @@ export const envSchema = z.object({
   ERP_API_URL: z.string().optional().default(''),
   ERP_API_KEY: z.string().optional().default(''),
 
+  // SPEI (dispersión de pagos) — opcionales, modo stub hasta tener credenciales.
+  SPEI_PROVIDER: z.enum(['conekta', 'stp']).optional().default('conekta'),
+  SPEI_API_KEY: z.string().optional().default(''),
+  SPEI_API_URL: z.string().optional().default(''),
+  SPEI_CLABE_ORIGEN: z.string().optional().default(''),
+
   // WhatsApp para alertas críticas — opcionales (modo stub hasta tener token).
   // 'meta' (Cloud API) usa WHATSAPP_PHONE_ID; 'twilio' usa WHATSAPP_FROM.
   WHATSAPP_PROVIDER: z.enum(['meta', 'twilio']).optional().default('meta'),
