@@ -1,20 +1,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// SAT CFDI Verification Service
+// SAT CFDI Verification Service (frontend)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// PRODUCTION SWAP POINT:
-// Replace `mockVerifyCFDI()` with a real call to:
-//   POST https://consultaqr.facturaelectronica.sat.gob.mx/ConsultaCFDIService.svc
-//   Body (SOAP): <Expresion>?re={rfcEmisor}&rr={rfcReceptor}&tt={total}&id={uuid}</Expresion>
+// Este servicio NO simula: es un proxy delgado al backend real.
+//   Backend:  POST /sat/verify  →  SatService.verifyCfdi()
+//   El backend consulta el servicio SOAP público y gratuito del SAT:
+//   https://consultaqr.facturaelectronica.sat.gob.mx/ConsultaCFDIService.svc
 //
-// The SAT endpoint is FREE and returns:
-//   - Estado: "Vigente" | "Cancelado" | "No Encontrado"
-//   - EsCancelable: "Cancelable sin aceptación" | "Cancelable con aceptación" | "No cancelable"
-//   - EstatusCancelacion: null | "En proceso" | "Cancelado sin aceptación" | etc.
-//
-// For high-volume production (>10K/day), switch to a PAC API:
-//   Finkok, SW Sapiens, or Edicom (~$0.50 MXN/query)
+// La ÚNICA fuente de verdad de mock vs. real es el flag del backend
+// `SAT_VERIFY_MODE` (mock|live). El frontend solo refleja lo que responde
+// el backend — no hay lógica de estatus duplicada aquí.
 // ─────────────────────────────────────────────────────────────────────────────
+
+import { api, type SatVerifyResponse } from './apiClient.ts';
 
 export interface SATVerificationResult {
   uuid: string;
@@ -25,103 +23,61 @@ export interface SATVerificationResult {
   rfcEmisor: string;
   rfcReceptor: string;
   total: number;
-  // Backend integration fields
-  source: 'mock' | 'sat-ws' | 'pac-api';
-  rawResponse?: string;
+  /** Origen del dato: el backend real (`sat-ws`) o modo mock del backend. */
+  source: 'mock' | 'sat-ws';
 }
 
 export interface CFDIVerificationInput {
-  uuid: string;           // The CFDI's fiscal folio (UUID from TimbreFiscalDigital node)
-  rfcEmisor: string;      // Provider's RFC (13 chars for persona moral, 12 for física)
-  rfcReceptor: string;    // Your company's RFC
-  total: number;          // Total amount on the CFDI
+  uuid: string;           // Folio fiscal del CFDI (UUID del nodo TimbreFiscalDigital)
+  rfcEmisor: string;      // RFC del emisor (proveedor)
+  rfcReceptor: string;    // RFC del receptor (tu empresa)
+  total: number;          // Total del CFDI
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MOCK IMPLEMENTATION (deterministic — same UUID always returns same result)
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Verifica un CFDI ante el SAT a través del backend real.
+ *
+ * El backend degrada a `No Verificado` si el SAT no responde; aquí eso se
+ * mapea a `No Encontrado` para el tipo público (que solo maneja los 3 estados
+ * oficiales), pero nunca inventa un `Vigente` falso.
+ */
+export async function verifyCFDI(input: CFDIVerificationInput): Promise<SATVerificationResult> {
+  const res: SatVerifyResponse = await api.verifyCfdi({
+    cfdiUuid: input.uuid,
+    rfcEmisor: input.rfcEmisor,
+    rfcReceptor: input.rfcReceptor,
+    total: input.total,
+  });
 
-function mockVerifyCFDI(input: CFDIVerificationInput): SATVerificationResult {
-  // Deterministic: use UUID to decide status (not random!)
-  // UUIDs ending in 0-7 → Vigente, 8 → Cancelado, 9 → No Encontrado
-  const lastChar = input.uuid.slice(-1).toLowerCase();
-  const numericVal = parseInt(lastChar, 16); // 0-15
-
-  let estado: SATVerificationResult['estado'] = 'Vigente';
-  let esCancelable: SATVerificationResult['esCancelable'] = 'Cancelable con aceptación';
-  let estatusCancelacion: string | null = null;
-
-  if (numericVal >= 14) {
-    // ~12.5% chance: Not found
-    estado = 'No Encontrado';
-    esCancelable = null;
-  } else if (numericVal >= 12) {
-    // ~12.5% chance: Cancelled
-    estado = 'Cancelado';
-    esCancelable = 'No cancelable';
-    estatusCancelacion = 'Cancelado sin aceptación';
-  } else {
-    // ~75% chance: Active/Vigente
-    estado = 'Vigente';
-    esCancelable = numericVal < 4 ? 'Cancelable sin aceptación' : 'Cancelable con aceptación';
-  }
+  // El backend puede devolver 'No Verificado' (SAT no respondió). El tipo
+  // público solo expone los 3 estados oficiales del SAT; 'No Verificado' se
+  // trata como 'No Encontrado' a nivel de UI (discrepancia, no aprobación).
+  const estado: SATVerificationResult['estado'] =
+    res.status === 'Vigente' || res.status === 'Cancelado'
+      ? res.status
+      : 'No Encontrado';
 
   return {
     uuid: input.uuid,
     estado,
-    esCancelable,
-    estatusCancelacion,
-    fechaVerificacion: new Date().toISOString(),
+    esCancelable: res.esCancelable as SATVerificationResult['esCancelable'],
+    estatusCancelacion: res.estatusCancelacion,
+    fechaVerificacion: res.verifiedAt,
     rfcEmisor: input.rfcEmisor,
     rfcReceptor: input.rfcReceptor,
     total: input.total,
-    source: 'mock',
+    source: res.mode === 'live' ? 'sat-ws' : 'mock',
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PUBLIC API
-// ─────────────────────────────────────────────────────────────────────────────
-
 /**
- * Verify a CFDI against the SAT.
- *
- * PRODUCTION: Replace the body of this function with a fetch to your backend:
- *   const res = await fetch('/api/sat/verify', { method: 'POST', body: JSON.stringify(input) });
- *   return res.json();
- *
- * The backend should call the SAT SOAP endpoint and return a SATVerificationResult.
- */
-export async function verifyCFDI(input: CFDIVerificationInput): Promise<SATVerificationResult> {
-  // ┌──────────────────────────────────────────────┐
-  // │  SWAP THIS BLOCK FOR PRODUCTION              │
-  // │                                              │
-  // │  const res = await fetch('/api/sat/verify', { │
-  // │    method: 'POST',                           │
-  // │    headers: { 'Content-Type': 'application/json' }, │
-  // │    body: JSON.stringify(input),               │
-  // │  });                                         │
-  // │  if (!res.ok) throw new Error('SAT verify failed'); │
-  // │  return res.json();                           │
-  // └──────────────────────────────────────────────┘
-
-  // Simulate network delay (200-600ms like real SAT WS)
-  await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 300));
-  return mockVerifyCFDI(input);
-}
-
-/**
- * Batch verify multiple CFDIs.
- * In production, your backend should batch these into a single request queue
- * to respect SAT's rate limits (~100 req/min).
+ * Verifica varios CFDIs en serie (respeta el ritmo del servicio del SAT).
+ * En volumen alto conviene mover el batch al backend con una cola.
  */
 export async function batchVerifyCFDI(inputs: CFDIVerificationInput[]): Promise<SATVerificationResult[]> {
   const results: SATVerificationResult[] = [];
   for (const input of inputs) {
-    const result = await verifyCFDI(input);
-    results.push(result);
-    // Small delay between calls to respect rate limiting
-    await new Promise(resolve => setTimeout(resolve, 100));
+    results.push(await verifyCFDI(input));
   }
   return results;
 }

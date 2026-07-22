@@ -74,6 +74,10 @@ export const envSchema = z.object({
   WHATSAPP_TOKEN: z.string().optional().default(''),
   WHATSAPP_PHONE_ID: z.string().optional().default(''),
   WHATSAPP_FROM: z.string().optional().default(''),
+  // Webhook entrante de Meta: token del challenge de verificación (GET) y
+  // app secret para validar la firma HMAC de los mensajes entrantes (POST).
+  WHATSAPP_VERIFY_TOKEN: z.string().optional().default(''),
+  WHATSAPP_APP_SECRET: z.string().optional().default(''),
 
   // Swagger — opcionales por ahora
   SWAGGER_USER: z.string().optional().default('admin'),

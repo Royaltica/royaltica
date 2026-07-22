@@ -9,6 +9,8 @@ export const WEBHOOK_EVENTS = {
   PAYMENT_COMPLETED: 'payment.completed',
   FACTORAJE_DISBURSED: 'factoraje.disbursed',
   SUPPLIER_APPROVED: 'supplier.approved',
+  RECEIVABLE_PAID: 'receivable.paid',
+  RECEIVABLE_REMINDER_SENT: 'receivable.reminder.sent',
 } as const;
 
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[keyof typeof WEBHOOK_EVENTS];

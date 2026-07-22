@@ -93,6 +93,13 @@ enum FactorajeStatus {
   REJECTED
 }
 
+// Sentido de una factura/pago: PAYABLE = la empresa le debe a un Supplier
+// (CxP, flujo original). RECEIVABLE = un Customer le debe a la empresa (CxC).
+enum InvoiceDirection {
+  PAYABLE
+  RECEIVABLE
+}
+
 // ─────────────────────────────────────────────────────
 // Models
 // ─────────────────────────────────────────────────────
@@ -111,6 +118,7 @@ model Organization {
 
   users               User[]
   suppliers           Supplier[]
+  customers           Customer[]
   invoices            Invoice[]
   payments            Payment[]
   diotDeclarations    DiotDeclaration[]
@@ -196,6 +204,36 @@ model Supplier {
   @@index([isApproved])
 }
 
+// Cliente de la empresa (contraparte de CxC). Espejo de Supplier pero para
+// las cuentas por cobrar: a quién le factura y le cobra la organización.
+model Customer {
+  id              String    @id @default(uuid())
+  organizationId  String
+  name            String
+  rfc             String
+  legalName       String
+  contact         String?
+  email           String?
+  // Teléfono en E.164 (ej. +5215512345678) para recordatorios de cobro por
+  // WhatsApp. Null = no se le puede contactar por ese canal.
+  phone           String?
+  category        String?
+  // Días de crédito otorgados (informativo; el vencimiento real vive en la
+  // factura). Null = contado / sin crédito definido.
+  creditLimitDays Int?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoices     Invoice[]
+
+  @@unique([organizationId, rfc])
+  @@index([organizationId])
+  @@index([isActive])
+}
+
 model SupplierDocument {
   id               String         @id @default(uuid())
   supplierId       String
@@ -217,11 +255,15 @@ model SupplierDocument {
 }
 
 model Invoice {
-  id               String         @id @default(uuid())
+  id               String           @id @default(uuid())
   organizationId   String
-  supplierId       String
+  // Sentido de la factura. PAYABLE (CxP) usa supplierId; RECEIVABLE (CxC) usa
+  // customerId. Toda query de CxP filtra direction=PAYABLE y CxC=RECEIVABLE.
+  direction        InvoiceDirection @default(PAYABLE)
+  supplierId       String?
+  customerId       String?
   folio            String?
-  cfdiUuid         String         @unique
+  cfdiUuid         String           @unique
   rfcEmisor        String
   rfcReceptor      String
   subtotal         Decimal        @db.Decimal(15, 2)
@@ -246,24 +288,30 @@ model Invoice {
   repStatus        String         @default("NA")
   repUuid          String?
   repReceivedAt    DateTime?
-  forensicStatus   ForensicStatus @default(PENDING)
+  forensicStatus   ForensicStatus   @default(PENDING)
   forensicScore    Int?
   auditAnalysis    Json?
-  signatures       Int            @default(0)
+  signatures       Int              @default(0)
   cfdiXmlUrl       String?
   pdfUrl           String?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  // Última vez que el agente de cobranza (CxC) envió un recordatorio de esta
+  // factura al cliente. Evita reenviar el mismo día. Null = nunca se envió.
+  lastReminderSentAt DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
   deletedAt        DateTime?
 
   organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  supplier          Supplier           @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  supplier          Supplier?          @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  customer          Customer?          @relation(fields: [customerId], references: [id], onDelete: Cascade)
   auditLogs         InvoiceAuditLog[]
   factorajeRequests FactorajeRequest[]
   payments          Payment[]          @relation("PaymentInvoices")
 
   @@index([organizationId])
+  @@index([direction])
   @@index([supplierId])
+  @@index([customerId])
   @@index([status])
   @@index([forensicStatus])
   @@index([date])
@@ -289,24 +337,29 @@ model InvoiceAuditLog {
 }
 
 model Payment {
-  id              String        @id @default(uuid())
+  id              String           @id @default(uuid())
   organizationId  String
-  totalAmount     Decimal       @db.Decimal(15, 2)
+  // PAYABLE = dispersión que la empresa hace a un proveedor (CxP). RECEIVABLE
+  // = cobro que la empresa recibe de un cliente (CxC). Todas las facturas
+  // agrupadas deben compartir esta misma dirección (validado en el servicio).
+  direction       InvoiceDirection @default(PAYABLE)
+  totalAmount     Decimal          @db.Decimal(15, 2)
   route           PaymentRoute
-  status          PaymentStatus @default(SCHEDULED)
+  status          PaymentStatus    @default(SCHEDULED)
   scheduledDate   DateTime?
   processedAt     DateTime?
   transactionRef  String?
   notes           String?
   createdByUserId String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   creator      User?        @relation("PaymentCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
   invoices     Invoice[]    @relation("PaymentInvoices")
 
   @@index([organizationId])
+  @@index([direction])
   @@index([status])
 }
 

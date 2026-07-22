@@ -8,6 +8,7 @@
 export const AREAS = {
   DASHBOARD: 'dashboard',
   PROVEEDORES: 'proveedores',
+  CXC: 'cxc',
   FINANZAS: 'finanzas',
   FACTORAJE: 'factoraje',
   PAGOS: 'pagos',

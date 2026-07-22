@@ -85,6 +85,11 @@ export class FactorajeService {
         'Solo se puede solicitar factoraje sobre facturas APROBADAS.',
       );
     }
+    if (!invoice.supplierId || !invoice.supplier) {
+      throw new BadRequestException(
+        'El factoraje solo aplica a facturas de proveedores (CxP).',
+      );
+    }
 
     const existing = await this.prisma.factorajeRequest.findFirst({
       where: {

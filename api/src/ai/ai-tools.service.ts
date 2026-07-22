@@ -110,18 +110,19 @@ export class AiToolsService {
     const [forensic, repGroups, topRisk] = await Promise.all([
       tx.invoice.groupBy({
         by: ['forensicStatus'],
-        where: { organizationId, deletedAt: null },
+        where: { organizationId, direction: 'PAYABLE', deletedAt: null },
         _count: { _all: true },
         _sum: { total: true },
       }),
       tx.invoice.groupBy({
         by: ['repStatus'],
-        where: { organizationId, deletedAt: null },
+        where: { organizationId, direction: 'PAYABLE', deletedAt: null },
         _count: { _all: true },
       }),
       tx.invoice.findMany({
         where: {
           organizationId,
+          direction: 'PAYABLE',
           deletedAt: null,
           forensicStatus: {
             in: [ForensicStatus.BLOCKED, ForensicStatus.DISCREPANCY],
@@ -173,7 +174,7 @@ export class AiToolsService {
         total: num(i.total),
         forensicStatus: i.forensicStatus,
         forensicScore: i.forensicScore,
-        supplierName: i.supplier.name,
+        supplierName: i.supplier?.name ?? '—',
       })),
     };
   }
@@ -255,20 +256,26 @@ export class AiToolsService {
       await Promise.all([
         tx.invoice.groupBy({
           by: ['status'],
-          where: { organizationId, deletedAt: null },
+          where: { organizationId, direction: 'PAYABLE', deletedAt: null },
           _count: { _all: true },
         }),
         tx.invoice.aggregate({
-          where: { organizationId, deletedAt: null },
-          _sum: { total: true },
-        }),
-        tx.invoice.aggregate({
-          where: { organizationId, deletedAt: null, status: InvoiceStatus.PAID },
+          where: { organizationId, direction: 'PAYABLE', deletedAt: null },
           _sum: { total: true },
         }),
         tx.invoice.aggregate({
           where: {
             organizationId,
+            direction: 'PAYABLE',
+            deletedAt: null,
+            status: InvoiceStatus.PAID,
+          },
+          _sum: { total: true },
+        }),
+        tx.invoice.aggregate({
+          where: {
+            organizationId,
+            direction: 'PAYABLE',
             deletedAt: null,
             status: {
               in: [
@@ -330,6 +337,7 @@ export class AiToolsService {
     const invoices = await tx.invoice.findMany({
       where: {
         organizationId,
+        direction: 'PAYABLE',
         deletedAt: null,
         status: {
           in: [
@@ -379,8 +387,9 @@ export class AiToolsService {
       bucket.amount += amount;
       if (daysOverdue > 0) totalOverdue += amount;
 
+      if (!inv.supplierId) continue;
       const agg = bySupplier.get(inv.supplierId) ?? {
-        name: inv.supplier.name,
+        name: inv.supplier?.name ?? '—',
         amount: 0,
       };
       agg.amount += amount;
@@ -408,6 +417,7 @@ export class AiToolsService {
   ) {
     const where: Prisma.InvoiceWhereInput = {
       organizationId,
+      direction: 'PAYABLE',
       deletedAt: null,
     };
     if (isEnumValue(InvoiceStatus, args.status)) where.status = args.status;
@@ -452,8 +462,8 @@ export class AiToolsService {
         date: i.date.toISOString(),
         dueDate: i.dueDate?.toISOString() ?? null,
         repStatus: i.repStatus,
-        supplierId: i.supplier.id,
-        supplierName: i.supplier.name,
+        supplierId: i.supplier?.id ?? null,
+        supplierName: i.supplier?.name ?? '—',
       })),
     };
   }
@@ -583,7 +593,10 @@ export class AiToolsService {
     organizationId: string,
     args: ToolArgs,
   ) {
-    const where: Prisma.PaymentWhereInput = { organizationId };
+    const where: Prisma.PaymentWhereInput = {
+      organizationId,
+      direction: 'PAYABLE',
+    };
     if (isEnumValue(PaymentStatus, args.status)) where.status = args.status;
 
     const rows = await tx.payment.findMany({

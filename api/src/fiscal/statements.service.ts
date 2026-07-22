@@ -48,6 +48,7 @@ export class StatementsService {
       const invoices = await tx.invoice.findMany({
         where: {
           organizationId,
+          direction: 'PAYABLE',
           deletedAt: null,
           status: { in: COUNTED_STATUSES },
           date: { gte: start, lt: end },
@@ -69,6 +70,7 @@ export class StatementsService {
       // Top proveedores por egreso (para el desglose).
       const bySupplier = new Map<string, { name: string; amount: number }>();
       for (const inv of invoices) {
+        if (!inv.supplier) continue;
         const cur = bySupplier.get(inv.supplier.id) ?? {
           name: inv.supplier.name,
           amount: 0,

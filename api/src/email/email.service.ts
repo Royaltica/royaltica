@@ -146,6 +146,31 @@ export class EmailService implements OnModuleInit {
     });
   }
 
+  /** Recordatorio de cobro al cliente (agente de Cuentas por Cobrar). */
+  async sendCollectionReminder(
+    to: string,
+    customerName: string,
+    folio: string,
+    total: string,
+    dueDate: string,
+    organizationId?: string,
+  ): Promise<{ sent: boolean; id?: string }> {
+    return this.send({
+      to,
+      organizationId,
+      subject: `Recordatorio de pago · factura ${folio}`,
+      html: this.wrap(
+        `<h2>Hola, ${customerName}</h2>
+         <p>Te recordamos que tu factura <strong>${folio}</strong> por
+         <strong>$${total} MXN</strong> vence el <strong>${dueDate}</strong>.</p>
+         <p>Si ya realizaste el pago, ignora este mensaje. Si necesitas apoyo o
+         un comprobante, responde a este correo y con gusto te ayudamos.</p>
+         <p style="color:#667085;font-size:13px;">Gracias por tu preferencia.</p>`,
+      ),
+      text: `Hola ${customerName}, tu factura ${folio} por $${total} MXN vence el ${dueDate}. Si ya pagaste, ignora este mensaje. Gracias.`,
+    });
+  }
+
   /** Envoltura HTML consistente para todos los correos. */
   private wrap(inner: string): string {
     return `<div style="font-family:Inter,Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#101828;">

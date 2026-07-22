@@ -161,7 +161,7 @@ export class AdminService {
       // Monto facturado total por organización (para "volumen" en el panel).
       this.prisma.invoice.groupBy({
         by: ['organizationId'],
-        where: { deletedAt: null },
+        where: { direction: 'PAYABLE', deletedAt: null },
         _sum: { total: true },
       }),
     ]);
@@ -236,11 +236,16 @@ export class AdminService {
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const [invoiced, paid, costs] = await Promise.all([
       this.prisma.invoice.aggregate({
-        where: { organizationId: id, deletedAt: null },
+        where: { organizationId: id, direction: 'PAYABLE', deletedAt: null },
         _sum: { total: true },
       }),
       this.prisma.invoice.aggregate({
-        where: { organizationId: id, deletedAt: null, status: InvoiceStatus.PAID },
+        where: {
+          organizationId: id,
+          direction: 'PAYABLE',
+          deletedAt: null,
+          status: InvoiceStatus.PAID,
+        },
         _sum: { total: true },
       }),
       this.usage.breakdownByFeature(id, { from: since }),
@@ -312,9 +317,9 @@ export class AdminService {
       this.prisma.organization.count({ where: { isActive: true, deletedAt: null } }),
       this.prisma.user.count(),
       this.prisma.supplier.count({ where: { deletedAt: null } }),
-      this.prisma.invoice.count({ where: { deletedAt: null } }),
+      this.prisma.invoice.count({ where: { direction: 'PAYABLE', deletedAt: null } }),
       this.prisma.invoice.aggregate({
-        where: { deletedAt: null },
+        where: { direction: 'PAYABLE', deletedAt: null },
         _sum: { total: true },
       }),
       this.prisma.usageEvent.aggregate({

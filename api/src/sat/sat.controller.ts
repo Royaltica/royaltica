@@ -3,6 +3,7 @@ import { SatService } from './sat.service';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Sync69bDto } from './dto/sync-69b.dto';
+import { VerifyCfdiDto } from './dto/verify-cfdi.dto';
 
 /**
  * Cumplimiento SAT: verificación de RFC en padrón y lista 69-B (EFOS/EDOS).
@@ -11,6 +12,22 @@ import { Sync69bDto } from './dto/sync-69b.dto';
 @Controller('sat')
 export class SatController {
   constructor(private readonly sat: SatService) {}
+
+  /**
+   * Verifica el estatus de un CFDI ante el SAT (Vigente/Cancelado/No Encontrado).
+   * Usa el servicio SOAP público y gratuito del SAT. El modo (mock/live) lo
+   * gobierna `SAT_VERIFY_MODE` en el backend: única fuente de verdad para toda
+   * la app (frontend incluido).
+   */
+  @Post('verify')
+  verifyCfdi(@Body() dto: VerifyCfdiDto) {
+    return this.sat.verifyCfdi({
+      cfdiUuid: dto.cfdiUuid,
+      rfcEmisor: dto.rfcEmisor,
+      rfcReceptor: dto.rfcReceptor,
+      total: dto.total,
+    });
+  }
 
   /** Verifica un RFC: estatus en padrón + si está en lista 69-B. */
   @Get('check-rfc/:rfc')

@@ -63,13 +63,21 @@ export class InvoiceAuditService {
     const organizationId = this.requireOrg(user);
 
     const invoice = await this.prisma.invoice.findFirst({
-      where: { id: invoiceId, organizationId, deletedAt: null },
+      where: {
+        id: invoiceId,
+        organizationId,
+        direction: 'PAYABLE',
+        deletedAt: null,
+      },
       include: {
         supplier: { select: { id: true, rfc: true, name: true } },
         organization: { select: { rfc: true } },
       },
     });
     if (!invoice) throw new NotFoundException('Factura no encontrada.');
+    if (!invoice.supplier) {
+      throw new NotFoundException('Factura sin proveedor asociado.');
+    }
 
     if (
       invoice.status !== InvoiceStatus.PENDING &&
@@ -299,11 +307,15 @@ export class InvoiceAuditService {
    */
   private async alertBlocked(
     organizationId: string,
-    invoice: { id: string; folio: string | null; supplier: { name: string } },
+    invoice: {
+      id: string;
+      folio: string | null;
+      supplier: { name: string } | null;
+    },
   ): Promise<void> {
     const ref = invoice.folio ?? invoice.id;
     const title = 'Factura bloqueada';
-    const body = `La factura ${ref} de ${invoice.supplier.name} fue BLOQUEADA por la auditoría forense. Revísala antes de aprobar o pagar.`;
+    const body = `La factura ${ref} de ${invoice.supplier?.name ?? 'proveedor'} fue BLOQUEADA por la auditoría forense. Revísala antes de aprobar o pagar.`;
     try {
       await this.notifications.notifyOrgAdmins(organizationId, {
         type: 'INVOICE_BLOCKED',
@@ -331,7 +343,7 @@ export class InvoiceAuditService {
       iva: Prisma.Decimal;
       total: Prisma.Decimal;
       date: Date;
-      supplier: { name: string };
+      supplier: { name: string } | null;
     },
     checks: ForensicCheck[],
     context: {
@@ -353,7 +365,7 @@ export class InvoiceAuditService {
       '',
       'FACTURA:',
       JSON.stringify({
-        proveedor: invoice.supplier.name,
+        proveedor: invoice.supplier?.name ?? '—',
         cfdiUuid: invoice.cfdiUuid,
         rfcEmisor: invoice.rfcEmisor,
         rfcReceptor: invoice.rfcReceptor,

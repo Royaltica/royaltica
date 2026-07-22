@@ -691,8 +691,17 @@ export const MOCK_INVOICES: Invoice[] = [
   { id: "FAC-02-A1", providerId: "PROV-002", provider: "Suministros Industriales", amount: 12000, date: "2024-04-25", status: 'audited', poNumber: "11220", description: "Refacciones Críticas", auditScore: 100, forensicStatus: 'VALIDATED', signatures: 2 },
   { id: "FAC-06-A2", providerId: "PROV-006", provider: "Papelería Central", amount: 3500, date: "2024-04-26", status: 'audited', poNumber: "15520", description: "Insumos Oficina", auditScore: 83, forensicStatus: 'VALIDATED', signatures: 1 },
 ].map((inv, idx) => {
-  const h = inv.id.replace(/[^a-zA-Z0-9]/g, '').padEnd(8, '0').slice(0, 8);
-  const n = String(idx + 1).padStart(4, '0');
-  const cfdiUUID = `${h}-${n}-4${String((idx * 7) % 1000).padStart(3, '0')}-a${String((idx * 13) % 1000).padStart(3, '0')}-${h}${n}`.toUpperCase();
+  // UUID de CFDI determinista y con formato HEX válido (8-4-4-4-12), para que
+  // pase la validación estricta del backend (POST /sat/verify). En modo mock
+  // del backend cualquier UUID válido responde "Vigente"; en modo live se
+  // consulta al SAT real. Estos son datos de demo, no CFDIs reales.
+  let x = (inv.id + idx).split('').reduce((a, c) => (a * 33 + c.charCodeAt(0)) >>> 0, 5381);
+  let hex = '';
+  while (hex.length < 32) {
+    x = (x * 1103515245 + 12345) >>> 0;
+    hex += x.toString(16).padStart(8, '0');
+  }
+  hex = hex.slice(0, 32);
+  const cfdiUUID = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
   return { ...inv, cfdiUUID } as Invoice;
 });

@@ -172,6 +172,7 @@ export class DiotService {
     const invoices = await tx.invoice.findMany({
       where: {
         organizationId,
+        direction: 'PAYABLE',
         deletedAt: null,
         status: { in: COUNTED_STATUSES },
         date: { gte: start, lt: end },
@@ -189,7 +190,7 @@ export class DiotService {
       const rfc = inv.rfcEmisor.toUpperCase();
       const entry = byRfc.get(rfc) ?? {
         rfcTercero: rfc,
-        nombre: inv.supplier.name,
+        nombre: inv.supplier?.name ?? rfc,
         tipoTercero: '04',
         tipoOperacion: '85',
         baseGravable: 0,

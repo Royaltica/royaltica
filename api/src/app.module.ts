@@ -16,6 +16,8 @@ import { FirebaseModule } from './auth/firebase/firebase.module';
 import { UsersModule } from './users/users.module';
 import { StorageModule } from './storage/storage.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
+import { CustomersModule } from './customers/customers.module';
+import { ReceivablesModule } from './receivables/receivables.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { GeminiModule } from './gemini/gemini.module';
 import { SatModule } from './sat/sat.module';
@@ -90,6 +92,8 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     UsersModule,
     OrganizationModule,
     SuppliersModule,
+    CustomersModule,
+    ReceivablesModule,
     DashboardModule,
     InvoicesModule,
     FiscalModule,

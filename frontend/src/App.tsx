@@ -128,6 +128,7 @@ import { FactorajeCorporativoPanel } from './features/corporate/auditoria/Factor
 import { DiotCompilerPanel } from './features/corporate/auditoria/DiotCompilerPanel.tsx';
 import { ProviderPaymentsReal } from './features/provider/ProviderPaymentsReal.tsx';
 import { ProviderFactorajeView } from './features/provider/ProviderFactorajeView.tsx';
+import { ReceivablesView } from './features/corporate/cobranza/ReceivablesView.tsx';
 
 const CURRENCY_FORMATTER = new Intl.NumberFormat('es-MX', {
   style: 'currency',
@@ -2187,7 +2188,7 @@ function DocumentManagerModal({
 }
 
 function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, permissions = [], role = '' }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, sessionStartedAt?: Date, permissions?: string[], role?: string }) {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'suppliers' | 'audits' | 'pending_invoices' | 'financing' | 'settings' | 'fiscal_audit' | 'contabilidad' | 'historial'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'suppliers' | 'audits' | 'pending_invoices' | 'receivables' | 'financing' | 'settings' | 'fiscal_audit' | 'contabilidad' | 'historial'>('dashboard');
   // Filtro de pestañas por permisos del JWT. Admin ve todo; el operativo solo
   // las áreas que se le asignaron al invitarlo (comodín '*' = acceso total).
   const isFullAccess = role === 'CORPORATE_ADMIN' || role === 'SUPERADMIN' || permissions.includes('*');
@@ -2478,6 +2479,7 @@ function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, pe
             {canSee('dashboard') && <SidebarLink icon={<BarChart3 size={18} />} label="Tablero" active={activeTab === 'dashboard'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('dashboard')} />}
             {canSee('proveedores') && <SidebarLink icon={<Building2 size={18} />} label="Proveedores" active={activeTab === 'suppliers'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('suppliers')} />}
             {canSee('finanzas') && <SidebarLink icon={<FileText size={18} />} label="F. por pagar" active={activeTab === 'pending_invoices'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('pending_invoices')} />}
+            {canSee('cxc') && <SidebarLink icon={<DollarSign size={18} />} label="F. por cobrar" active={activeTab === 'receivables'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('receivables')} />}
             {canSee('finanzas') && <SidebarLink icon={<ShieldCheck size={18} />} label="Validación" active={activeTab === 'audits'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('audits')} />}
             {canSee('estados') && <SidebarLink icon={<Activity size={18} />} label="Auditoría" active={activeTab === 'fiscal_audit'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('fiscal_audit')} />}
             {canSee('estados') && <SidebarLink icon={<BookOpen size={18} />} label="Contabilidad" active={activeTab === 'contabilidad'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('contabilidad')} />}
@@ -2614,6 +2616,10 @@ function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, pe
                   persistStatus(id, updates);
                 }}
               />
+          )}
+
+          {activeTab === 'receivables' && (
+              <ReceivablesView />
           )}
 
           {activeTab === 'audits' && (
@@ -5485,6 +5491,7 @@ const USER_AREA_LABELS: Record<string, string> = {
   dashboard: 'Dashboard',
   proveedores: 'Proveedores',
   finanzas: 'Finanzas / Facturas',
+  cxc: 'Cuentas por Cobrar',
   factoraje: 'Factoraje',
   pagos: 'Pagos',
   estados: 'Estados / DIOT',

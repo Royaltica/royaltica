@@ -125,6 +125,7 @@ export class InvoicesService {
 
     const where: Prisma.InvoiceWhereInput = {
       organizationId,
+      direction: 'PAYABLE',
       deletedAt: null,
       ...(query.status ? { status: query.status } : {}),
       ...(query.forensicStatus ? { forensicStatus: query.forensicStatus } : {}),
@@ -171,7 +172,7 @@ export class InvoicesService {
     const organizationId = this.requireOrg(user);
     const invoice = await this.prisma.withOrg(organizationId, (tx) =>
       tx.invoice.findFirst({
-        where: { id, organizationId, deletedAt: null },
+        where: { id, organizationId, direction: 'PAYABLE', deletedAt: null },
         include: {
           supplier: { select: { id: true, name: true, rfc: true } },
           auditLogs: {
@@ -418,7 +419,7 @@ export class InvoicesService {
     const organizationId = this.requireOrg(user);
     const rows = await this.prisma.withOrg(organizationId, (tx) =>
       tx.invoice.findMany({
-        where: { organizationId, deletedAt: null },
+        where: { organizationId, direction: 'PAYABLE', deletedAt: null },
         orderBy: { date: 'desc' },
         include: { supplier: { select: { name: true, rfc: true } } },
       }),
@@ -427,7 +428,7 @@ export class InvoicesService {
     return toCsv(rows, [
       { header: 'UUID', value: (i) => i.cfdiUuid },
       { header: 'Folio', value: (i) => i.folio },
-      { header: 'Proveedor', value: (i) => i.supplier.name },
+      { header: 'Proveedor', value: (i) => i.supplier?.name ?? '' },
       { header: 'RFC Emisor', value: (i) => i.rfcEmisor },
       { header: 'Subtotal', value: (i) => Number(i.subtotal) },
       { header: 'IVA', value: (i) => Number(i.iva) },
@@ -536,7 +537,7 @@ export class InvoicesService {
     id: string,
   ): Promise<Invoice> {
     const invoice = await tx.invoice.findFirst({
-      where: { id, organizationId, deletedAt: null },
+      where: { id, organizationId, direction: 'PAYABLE', deletedAt: null },
     });
     if (!invoice) throw new NotFoundException('Factura no encontrada.');
     return invoice;

@@ -58,6 +58,7 @@ export class PaymentsService {
         where: {
           id: { in: dto.invoiceIds },
           organizationId,
+          direction: 'PAYABLE',
           deletedAt: null,
         },
         select: {

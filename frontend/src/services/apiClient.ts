@@ -162,6 +162,129 @@ export interface PaymentDetail extends Omit<PaymentRow, 'invoiceCount'> {
   creator: { id: string; name: string } | null;
 }
 
+// ── Cuentas por Cobrar (CxC) ───────────────────────────────
+
+export interface CxcCustomer {
+  id: string;
+  name: string;
+  rfc: string;
+  legalName: string;
+  contact: string | null;
+  email: string | null;
+  phone: string | null;
+  category: string | null;
+  creditLimitDays: number | null;
+  isActive: boolean;
+  invoicesCount?: number;
+  sat69b?: { listed: boolean; status: string | null; rfcValid: boolean } | null;
+  createdAt: string;
+}
+
+export interface Receivable {
+  id: string;
+  customerId: string | null;
+  folio: string | null;
+  cfdiUuid: string;
+  total: number;
+  subtotal: number;
+  iva: number;
+  currency: string;
+  date: string;
+  dueDate: string | null;
+  status: 'PENDING' | 'PAID' | 'REJECTED' | 'AUDITED' | 'APPROVED';
+  paidDate: string | null;
+  lastReminderSentAt: string | null;
+  customer?: { id: string; name: string; rfc: string } | null;
+}
+
+export interface AgingBucket {
+  label: string;
+  count: number;
+  amount: number;
+}
+
+export interface ReceivablesAging {
+  totals: { amount: number; overdue: number; invoices: number };
+  buckets: {
+    current: AgingBucket;
+    d1_30: AgingBucket;
+    d31_60: AgingBucket;
+    d61_90: AgingBucket;
+    d90_plus: AgingBucket;
+  };
+  byCustomer: {
+    customerId: string;
+    name: string;
+    amount: number;
+    overdue: number;
+  }[];
+  generatedAt: string;
+}
+
+export interface ReceivablesRatios {
+  dso: { label: string; value: number; unit: string; basis: number };
+  punctuality: {
+    label: string;
+    onTimePct: number;
+    onTime: number;
+    late: number;
+    settled: number;
+  };
+  turnover: {
+    label: string;
+    value: number;
+    unit: string;
+    ventas: number;
+    cxcActual: number;
+  };
+  customerConcentration: {
+    label: string;
+    concentrationPct: number;
+    totalCxc: number;
+    top: { customerId: string; name: string; amount: number; sharePct: number }[];
+  };
+  generatedAt: string;
+}
+
+export interface CashConversionCycle {
+  label: string;
+  value: number;
+  unit: string;
+  dso: number;
+  dpo: number;
+  note: string;
+  interpretation: string;
+}
+
+export interface ReminderEffectiveness {
+  paidInvoices: number;
+  paidAfterReminder: number;
+  reminderCoveragePct: number;
+  avgDaysReminderToPayment: number;
+  totalRemindersSent: number;
+}
+
+export interface RankedCustomer {
+  customerId: string;
+  name: string;
+  onTimePct: number;
+  onTime: number;
+  late: number;
+  settled: number;
+  avgDelayDays: number;
+  volume: number;
+}
+
+export interface AtRiskCustomer {
+  customerId: string;
+  name: string;
+  reason: string;
+  overdueCount: number;
+  maxDaysOverdue: number;
+  overdueAmount: number;
+  onTimePct: number;
+}
+
 // ── Autenticación ──────────────────────────────────────────
 
 export const api = {
@@ -240,6 +363,20 @@ export const api = {
 
   async getFinancialRatios(): Promise<FinancialRatios> {
     return request<FinancialRatios>('GET', '/dashboard/financial-ratios');
+  },
+
+  /**
+   * Verifica el estatus de un CFDI ante el SAT (servicio SOAP público y
+   * gratuito). El backend es la única fuente de verdad: su flag
+   * `SAT_VERIFY_MODE` (mock|live) decide si consulta al SAT real.
+   */
+  async verifyCfdi(input: {
+    cfdiUuid: string;
+    rfcEmisor: string;
+    rfcReceptor: string;
+    total: number;
+  }): Promise<SatVerifyResponse> {
+    return request<SatVerifyResponse>('POST', '/sat/verify', input);
   },
 
   // ── Mutaciones de facturas ──────────────────────────────
@@ -818,6 +955,146 @@ export const api = {
       null, // público, sin token
     );
   },
+
+  // ── Cuentas por Cobrar (CxC) ─────────────────────────────
+
+  /** Clientes de la empresa (contraparte de CxC). */
+  async getCustomers(): Promise<CxcCustomer[]> {
+    const res = await request<Paginated<CxcCustomer>>(
+      'GET',
+      '/customers?limit=100',
+    );
+    return res.data;
+  },
+
+  async createCustomer(payload: {
+    name: string;
+    rfc: string;
+    legalName: string;
+    email?: string;
+    phone?: string;
+    creditLimitDays?: number;
+  }): Promise<CxcCustomer> {
+    return request<CxcCustomer>('POST', '/customers', payload);
+  },
+
+  async updateCustomer(
+    id: string,
+    payload: Partial<{
+      name: string;
+      email: string;
+      phone: string;
+      creditLimitDays: number;
+    }>,
+  ): Promise<CxcCustomer> {
+    return request<CxcCustomer>('PATCH', `/customers/${id}`, payload);
+  },
+
+  async deleteCustomer(id: string): Promise<void> {
+    await request('DELETE', `/customers/${id}`);
+  },
+
+  /** Facturas de venta (CxC) de la organización, con filtros opcionales. */
+  async getReceivables(
+    params: {
+      status?: string;
+      customerId?: string;
+      search?: string;
+      dateFrom?: string;
+      dateTo?: string;
+    } = {},
+  ): Promise<Receivable[]> {
+    const q = new URLSearchParams();
+    if (params.status) q.set('status', params.status);
+    if (params.customerId) q.set('customerId', params.customerId);
+    if (params.search) q.set('search', params.search);
+    if (params.dateFrom) q.set('dateFrom', params.dateFrom);
+    if (params.dateTo) q.set('dateTo', params.dateTo);
+    q.set('limit', '100');
+    const res = await request<Paginated<Receivable>>(
+      'GET',
+      `/receivables?${q.toString()}`,
+    );
+    return res.data;
+  },
+
+  /** Importa facturas de venta desde un ZIP de CFDI (exportado del ERP). */
+  async bulkImportReceivablesZip(
+    file: File,
+  ): Promise<{ total: number; created: number; skipped: number }> {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${BASE}/receivables/bulk`, {
+      method: 'POST',
+      headers: { ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+      body: form,
+    });
+    if (!res.ok) {
+      const msg = await res.json().catch(() => ({}));
+      throw new Error((msg as { message?: string }).message ?? 'No se pudo importar el ZIP.');
+    }
+    return res.json();
+  },
+
+  async createReceivable(payload: {
+    customerId: string;
+    cfdiUuid: string;
+    rfcEmisor?: string;
+    rfcReceptor?: string;
+    subtotal: number;
+    iva: number;
+    total: number;
+    date: string;
+    dueDate?: string;
+    folio?: string;
+  }): Promise<Receivable> {
+    return request<Receivable>('POST', '/receivables', payload);
+  },
+
+  async updateReceivableStatus(
+    id: string,
+    status: 'PENDING' | 'PAID' | 'REJECTED',
+    reason?: string,
+  ): Promise<Receivable> {
+    return request<Receivable>('PATCH', `/receivables/${id}/status`, {
+      status,
+      ...(reason ? { reason } : {}),
+    });
+  },
+
+  /** Dispara un recordatorio de cobro al cliente (WhatsApp + correo). */
+  async sendReceivableReminder(
+    id: string,
+  ): Promise<{ emailSent: boolean; whatsappSent: boolean }> {
+    return request('POST', `/receivables/${id}/send-reminder`);
+  },
+
+  async getReceivablesAging(): Promise<ReceivablesAging> {
+    return request<ReceivablesAging>('GET', '/dashboard/receivables/aging');
+  },
+
+  async getReceivablesRatios(): Promise<ReceivablesRatios> {
+    return request<ReceivablesRatios>('GET', '/dashboard/receivables/ratios');
+  },
+
+  async getCashConversionCycle(): Promise<CashConversionCycle> {
+    return request<CashConversionCycle>('GET', '/dashboard/cash-conversion-cycle');
+  },
+
+  async getReminderEffectiveness(): Promise<ReminderEffectiveness> {
+    return request<ReminderEffectiveness>(
+      'GET',
+      '/dashboard/receivables/reminder-effectiveness',
+    );
+  },
+
+  async getCustomerRanking(): Promise<{ customers: RankedCustomer[] }> {
+    return request('GET', '/dashboard/receivables/customer-ranking');
+  },
+
+  async getAtRiskCustomers(): Promise<{ count: number; customers: AtRiskCustomer[] }> {
+    return request('GET', '/dashboard/receivables/at-risk');
+  },
 };
 
 /** KPIs globales del panel SUPERADMIN (GET /admin/stats). */
@@ -882,6 +1159,15 @@ export interface AdminActivity {
   user: string;
   organization: string;
   createdAt: string;
+}
+
+/** Respuesta de POST /sat/verify (ver SatService.verifyCfdi en el backend). */
+export interface SatVerifyResponse {
+  status: 'Vigente' | 'Cancelado' | 'No Encontrado' | 'No Verificado';
+  esCancelable: string | null;
+  estatusCancelacion: string | null;
+  verifiedAt: string;
+  mode: 'mock' | 'live';
 }
 
 /** Configuración de la organización (campos que consume el frontend). */

@@ -97,7 +97,16 @@ async function bootstrap(): Promise<void> {
   });
 
   // Límite de tamaño de payload JSON (anti-DoS por cuerpos gigantes).
-  app.use(json({ limit: '1mb' }));
+  // `verify` guarda el cuerpo crudo en req.rawBody para poder validar la firma
+  // HMAC de webhooks entrantes (Meta/WhatsApp) sin depender del re-serializado.
+  app.use(
+    json({
+      limit: '1mb',
+      verify: (req: Request & { rawBody?: Buffer }, _res, buf) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
 
   // Validación global de DTOs
   app.useGlobalPipes(

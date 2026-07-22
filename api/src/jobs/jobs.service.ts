@@ -8,6 +8,9 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { UsageService } from '../usage/usage.service';
+import { ReceivablesService } from '../receivables/receivables.service';
+import { DashboardService } from '../dashboard/dashboard.service';
+import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
 
 /**
@@ -34,6 +37,8 @@ export class JobsService {
     private readonly email: EmailService,
     private readonly whatsapp: WhatsappService,
     private readonly usage: UsageService,
+    private readonly receivables: ReceivablesService,
+    private readonly dashboard: DashboardService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -97,6 +102,7 @@ export class JobsService {
       const overdue = await this.prisma.invoice.count({
         where: {
           organizationId: org.id,
+          direction: 'PAYABLE',
           deletedAt: null,
           dueDate: { lt: now },
           status: {
@@ -151,6 +157,63 @@ export class JobsService {
 
     this.logger.log(`rep-reminder: ${notified} notificación(es).`);
     return { notified };
+  }
+
+  // ── Agente de cobranza: recordatorios de cobro al cliente (CxC) ──
+  @Cron(CronExpression.EVERY_DAY_AT_10AM, { name: 'receivable-reminder' })
+  async receivableReminders(): Promise<{ sent: number }> {
+    if (!this.enabled) return { sent: 0 };
+    return this.receivables.runReminderScan();
+  }
+
+  // ── Resumen semanal de cobranza al director (lunes 8am) ───
+  @Cron('0 8 * * 1', { name: 'weekly-collection-digest' })
+  async weeklyCollectionDigest(): Promise<{ sent: number }> {
+    if (!this.enabled) return { sent: 0 };
+    let sent = 0;
+    const orgs = await this.activeOrganizations();
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
+    const fmt = (n: number) =>
+      n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+    const weekLabel = weekAgo.toLocaleDateString('es-MX', {
+      day: 'numeric',
+      month: 'long',
+    });
+
+    for (const org of orgs) {
+      const digest = await this.dashboard.getReceivablesDigest(
+        { organizationId: org.id } as AuthenticatedUser,
+        { from: weekAgo.toISOString(), to: now.toISOString() },
+      );
+      // Nada que reportar: no molestamos con un resumen vacío.
+      if (
+        digest.collected.count === 0 &&
+        digest.reminders.total === 0 &&
+        digest.outstanding.count === 0
+      ) {
+        continue;
+      }
+
+      const title = 'Resumen de cobranza';
+      const body =
+        `Semana del ${weekLabel}: ` +
+        `cobrado ${fmt(digest.collected.amount)} (${digest.collected.count} factura[s]); ` +
+        `${digest.reminders.total} recordatorio[s] enviados ` +
+        `(${digest.reminders.whatsapp} WhatsApp, ${digest.reminders.email} correo); ` +
+        `pendiente por cobrar ${fmt(digest.outstanding.amount)} (${digest.outstanding.count} factura[s]).`;
+
+      const admins = await this.orgAdmins(org.id);
+      // Correo a cada admin + WhatsApp a los admins con opt-in (fire-and-forget).
+      await Promise.all(
+        admins.map((a) => this.email.sendAlert(a.email, title, body, org.id)),
+      );
+      void this.whatsapp.notifyOrgAdmins(org.id, `📊 Royáltica · ${title}. ${body}`);
+      if (admins.length > 0) sent += 1;
+    }
+
+    this.logger.log(`weekly-collection-digest: ${sent} organización(es) notificada(s).`);
+    return { sent };
   }
 
   // ── helpers ───────────────────────────────────────────────

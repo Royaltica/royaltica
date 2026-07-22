@@ -20,6 +20,10 @@ export interface SatVerifyInput {
 
 export interface SatVerifyResult {
   status: SatStatus;
+  /** Si el CFDI puede cancelarse (dato del SAT); null si no aplica/desconocido. */
+  esCancelable: string | null;
+  /** Estatus de cancelación del CFDI (dato del SAT); null si no aplica. */
+  estatusCancelacion: string | null;
   verifiedAt: string;
   mode: 'mock' | 'live';
 }
@@ -103,22 +107,41 @@ export class SatService {
     const mode = this.mode;
 
     if (mode === 'live') {
-      const status = await this.consultaSat(input);
-      return { status, verifiedAt, mode };
+      const consulta = await this.consultaSat(input);
+      return { ...consulta, verifiedAt, mode };
     }
 
     const status: SatStatus = CFDI_UUID_RE.test(input.cfdiUuid)
       ? 'Vigente'
       : 'No Encontrado';
-    return { status, verifiedAt, mode };
+    return {
+      status,
+      esCancelable: null,
+      estatusCancelacion: null,
+      verifiedAt,
+      mode,
+    };
   }
 
   /**
    * Llama al servicio SOAP `Consulta` del SAT con la "expresión impresa"
-   * del CFDI (misma cadena del QR: re/rr/tt/id) y extrae `<Estado>`.
+   * del CFDI (misma cadena del QR: re/rr/tt/id) y extrae `<Estado>`,
+   * `<EsCancelable>` y `<EstatusCancelacion>`.
    */
-  private async consultaSat(input: SatVerifyInput): Promise<SatStatus> {
-    if (!CFDI_UUID_RE.test(input.cfdiUuid)) return 'No Encontrado';
+  private async consultaSat(
+    input: SatVerifyInput,
+  ): Promise<Pick<SatVerifyResult, 'status' | 'esCancelable' | 'estatusCancelacion'>> {
+    const notFound = {
+      status: 'No Encontrado' as SatStatus,
+      esCancelable: null,
+      estatusCancelacion: null,
+    };
+    const unverified = {
+      status: 'No Verificado' as SatStatus,
+      esCancelable: null,
+      estatusCancelacion: null,
+    };
+    if (!CFDI_UUID_RE.test(input.cfdiUuid)) return notFound;
 
     const expresion =
       `?re=${input.rfcEmisor.toUpperCase()}` +
@@ -145,22 +168,30 @@ export class SatService {
       });
       if (!res.ok) {
         this.logger.warn(`Consulta SAT respondió HTTP ${res.status}.`);
-        return 'No Verificado';
+        return unverified;
       }
       const xml = await res.text();
-      const estado = /<(?:\w+:)?Estado>([^<]+)<\/(?:\w+:)?Estado>/i.exec(
-        xml,
-      )?.[1];
-      if (estado === 'Vigente') return 'Vigente';
-      if (estado === 'Cancelado') return 'Cancelado';
-      if (estado === 'No Encontrado') return 'No Encontrado';
+      const pick = (tag: string): string | null =>
+        new RegExp(`<(?:\\w+:)?${tag}>([^<]*)</(?:\\w+:)?${tag}>`, 'i').exec(
+          xml,
+        )?.[1]?.trim() || null;
+      const estado = pick('Estado');
+      const esCancelable = pick('EsCancelable');
+      const estatusCancelacion = pick('EstatusCancelacion');
+      if (
+        estado === 'Vigente' ||
+        estado === 'Cancelado' ||
+        estado === 'No Encontrado'
+      ) {
+        return { status: estado, esCancelable, estatusCancelacion };
+      }
       this.logger.warn(`Consulta SAT: estado inesperado "${estado ?? '∅'}".`);
-      return 'No Verificado';
+      return unverified;
     } catch (err) {
       this.logger.warn(
         `Consulta SAT falló: ${err instanceof Error ? err.message : err}`,
       );
-      return 'No Verificado';
+      return unverified;
     }
   }
 
