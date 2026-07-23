@@ -63,6 +63,8 @@ describe('AuthService', () => {
       config as unknown as ConfigService<Env, true>,
       notifications as never,
       { record: jest.fn().mockResolvedValue(undefined) } as never,
+      // EmailService mock: send() nunca lanza, siempre reporta sent:false.
+      { send: jest.fn().mockResolvedValue({ sent: false }) } as never,
     );
   });
 

@@ -968,6 +968,47 @@ export const api = {
     );
   },
 
+  // ── Marketing (público, royaltica.com) ──────────────────
+
+  /** Agenda una demo desde el sitio marketing. Backend notifica al equipo por correo. */
+  async scheduleDemo(payload: {
+    name: string;
+    company: string;
+    email: string;
+    phone?: string;
+    jobTitle?: string;
+    companySize?: number;
+    preferredDate?: string;
+    preferredTime?: string;
+    message?: string;
+    source?: string;
+  }): Promise<{ ok: boolean }> {
+    return request<{ ok: boolean }>(
+      'POST',
+      '/marketing/demo',
+      payload,
+      null,
+    );
+  },
+
+  /** Envía un mensaje del formulario de contacto. */
+  async sendContactMessage(payload: {
+    name: string;
+    company?: string;
+    email: string;
+    phone?: string;
+    subject?: string;
+    message: string;
+    source?: string;
+  }): Promise<{ ok: boolean }> {
+    return request<{ ok: boolean }>(
+      'POST',
+      '/marketing/contact',
+      payload,
+      null,
+    );
+  },
+
   // ── Cuentas por Cobrar (CxC) ─────────────────────────────
 
   /** Clientes de la empresa (contraparte de CxC). */

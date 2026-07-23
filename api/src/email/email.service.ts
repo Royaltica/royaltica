@@ -9,6 +9,11 @@ export interface SendEmailInput {
   html: string;
   /** Texto plano opcional (fallback para clientes sin HTML). */
   text?: string;
+  /**
+   * Reply-To opcional (útil en formularios de contacto para que el equipo
+   * pueda responder directo al usuario apretando "Responder").
+   */
+  replyTo?: string | string[];
   /** Si se indica, se registra un UsageEvent EMAIL_SENT para esa organización. */
   organizationId?: string;
 }
@@ -74,6 +79,7 @@ export class EmailService implements OnModuleInit {
       const { data, error } = await this.client.emails.send({
         from: this.fromEmail,
         to: input.to,
+        replyTo: input.replyTo,
         subject: input.subject,
         html: input.html,
         text: input.text,

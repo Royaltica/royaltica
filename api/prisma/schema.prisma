@@ -582,3 +582,47 @@ model AiFeedback {
   @@index([createdAt])
   @@index([organizationId, rating])
 }
+
+// ─────────────────────────────────────────────────────
+// Marketing — captura de leads desde royaltica.com
+// ─────────────────────────────────────────────────────
+
+enum LeadType {
+  DEMO
+  CONTACT
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  CONVERTED
+  DISCARDED
+}
+
+/// Lead público capturado en royaltica.com (agendar demo o contactar).
+/// Sin FK a Organization: es un prospecto, aún no cliente.
+model Lead {
+  id             String     @id @default(uuid())
+  type           LeadType
+  status         LeadStatus @default(NEW)
+  name           String
+  company        String?
+  email          String
+  phone          String?
+  jobTitle       String?
+  companySize    Int?
+  subject        String?
+  message        String?
+  preferredDate  DateTime?
+  preferredTime  String?
+  source         String?
+  handledByUserId String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([type])
+  @@index([status])
+  @@index([email])
+  @@index([createdAt])
+}

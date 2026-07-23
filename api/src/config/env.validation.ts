@@ -59,6 +59,33 @@ export const envSchema = z.object({
   RESEND_API_KEY: z.string().optional().default(''),
   RESEND_FROM_EMAIL: z.string().optional().default('no-reply@royaltica.com'),
 
+  // Correo del equipo al que llegan los leads de royaltica.com
+  // (agendar demo + contacto). Si no se define, cae a hello@royaltica.com.
+  LEADS_EMAIL: z.string().optional().default('hello@royaltica.com'),
+
+  // ── Sentry (observabilidad de errores y traces) ──
+  // Si SENTRY_DSN está vacío, el SDK no se inicializa (no-op).
+  SENTRY_DSN: z.string().optional().default(''),
+  SENTRY_ENVIRONMENT: z.string().optional().default(''),
+  SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.1),
+  SENTRY_RELEASE: z.string().optional().default(''),
+
+  // ── Storage backend selector ──
+  // 'gcs' (default): Google Cloud Storage (config GCS_BUCKET_NAME arriba).
+  // 's3': S3-compatible (MinIO en Railway, AWS S3, R2, Backblaze, etc.).
+  STORAGE_PROVIDER: z.enum(['gcs', 's3']).optional().default('gcs'),
+  S3_ENDPOINT: z.string().optional().default(''),
+  S3_REGION: z.string().optional().default('us-east-1'),
+  S3_BUCKET: z.string().optional().default(''),
+  S3_ACCESS_KEY_ID: z.string().optional().default(''),
+  S3_SECRET_ACCESS_KEY: z.string().optional().default(''),
+  /** Force path-style (obligatorio para MinIO). */
+  S3_FORCE_PATH_STYLE: z.enum(['true', 'false']).optional().default('true'),
+
+  // ── Meilisearch (búsqueda de proveedores / facturas) ──
+  MEILI_HOST: z.string().optional().default(''),
+  MEILI_MASTER_KEY: z.string().optional().default(''),
+
   // Proveedor externo de factoraje — opcionales (modo stub hasta tener API)
   FACTORAJE_API_URL: z.string().optional().default(''),
   FACTORAJE_API_KEY: z.string().optional().default(''),

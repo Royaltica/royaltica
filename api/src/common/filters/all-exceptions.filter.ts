@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { captureException } from '../sentry';
 
 /**
  * Filtro global de excepciones. Normaliza la respuesta de error y
@@ -40,6 +41,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
         }`,
         (exception as Error)?.stack,
       );
+      // Telemetría opcional a Sentry (no-op si SENTRY_DSN no está configurada).
+      captureException(exception, {
+        method: request.method,
+        url: request.url,
+        requestId,
+      });
     }
 
     response.status(status).json({

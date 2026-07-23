@@ -3,6 +3,7 @@ import { SuppliersService } from './suppliers.service';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { SatService } from '../sat/sat.service';
+import { SearchService } from '../search/search.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 
 const admin: AuthenticatedUser = {
@@ -42,10 +43,16 @@ describe('SuppliersService', () => {
     );
     const webhooks = { dispatch: jest.fn().mockResolvedValue(undefined) };
     const sat = { check69bBatch: jest.fn().mockResolvedValue(new Map()) };
+    // Mock de SearchService: todas las operaciones son no-op y resuelven.
+    const search = {
+      indexDocument: jest.fn().mockResolvedValue(undefined),
+      removeDocument: jest.fn().mockResolvedValue(undefined),
+    };
     service = new SuppliersService(
       prisma as unknown as PrismaService,
       webhooks as unknown as WebhooksService,
       sat as unknown as SatService,
+      search as unknown as SearchService,
     );
   });
 

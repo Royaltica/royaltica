@@ -9,6 +9,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { WEBHOOK_EVENTS } from '../webhooks/webhook-events';
 import { SatService } from '../sat/sat.service';
+import { SearchService } from '../search/search.service';
 import {
   buildPaginated,
   type Paginated,
@@ -31,7 +32,31 @@ export class SuppliersService {
     private readonly prisma: PrismaService,
     private readonly webhooks: WebhooksService,
     private readonly sat: SatService,
+    private readonly search: SearchService,
   ) {}
+
+  /**
+   * Empaqueta un Supplier para Meilisearch. `organizationId` es
+   * imprescindible: se usa como filtro en el endpoint /search para
+   * respetar el aislamiento multi-tenant.
+   */
+  private toSearchDoc(s: Supplier) {
+    return {
+      id: s.id,
+      organizationId: s.organizationId,
+      name: s.name,
+      legalName: s.legalName,
+      rfc: s.rfc,
+      contact: s.contact,
+      email: s.email,
+      category: s.category,
+      activity: s.activity,
+      isApproved: s.isApproved,
+      score: s.score ?? null,
+      seniorityYears: s.seniorityYears,
+      createdAt: s.createdAt?.getTime?.() ?? null,
+    };
+  }
 
   async create(admin: AuthenticatedUser, dto: CreateSupplierDto) {
     const organizationId = this.requireOrg(admin);
@@ -62,6 +87,8 @@ export class SuppliersService {
           bankName: dto.bankName,
         },
       });
+      // Index en Meilisearch (fire-and-forget; no-op si Meili no está activo).
+      void this.search.indexDocument('suppliers', this.toSearchDoc(supplier));
       return serialize(supplier);
     });
   }
@@ -173,6 +200,7 @@ export class SuppliersService {
     return this.prisma.withOrg(organizationId, async (tx) => {
       await this.ensureExists(tx, organizationId, id);
       const updated = await tx.supplier.update({ where: { id }, data });
+      void this.search.indexDocument('suppliers', this.toSearchDoc(updated));
       return serialize(updated);
     });
   }
@@ -193,6 +221,7 @@ export class SuppliersService {
         { supplierId: updated.id, name: updated.name, rfc: updated.rfc },
       );
     }
+    void this.search.indexDocument('suppliers', this.toSearchDoc(updated));
     return serialize(updated);
   }
 
@@ -205,6 +234,7 @@ export class SuppliersService {
         data: { deletedAt: new Date() },
       });
     });
+    void this.search.removeDocument('suppliers', id);
     return { deleted: true, id };
   }
 

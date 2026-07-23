@@ -12,6 +12,7 @@ import type { Env } from '../config/env.validation';
 import { FirebaseService } from './firebase/firebase.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ActivityLogService } from '../activity/activity-log.service';
+import { EmailService } from '../email/email.service';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
 import { FULL_ACCESS_ROLES, WILDCARD_PERMISSION } from './constants/permissions';
 
@@ -46,6 +47,7 @@ export class AuthService {
     private readonly config: ConfigService<Env, true>,
     private readonly notifications: NotificationsService,
     private readonly activity: ActivityLogService,
+    private readonly email: EmailService,
   ) {}
 
   /**
@@ -82,6 +84,47 @@ export class AuthService {
           .catch(() => undefined),
       ),
     );
+
+    // Correo al equipo (LEADS_EMAIL) — nunca bloquea el 200 al usuario.
+    const leadsEmail =
+      this.config.get('LEADS_EMAIL', { infer: true }) ||
+      'hello@royaltica.com';
+    await this.email
+      .send({
+        to: leadsEmail,
+        replyTo: dto.email,
+        subject: `🔐 Solicitud de acceso: ${dto.company}`,
+        html: `<div style="font-family:system-ui;line-height:1.5;padding:16px">
+          <h2 style="margin:0 0 8px">Nueva solicitud de acceso</h2>
+          <p style="color:#555;margin:0 0 16px">Alguien pide acceso a Royáltica desde el portal.</p>
+          <ul style="padding-left:20px">
+            <li><strong>Nombre:</strong> ${escape(dto.name)}</li>
+            <li><strong>Empresa:</strong> ${escape(dto.company)}</li>
+            <li><strong>Correo:</strong> <a href="mailto:${escape(dto.email)}">${escape(dto.email)}</a></li>
+            ${dto.phone ? `<li><strong>Teléfono:</strong> ${escape(dto.phone)}</li>` : ''}
+            ${dto.message ? `<li><strong>Mensaje:</strong> ${escape(dto.message)}</li>` : ''}
+          </ul>
+        </div>`,
+        text: body,
+      })
+      .catch((err) =>
+        this.logger.warn(`Fallo email de solicitud de acceso: ${err}`),
+      );
+
+    // Confirmación al solicitante (si Resend está activo).
+    await this.email
+      .send({
+        to: dto.email,
+        subject: 'Recibimos tu solicitud de acceso · Royáltica',
+        html: `<div style="font-family:system-ui;max-width:520px;margin:0 auto;padding:24px;line-height:1.6">
+          <p>Hola ${escape(dto.name.split(' ')[0] ?? dto.name)},</p>
+          <p>Gracias por tu interés en Royáltica. Recibimos tu solicitud de acceso y nuestro equipo la está revisando. Te contactaremos al correo <strong>${escape(dto.email)}</strong> para darte de alta.</p>
+          <p>— El equipo de Royáltica</p>
+        </div>`,
+        text: `Hola ${dto.name}, recibimos tu solicitud de acceso. Te contactaremos pronto. — Royáltica`,
+      })
+      .catch(() => undefined);
+
     this.logger.warn(`[ACCESO] Solicitud de ${dto.email} (${dto.company}).`);
     return { ok: true };
   }
@@ -332,4 +375,14 @@ export class AuthService {
 
     return { accessToken, expiresIn, user: this.toPublicUser(user) };
   }
+}
+
+/** Escape HTML mínimo para armar el correo de solicitud de acceso. */
+function escape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

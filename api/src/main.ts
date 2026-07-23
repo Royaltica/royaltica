@@ -1,4 +1,9 @@
 import 'reflect-metadata';
+// Sentry debe inicializarse ANTES de instanciar la app para instrumentar
+// correctamente los handlers HTTP y las excepciones no capturadas.
+import { initSentry } from './common/sentry';
+initSentry(process.env);
+
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
