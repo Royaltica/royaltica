@@ -21,7 +21,8 @@
     "prisma:migrate": "DATABASE_URL=\"$DATABASE_ADMIN_URL\" prisma migrate dev",
     "prisma:deploy": "DATABASE_URL=\"$DATABASE_ADMIN_URL\" prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "seed": "ts-node prisma/seed.ts"
+    "seed": "ts-node prisma/seed.ts",
+    "reindex:search": "ts-node scripts/reindex-search.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -40,7 +41,7 @@
     "@nestjs/swagger": "^7.4.2",
     "@nestjs/throttler": "^6.2.1",
     "@prisma/client": "^5.22.0",
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.6.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",
     "dotenv-safe": "^9.1.0",
@@ -66,7 +67,6 @@
     "@nestjs/cli": "^10.4.5",
     "@nestjs/schematics": "^10.1.4",
     "@nestjs/testing": "^10.4.4",
-    "@types/adm-zip": "^0.5.8",
     "@types/dotenv-safe": "^8.1.6",
     "@types/express": "^4.17.21",
     "@types/jest": "^29.5.13",

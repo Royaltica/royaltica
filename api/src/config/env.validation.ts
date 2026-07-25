@@ -86,6 +86,11 @@ export const envSchema = z.object({
   MEILI_HOST: z.string().optional().default(''),
   MEILI_MASTER_KEY: z.string().optional().default(''),
 
+  // ── Slack webhook para notificar nuevos leads (opcional) ──
+  // Crea uno en https://api.slack.com/apps → Incoming Webhooks.
+  // Formato: https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXX
+  SLACK_LEADS_WEBHOOK: z.string().optional().default(''),
+
   // Proveedor externo de factoraje — opcionales (modo stub hasta tener API)
   FACTORAJE_API_URL: z.string().optional().default(''),
   FACTORAJE_API_KEY: z.string().optional().default(''),

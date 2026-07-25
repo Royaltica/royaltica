@@ -591,6 +591,27 @@ function RequestAccessScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
+/**
+ * Construye el string de "source" del lead combinando el host + params UTM
+ * de la URL. Se guarda en `Lead.source` en el backend, útil para saber
+ * de qué campaña / canal vino cada prospecto.
+ * Ejemplo: "royaltica.com?utm_source=linkedin&utm_medium=organic".
+ */
+function buildLeadSource(): string {
+  if (typeof window === 'undefined') return 'unknown';
+  const host = window.location.host;
+  const params = new URLSearchParams(window.location.search);
+  const utm = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']
+    .map(k => (params.get(k) ? `${k}=${params.get(k)}` : null))
+    .filter((s): s is string => s !== null)
+    .join('&');
+  const ref = document.referrer && !document.referrer.includes(host)
+    ? `ref=${new URL(document.referrer).host}`
+    : '';
+  const extra = [utm, ref].filter(Boolean).join('&');
+  return extra ? `${host}?${extra}` : host;
+}
+
 // ── Marketing público: agendar demo desde royaltica.com ──
 function ScheduleDemoScreen({ onBack }: { onBack: () => void }) {
   const [form, setForm] = useState({
@@ -603,6 +624,7 @@ function ScheduleDemoScreen({ onBack }: { onBack: () => void }) {
     preferredDate: '',
     preferredTime: '',
     message: '',
+    website: '', // honeypot — invisible en el UI
   });
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
@@ -626,7 +648,8 @@ function ScheduleDemoScreen({ onBack }: { onBack: () => void }) {
         preferredDate: form.preferredDate || undefined,
         preferredTime: form.preferredTime.trim() || undefined,
         message: form.message.trim() || undefined,
-        source: typeof window !== 'undefined' ? window.location.host : undefined,
+        source: buildLeadSource(),
+        website: form.website, // honeypot: si viene con valor, el backend lo detecta
       });
       setSent(true);
     } catch (err) {
@@ -676,6 +699,17 @@ function ScheduleDemoScreen({ onBack }: { onBack: () => void }) {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4 text-left">
+              {/* Honeypot invisible — solo los bots lo llenan. */}
+              <input
+                type="text"
+                name="website"
+                value={form.website}
+                onChange={set('website')}
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, opacity: 0 }}
+              />
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="label-caps !opacity-50 mb-2 block text-[9px]">Nombre completo *</label>
@@ -763,7 +797,7 @@ function ScheduleDemoScreen({ onBack }: { onBack: () => void }) {
 
 // ── Marketing público: formulario de contacto general ──
 function ContactScreen({ onBack }: { onBack: () => void }) {
-  const [form, setForm] = useState({ name: '', company: '', email: '', phone: '', subject: '', message: '' });
+  const [form, setForm] = useState({ name: '', company: '', email: '', phone: '', subject: '', message: '', website: '' /* honeypot */ });
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState('');
@@ -782,7 +816,8 @@ function ContactScreen({ onBack }: { onBack: () => void }) {
         phone: form.phone.trim() || undefined,
         subject: form.subject.trim() || undefined,
         message: form.message.trim(),
-        source: typeof window !== 'undefined' ? window.location.host : undefined,
+        source: buildLeadSource(),
+        website: form.website, // honeypot
       });
       setSent(true);
     } catch (err) {
@@ -818,6 +853,17 @@ function ContactScreen({ onBack }: { onBack: () => void }) {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4 text-left">
+              {/* Honeypot invisible — solo los bots lo llenan. */}
+              <input
+                type="text"
+                name="website"
+                value={form.website}
+                onChange={set('website' as keyof typeof form)}
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, opacity: 0 }}
+              />
               {([['name', 'Nombre *', 'text', true], ['company', 'Empresa', 'text', false], ['email', 'Correo *', 'email', true], ['phone', 'Teléfono', 'tel', false], ['subject', 'Asunto', 'text', false]] as const).map(([k, label, type, required]) => (
                 <div key={k}>
                   <label className="label-caps !opacity-50 mb-2 block text-[9px]">{label}</label>

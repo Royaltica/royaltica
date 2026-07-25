@@ -4,6 +4,7 @@ import type { Env } from '../config/env.validation';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { postToSlack } from '../common/slack-notifier';
 import type { ScheduleDemoDto } from './dto/schedule-demo.dto';
 import type { ContactDto } from './dto/contact.dto';
 
@@ -42,6 +43,13 @@ export class MarketingService {
   }
 
   async scheduleDemo(dto: ScheduleDemoDto): Promise<{ ok: true }> {
+    // Honeypot: si el campo `website` llegó lleno, es un bot. Respondemos
+    // 200 falso para no darle señal, pero no guardamos ni notificamos.
+    if (dto.website && dto.website.trim() !== '') {
+      this.logger.warn(`[SPAM demo] Honeypot activado desde ${dto.email}`);
+      return { ok: true };
+    }
+
     const lead = await this.prisma.lead.create({
       data: {
         type: 'DEMO',
@@ -88,6 +96,35 @@ export class MarketingService {
       { leadId: lead.id, type: 'DEMO' },
     );
 
+    // Notificación opcional a Slack (fire-and-forget)
+    void postToSlack(
+      this.config.get('SLACK_LEADS_WEBHOOK', { infer: true }),
+      {
+        text: `🎯 Nueva demo: ${dto.name} (${dto.company})`,
+        blocks: [
+          {
+            type: 'header',
+            text: { type: 'plain_text', text: `🎯 Nueva demo · ${dto.company}` },
+          },
+          {
+            type: 'section',
+            fields: [
+              { type: 'mrkdwn', text: `*Nombre:*\n${dto.name}` },
+              { type: 'mrkdwn', text: `*Correo:*\n<mailto:${dto.email}|${dto.email}>` },
+              dto.phone && { type: 'mrkdwn', text: `*Tel:*\n${dto.phone}` },
+              dto.jobTitle && { type: 'mrkdwn', text: `*Puesto:*\n${dto.jobTitle}` },
+              dto.companySize && { type: 'mrkdwn', text: `*Empleados:*\n${dto.companySize}` },
+              dto.preferredDate && { type: 'mrkdwn', text: `*Fecha preferida:*\n${dto.preferredDate}${dto.preferredTime ? ' ' + dto.preferredTime : ''}` },
+            ].filter(Boolean),
+          },
+          dto.message && {
+            type: 'section',
+            text: { type: 'mrkdwn', text: `*Contexto:*\n${dto.message}` },
+          },
+        ].filter(Boolean),
+      },
+    );
+
     this.logger.warn(
       `[LEAD DEMO] ${dto.email} (${dto.company}) — id=${lead.id}`,
     );
@@ -95,6 +132,12 @@ export class MarketingService {
   }
 
   async contact(dto: ContactDto): Promise<{ ok: true }> {
+    // Honeypot (ver scheduleDemo).
+    if (dto.website && dto.website.trim() !== '') {
+      this.logger.warn(`[SPAM contact] Honeypot activado desde ${dto.email}`);
+      return { ok: true };
+    }
+
     const lead = await this.prisma.lead.create({
       data: {
         type: 'CONTACT',
@@ -133,6 +176,35 @@ export class MarketingService {
       'Nuevo mensaje de contacto',
       `${dto.name} — ${dto.email}${dto.subject ? ` · "${dto.subject}"` : ''}`,
       { leadId: lead.id, type: 'CONTACT' },
+    );
+
+    void postToSlack(
+      this.config.get('SLACK_LEADS_WEBHOOK', { infer: true }),
+      {
+        text: `📨 Nuevo contacto: ${dto.name}`,
+        blocks: [
+          {
+            type: 'header',
+            text: {
+              type: 'plain_text',
+              text: `📨 ${dto.subject ?? 'Nuevo contacto'}`,
+            },
+          },
+          {
+            type: 'section',
+            fields: [
+              { type: 'mrkdwn', text: `*Nombre:*\n${dto.name}` },
+              { type: 'mrkdwn', text: `*Correo:*\n<mailto:${dto.email}|${dto.email}>` },
+              dto.company && { type: 'mrkdwn', text: `*Empresa:*\n${dto.company}` },
+              dto.phone && { type: 'mrkdwn', text: `*Tel:*\n${dto.phone}` },
+            ].filter(Boolean),
+          },
+          {
+            type: 'section',
+            text: { type: 'mrkdwn', text: `*Mensaje:*\n${dto.message}` },
+          },
+        ],
+      },
     );
 
     this.logger.warn(

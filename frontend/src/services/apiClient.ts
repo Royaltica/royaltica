@@ -128,6 +128,27 @@ export interface LoginResult {
   tempToken: string | null;
 }
 
+/** Lead capturado desde royaltica.com (demo/contacto). */
+export interface LeadRecord {
+  id: string;
+  type: 'DEMO' | 'CONTACT';
+  status: 'NEW' | 'CONTACTED' | 'QUALIFIED' | 'CONVERTED' | 'DISCARDED';
+  name: string;
+  company: string | null;
+  email: string;
+  phone: string | null;
+  jobTitle: string | null;
+  companySize: number | null;
+  subject: string | null;
+  message: string | null;
+  preferredDate: string | null;
+  preferredTime: string | null;
+  source: string | null;
+  handledByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Paginated<T> {
   data: T[];
   meta: { total: number; page: number; limit: number; totalPages: number };
@@ -982,6 +1003,8 @@ export const api = {
     preferredTime?: string;
     message?: string;
     source?: string;
+    /** Honeypot: siempre vacío en clientes reales. */
+    website?: string;
   }): Promise<{ ok: boolean }> {
     return request<{ ok: boolean }>(
       'POST',
@@ -1000,6 +1023,8 @@ export const api = {
     subject?: string;
     message: string;
     source?: string;
+    /** Honeypot: siempre vacío en clientes reales. */
+    website?: string;
   }): Promise<{ ok: boolean }> {
     return request<{ ok: boolean }>(
       'POST',
@@ -1007,6 +1032,55 @@ export const api = {
       payload,
       null,
     );
+  },
+
+  // ── Admin: leads (SUPERADMIN) ────────────────────────────
+
+  /** Lista de leads con filtros opcionales. */
+  async listLeads(params: {
+    type?: 'DEMO' | 'CONTACT';
+    status?: 'NEW' | 'CONTACTED' | 'QUALIFIED' | 'CONVERTED' | 'DISCARDED';
+    search?: string;
+    limit?: number;
+    skip?: number;
+  } = {}): Promise<{
+    data: LeadRecord[];
+    total: number;
+    limit: number;
+    skip: number;
+  }> {
+    const qs = new URLSearchParams();
+    if (params.type) qs.set('type', params.type);
+    if (params.status) qs.set('status', params.status);
+    if (params.search) qs.set('search', params.search);
+    if (params.limit) qs.set('limit', String(params.limit));
+    if (params.skip) qs.set('skip', String(params.skip));
+    return request(
+      'GET',
+      `/admin/leads${qs.toString() ? '?' + qs.toString() : ''}`,
+    );
+  },
+
+  async getLeadsSummary(): Promise<{
+    total: number;
+    byStatus: Record<string, number>;
+    byType: Record<string, number>;
+  }> {
+    return request('GET', '/admin/leads/summary');
+  },
+
+  async updateLeadStatus(
+    id: string,
+    payload: {
+      status: 'NEW' | 'CONTACTED' | 'QUALIFIED' | 'CONVERTED' | 'DISCARDED';
+      note?: string;
+    },
+  ): Promise<LeadRecord> {
+    return request('PATCH', `/admin/leads/${id}`, payload);
+  },
+
+  async deleteLead(id: string): Promise<{ deleted: true; id: string }> {
+    return request('DELETE', `/admin/leads/${id}`);
   },
 
   // ── Cuentas por Cobrar (CxC) ─────────────────────────────

@@ -66,4 +66,14 @@ export class ScheduleDemoDto {
   @IsString()
   @MaxLength(200)
   source?: string;
+
+  /**
+   * Campo honeypot — invisible en el HTML. Si viene con valor, es un bot
+   * (los usuarios reales nunca lo llenan). El backend lo detecta y
+   * responde 200 falso sin guardar nada, para no darle señal al bot.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  website?: string;
 }
