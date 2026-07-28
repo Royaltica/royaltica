@@ -164,6 +164,7 @@ import { AuthorizationPanel } from './features/corporate/auditoria/Authorization
 import { ConectividadERPPanel } from './features/corporate/auditoria/ConectividadERPPanel.tsx';
 import { REPMotorPanel } from './features/corporate/auditoria/REPMotorPanel.tsx';
 import { PagosGlobalesPanel } from './features/corporate/auditoria/PagosGlobalesPanel.tsx';
+import { LeadsAdminPanel } from './features/admin/LeadsAdminPanel.tsx';
 
 const getPriorityInfo = (dateStr: string) => {
   const date = new Date(dateStr);
@@ -1382,7 +1383,7 @@ function NotificationBell() {
 }
 
 function AdminDashboard({ user, onLogout, onBackToRole }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void }) {
-  const [adminTab, setAdminTab] = useState<'overview' | 'clients' | 'health' | 'activity'>('overview');
+  const [adminTab, setAdminTab] = useState<'overview' | 'clients' | 'health' | 'activity' | 'leads'>('overview');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState<AdminTenant | null>(null);
 
@@ -1514,6 +1515,7 @@ function AdminDashboard({ user, onLogout, onBackToRole }: { user: FirebaseUser, 
             <SidebarLink icon={<Users size={18} />} label="Clientes" active={adminTab === 'clients'} collapsed={isSidebarCollapsed} onClick={() => setAdminTab('clients')} />
             <SidebarLink icon={<Server size={18} />} label="Sistema" active={adminTab === 'health'} collapsed={isSidebarCollapsed} onClick={() => setAdminTab('health')} />
             <SidebarLink icon={<Activity size={18} />} label="Actividad" active={adminTab === 'activity'} collapsed={isSidebarCollapsed} onClick={() => setAdminTab('activity')} />
+            <SidebarLink icon={<Handshake size={18} />} label="Leads" active={adminTab === 'leads'} collapsed={isSidebarCollapsed} onClick={() => setAdminTab('leads')} />
           </nav>
           <div className="mt-auto pb-6 space-y-2 border-t border-brand-bone/10 pt-4">
             <button onClick={onBackToRole} className="text-brand-bone/50 hover:text-brand-bone transition-colors flex items-center gap-3 text-[9px] uppercase font-bold tracking-widest w-full cursor-pointer">
@@ -1533,7 +1535,7 @@ function AdminDashboard({ user, onLogout, onBackToRole }: { user: FirebaseUser, 
           <div className="flex items-center justify-between mb-10">
             <div>
               <h2 className="text-4xl font-serif text-brand-ink">
-                {adminTab === 'overview' ? 'Panel de Control' : adminTab === 'clients' ? 'Gestión de Clientes' : adminTab === 'health' ? 'Salud del Sistema' : 'Registro de Actividad'}
+                {adminTab === 'overview' ? 'Panel de Control' : adminTab === 'clients' ? 'Gestión de Clientes' : adminTab === 'health' ? 'Salud del Sistema' : adminTab === 'leads' ? 'Leads' : 'Registro de Actividad'}
               </h2>
               <p className="text-sm text-brand-ink/40 mt-1">Royáltica Operations · {user.displayName || 'CEO'}</p>
             </div>
@@ -1860,6 +1862,13 @@ function AdminDashboard({ user, onLogout, onBackToRole }: { user: FirebaseUser, 
                   </div>
                 )}
               </div>
+            </motion.div>
+          )}
+
+          {/* ═══ LEADS TAB ═══ */}
+          {adminTab === 'leads' && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+              <LeadsAdminPanel />
             </motion.div>
           )}
         </div>
