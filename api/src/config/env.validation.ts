@@ -117,6 +117,11 @@ export const envSchema = z.object({
   WHATSAPP_VERIFY_TOKEN: z.string().optional().default(''),
   WHATSAPP_APP_SECRET: z.string().optional().default(''),
 
+  // ── PostHog server-side analytics ──
+  // Si POSTHOG_API_KEY está vacío, el SDK queda en modo no-op.
+  POSTHOG_API_KEY: z.string().optional().default(''),
+  POSTHOG_HOST: z.string().optional().default('https://us.i.posthog.com'),
+
   // Swagger — opcionales por ahora
   SWAGGER_USER: z.string().optional().default('admin'),
   SWAGGER_PASS: z.string().optional().default('change-me'),
