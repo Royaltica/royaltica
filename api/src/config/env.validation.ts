@@ -117,6 +117,12 @@ export const envSchema = z.object({
   WHATSAPP_VERIFY_TOKEN: z.string().optional().default(''),
   WHATSAPP_APP_SECRET: z.string().optional().default(''),
 
+  // ── Stripe (pagos con tarjeta / suscripciones) ──
+  // Si STRIPE_SECRET_KEY está vacío, el módulo queda en modo stub.
+  STRIPE_SECRET_KEY: z.string().optional().default(''),
+  STRIPE_WEBHOOK_SECRET: z.string().optional().default(''),
+  STRIPE_PUBLISHABLE_KEY: z.string().optional().default(''),
+
   // ── PostHog server-side analytics ──
   // Si POSTHOG_API_KEY está vacío, el SDK queda en modo no-op.
   POSTHOG_API_KEY: z.string().optional().default(''),
