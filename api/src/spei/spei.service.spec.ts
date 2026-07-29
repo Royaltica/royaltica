@@ -10,7 +10,7 @@ describe('SpeiService', () => {
     const svc = new SpeiService(makeConfig({}));
     svc.onModuleInit();
     expect(svc.isConfigured).toBe(false);
-    const r = await svc.order({ clabeDestino: '012345678901234567', nombreBeneficiario: 'Test', monto: 1000, concepto: 'Pago', referenciaNumerica: 1234567 });
+    const r = await svc.order({ clabeDestino: '012345678901234568', nombreBeneficiario: 'Test', monto: 1000, concepto: 'Pago', referenciaNumerica: 1234567 });
     expect(r.success).toBe(true);
     expect(r.mode).toBe('stub');
     expect(r.claveRastreo).toMatch(/^RYL/);
@@ -30,7 +30,7 @@ describe('SpeiService', () => {
   });
 
   it('isConfigured true con API key y CLABE', () => {
-    const svc = new SpeiService(makeConfig({ SPEI_API_KEY: 'key_test', SPEI_CLABE_ORIGEN: '012345678901234567' }));
+    const svc = new SpeiService(makeConfig({ SPEI_API_KEY: 'key_test', SPEI_CLABE_ORIGEN: '012345678901234568' }));
     svc.onModuleInit();
     expect(svc.isConfigured).toBe(true);
   });

@@ -3,6 +3,7 @@ process.env.NODE_ENV = 'production';
 process.env.DATABASE_URL = 'postgresql://u:p@localhost:5432/royaltica';
 process.env.REDIS_URL = 'redis://localhost:6379';
 process.env.JWT_SECRET = 'test-secret-test-secret-1234';
+process.env.TOTP_ENCRYPTION_KEY = 'test-totp-encryption-key-32chars!';
 
 // firebase-admin arrastra ESM que jest no transpila.
 jest.mock('firebase-admin/app', () => ({
