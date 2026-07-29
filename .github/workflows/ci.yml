@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── API: lint, type-check, unit tests ──────────────────
+  api:
+    name: API – Lint & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+
+      - run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npx jest --ci --forceExit --passWithNoTests
+        env:
+          NODE_ENV: test
+          PORT: 8080
+          ALLOWED_ORIGINS: http://localhost:3000
+          DATABASE_URL: postgresql://test:test@localhost:5432/test
+          DATABASE_ADMIN_URL: postgresql://test:test@localhost:5432/test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: ci-test-secret-do-not-use-in-prod
+          JWT_EXPIRES_IN: 1h
+          FIREBASE_PROJECT_ID: test-project
+          FIREBASE_CLIENT_EMAIL: test@test.iam.gserviceaccount.com
+          FIREBASE_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----\n"
+          RESEND_API_KEY: re_test
+          RESEND_FROM_EMAIL: test@test.com
+          LEADS_EMAIL: test@test.com
+          SWAGGER_USER: admin
+          SWAGGER_PASS: test
+          SAT_VERIFY_MODE: mock
+          STORAGE_PROVIDER: gcs
+          GCS_BUCKET_NAME: test-bucket
+          WHATSAPP_PROVIDER: meta
+
+  # ── Frontend: type-check & build ───────────────────────
+  frontend:
+    name: Frontend – Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
