@@ -14,6 +14,10 @@ import { ReportsService } from '../reports/reports.service';
 import { CollectionSequencesService } from '../collection-sequences/collection-sequences.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
+import {
+  DEFAULT_CURRENCY,
+  DEFAULT_LOCALE,
+} from '../organization/organization.constants';
 
 /**
  * Tareas programadas (recordatorios) basadas en @nestjs/schedule.
@@ -193,18 +197,31 @@ export class JobsService {
     let sent = 0;
     const orgs = await this.activeOrganizations();
     const now = new Date();
-    const weekAgo = new Date(now.getTime() - 7 * 86_400_000);
-    const fmt = (n: number) =>
-      n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
-    const weekLabel = weekAgo.toLocaleDateString('es-MX', {
-      day: 'numeric',
-      month: 'long',
-    });
+    const range = this.previousSevenDayRange(now);
 
     for (const org of orgs) {
+      const admins = await this.orgAdmins(org.id);
+      if (admins.length === 0) continue;
+
+      if (await this.reports.wasReportSent(org.id, range)) {
+        this.logger.debug(
+          `weekly-collection-digest: reporte ya enviado para org ${org.id}.`,
+        );
+        continue;
+      }
+
+      const locale = org.locale ?? DEFAULT_LOCALE;
+      const currency = org.currency ?? DEFAULT_CURRENCY;
+      const fmt = (n: number) =>
+        n.toLocaleString(locale, { style: 'currency', currency });
+      const weekLabel = range.from.toLocaleDateString(locale, {
+        day: 'numeric',
+        month: 'long',
+      });
+
       const digest = await this.dashboard.getReceivablesDigest(
         { organizationId: org.id } as AuthenticatedUser,
-        { from: weekAgo.toISOString(), to: now.toISOString() },
+        { from: range.from.toISOString(), to: range.to.toISOString() },
       );
       // Nada que reportar: no molestamos con un resumen vacío.
       if (
@@ -223,18 +240,24 @@ export class JobsService {
         `(${digest.reminders.whatsapp} WhatsApp, ${digest.reminders.email} correo); ` +
         `pendiente por cobrar ${fmt(digest.outstanding.amount)} (${digest.outstanding.count} factura[s]).`;
 
-      const admins = await this.orgAdmins(org.id);
-
       // PDF de cobranza (KPIs + antigüedad + clientes en riesgo) para adjuntar
       // al correo. Si falla la generación no bloqueamos el envío del resumen
       // en texto plano: se manda sin adjunto y se registra el error.
-      let attachments: { filename: string; content: Buffer }[] | undefined;
+      let attachments:
+        | { filename: string; contentType: string; content: Buffer }[]
+        | undefined;
       try {
         const pdf = await this.reports.generateCollectionReportPdf(org.id, {
-          from: weekAgo,
-          to: now,
+          from: range.from,
+          to: range.to,
         });
-        attachments = [{ filename: 'reporte-cobranza.pdf', content: pdf }];
+        attachments = [
+          {
+            filename: 'reporte-cobranza.pdf',
+            contentType: 'application/pdf',
+            content: pdf,
+          },
+        ];
       } catch (err) {
         this.logger.warn(
           `No se pudo generar el PDF de cobranza para org ${org.id}: ${
@@ -244,20 +267,20 @@ export class JobsService {
       }
 
       // Correo a cada admin + WhatsApp a los admins con opt-in (fire-and-forget).
-      await Promise.all(
+      const results = await Promise.all(
         admins.map((a) =>
           this.email.sendAlert(a.email, title, body, org.id, attachments),
         ),
       );
       void this.whatsapp.notifyOrgAdmins(org.id, `📊 Royáltica · ${title}. ${body}`);
-      if (admins.length > 0) {
-        sent += 1;
-        void this.reports.recordReportSent(
-          org.id,
-          { from: weekAgo, to: now },
-          admins.length,
+      const emailSent = results.some((r) => r.sent);
+      if (!emailSent) {
+        this.logger.warn(
+          `weekly-collection-digest: ningún correo fue enviado para org ${org.id}.`,
         );
       }
+      sent += 1;
+      await this.reports.recordReportSent(org.id, range, admins.length, emailSent);
     }
 
     this.logger.log(`weekly-collection-digest: ${sent} organización(es) notificada(s).`);
@@ -269,7 +292,7 @@ export class JobsService {
   private activeOrganizations() {
     return this.prisma.organization.findMany({
       where: { isActive: true, deletedAt: null },
-      select: { id: true },
+      select: { id: true, locale: true, currency: true },
     });
   }
 
@@ -323,5 +346,12 @@ export class JobsService {
       metadata: { job: payload.type, recipients: recipients.length },
     });
     return recipients.length;
+  }
+
+  private previousSevenDayRange(reference: Date): { from: Date; to: Date } {
+    const to = new Date(reference);
+    to.setUTCHours(0, 0, 0, 0);
+    const from = new Date(to.getTime() - 7 * 86_400_000);
+    return { from, to };
   }
 }

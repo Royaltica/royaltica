@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { DashboardService } from '../dashboard/dashboard.service';
@@ -30,6 +30,7 @@ interface AgingBuckets {
 }
 
 const TOP_AT_RISK = 10;
+const MAX_COLLECTION_REPORT_PDF_BYTES = 10 * 1024 * 1024;
 
 /**
  * Genera reportes de cobranza en PDF para envío periódico (semanal/etc.) a
@@ -61,6 +62,8 @@ export class ReportsService {
     organizationId: string,
     range: CollectionReportRange,
   ): Promise<Buffer> {
+    this.validateRange(range);
+
     const org = await this.prisma.organization.findUnique({
       where: { id: organizationId },
       select: { name: true, locale: true, currency: true },
@@ -88,7 +91,7 @@ export class ReportsService {
     const dateFmt = (d: Date) =>
       d.toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' });
 
-    return this.renderPdf({
+    const pdf = await this.renderPdf({
       orgName,
       periodFrom: range.from,
       periodTo: range.to,
@@ -98,6 +101,10 @@ export class ReportsService {
       money,
       dateFmt,
     });
+    if (pdf.length > MAX_COLLECTION_REPORT_PDF_BYTES) {
+      throw new Error('El PDF de cobranza excede el límite de 10MB.');
+    }
+    return pdf;
   }
 
   /**
@@ -109,14 +116,16 @@ export class ReportsService {
     organizationId: string,
     range: CollectionReportRange,
     recipientCount: number,
+    emailSent = recipientCount > 0,
   ): Promise<void> {
+    this.validateRange(range);
     try {
       await this.prisma.collectionReport.create({
         data: {
           organizationId,
           periodFrom: range.from,
           periodTo: range.to,
-          emailSent: recipientCount > 0,
+          emailSent,
           recipientCount,
         },
       });
@@ -128,6 +137,23 @@ export class ReportsService {
         }`,
       );
     }
+  }
+
+  async wasReportSent(
+    organizationId: string,
+    range: CollectionReportRange,
+  ): Promise<boolean> {
+    this.validateRange(range);
+    const existing = await this.prisma.collectionReport.findFirst({
+      where: {
+        organizationId,
+        periodFrom: range.from,
+        periodTo: range.to,
+        emailSent: true,
+      },
+      select: { id: true },
+    });
+    return existing !== null;
   }
 
   // ── render ────────────────────────────────────────────────
@@ -273,5 +299,17 @@ export class ReportsService {
       y += rowHeight;
     }
     doc.y = y;
+  }
+
+  private validateRange(range: CollectionReportRange): void {
+    if (
+      !(range.from instanceof Date) ||
+      !(range.to instanceof Date) ||
+      Number.isNaN(range.from.getTime()) ||
+      Number.isNaN(range.to.getTime()) ||
+      range.from >= range.to
+    ) {
+      throw new BadRequestException('El período del reporte de cobranza es inválido.');
+    }
   }
 }

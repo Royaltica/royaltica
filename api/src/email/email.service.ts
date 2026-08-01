@@ -22,9 +22,14 @@ export interface SendEmailInput {
 
 export interface SendEmailAttachment {
   filename: string;
+  /** MIME type explícito del adjunto; Resend también puede inferirlo por filename. */
+  contentType?: string;
   /** Resend acepta Buffer o contenido base64 en `content`. */
   content: Buffer | string;
 }
+
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MIME_TYPE_RE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i;
 
 /**
  * Abstracción de envío de correo vía Resend.
@@ -76,6 +81,11 @@ export class EmailService implements OnModuleInit {
    * negocio (invitar usuario, generar alerta) continúe sin interrupción.
    */
   async send(input: SendEmailInput): Promise<{ sent: boolean; id?: string }> {
+    const attachments = this.validateAttachments(input.attachments);
+    if (attachments === null) {
+      return { sent: false };
+    }
+
     if (!this.client) {
       this.logger.debug(
         `[stub] Correo NO enviado a ${String(input.to)} — "${input.subject}".`,
@@ -91,8 +101,9 @@ export class EmailService implements OnModuleInit {
         subject: input.subject,
         html: input.html,
         text: input.text,
-        attachments: input.attachments?.map((a) => ({
+        attachments: attachments?.map((a) => ({
           filename: a.filename,
+          contentType: a.contentType,
           content: a.content,
         })),
       });
@@ -228,5 +239,40 @@ export class EmailService implements OnModuleInit {
       <hr style="border:none;border-top:1px solid #EAECF0;margin:32px 0 16px;">
       <p style="color:#98A2B3;font-size:12px;">Royáltica · Inteligencia de proveedores y cumplimiento fiscal.</p>
     </div>`;
+  }
+
+  private validateAttachments(
+    attachments: SendEmailAttachment[] | undefined,
+  ): SendEmailAttachment[] | undefined | null {
+    if (!attachments) return undefined;
+
+    for (const attachment of attachments) {
+      const filename = attachment.filename.trim();
+      if (!filename) {
+        this.logger.warn('Correo no enviado: adjunto sin filename.');
+        return null;
+      }
+      if (
+        attachment.contentType !== undefined &&
+        !MIME_TYPE_RE.test(attachment.contentType)
+      ) {
+        this.logger.warn(`Correo no enviado: MIME type inválido para ${filename}.`);
+        return null;
+      }
+      const size =
+        typeof attachment.content === 'string'
+          ? Buffer.byteLength(attachment.content)
+          : attachment.content.length;
+      if (size === 0) {
+        this.logger.warn(`Correo no enviado: adjunto vacío (${filename}).`);
+        return null;
+      }
+      if (size > MAX_ATTACHMENT_BYTES) {
+        this.logger.warn(`Correo no enviado: adjunto excede 10MB (${filename}).`);
+        return null;
+      }
+    }
+
+    return attachments;
   }
 }

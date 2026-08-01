@@ -15,3 +15,14 @@ CREATE TABLE "CollectionReport" (
 CREATE INDEX "CollectionReport_organizationId_idx" ON "CollectionReport"("organizationId");
 
 CREATE INDEX "CollectionReport_generatedAt_idx" ON "CollectionReport"("generatedAt");
+
+-- Row Level Security: CollectionReport es bitácora por organización. Aunque
+-- no persiste el PDF, evita lecturas/escrituras cruzadas si en el futuro se
+-- expone desde endpoints o consultas administrativas con contexto de tenant.
+ALTER TABLE "CollectionReport" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "CollectionReport" FORCE ROW LEVEL SECURITY;
+CREATE POLICY org_isolation ON "CollectionReport"
+  USING (
+    COALESCE(current_setting('app.org_id', true), '') = ''
+    OR "organizationId" = current_setting('app.org_id', true)
+  );
