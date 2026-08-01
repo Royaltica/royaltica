@@ -19,7 +19,9 @@ import { SuppliersModule } from './suppliers/suppliers.module';
 import { CustomersModule } from './customers/customers.module';
 import { ReceivablesModule } from './receivables/receivables.module';
 import { CollectionPolicyModule } from './collection-policy/collection-policy.module';
+import { CollectionSequencesModule } from './collection-sequences/collection-sequences.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { ReportsModule } from './reports/reports.module';
 import { GeminiModule } from './gemini/gemini.module';
 import { SatModule } from './sat/sat.module';
 import { InvoicesModule } from './invoices/invoices.module';
@@ -100,7 +102,9 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     CustomersModule,
     ReceivablesModule,
     CollectionPolicyModule,
+    CollectionSequencesModule,
     DashboardModule,
+    ReportsModule,
     InvoicesModule,
     FiscalModule,
     PaymentsModule,

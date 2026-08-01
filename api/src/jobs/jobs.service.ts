@@ -10,6 +10,8 @@ import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { UsageService } from '../usage/usage.service';
 import { ReceivablesService } from '../receivables/receivables.service';
 import { DashboardService } from '../dashboard/dashboard.service';
+import { ReportsService } from '../reports/reports.service';
+import { CollectionSequencesService } from '../collection-sequences/collection-sequences.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
 
@@ -39,6 +41,8 @@ export class JobsService {
     private readonly usage: UsageService,
     private readonly receivables: ReceivablesService,
     private readonly dashboard: DashboardService,
+    private readonly reports: ReportsService,
+    private readonly collectionSequences: CollectionSequencesService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -166,6 +170,22 @@ export class JobsService {
     return this.receivables.runReminderScan();
   }
 
+  // ── Motor de escalamiento de cobranza multi-paso (Tradespace) ──
+  // Corre después del recordatorio de un solo paso (10am): avanza cada
+  // CollectionSequenceRun activa/por iniciar según la CollectionPolicy de
+  // cada organización (guard rails de ventana horaria, tope semanal,
+  // blackout dates, días de gracia). Ver CollectionSequencesService.
+  @Cron(CronExpression.EVERY_DAY_AT_11AM, { name: 'collection-sequence-engine' })
+  async collectionSequenceEngine(): Promise<{
+    evaluated: number;
+    sent: number;
+    escalated: number;
+    skipped: number;
+  }> {
+    if (!this.enabled) return { evaluated: 0, sent: 0, escalated: 0, skipped: 0 };
+    return this.collectionSequences.runEngineScan();
+  }
+
   // ── Resumen semanal de cobranza al director (lunes 8am) ───
   @Cron('0 8 * * 1', { name: 'weekly-collection-digest' })
   async weeklyCollectionDigest(): Promise<{ sent: number }> {
@@ -204,12 +224,40 @@ export class JobsService {
         `pendiente por cobrar ${fmt(digest.outstanding.amount)} (${digest.outstanding.count} factura[s]).`;
 
       const admins = await this.orgAdmins(org.id);
+
+      // PDF de cobranza (KPIs + antigüedad + clientes en riesgo) para adjuntar
+      // al correo. Si falla la generación no bloqueamos el envío del resumen
+      // en texto plano: se manda sin adjunto y se registra el error.
+      let attachments: { filename: string; content: Buffer }[] | undefined;
+      try {
+        const pdf = await this.reports.generateCollectionReportPdf(org.id, {
+          from: weekAgo,
+          to: now,
+        });
+        attachments = [{ filename: 'reporte-cobranza.pdf', content: pdf }];
+      } catch (err) {
+        this.logger.warn(
+          `No se pudo generar el PDF de cobranza para org ${org.id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+
       // Correo a cada admin + WhatsApp a los admins con opt-in (fire-and-forget).
       await Promise.all(
-        admins.map((a) => this.email.sendAlert(a.email, title, body, org.id)),
+        admins.map((a) =>
+          this.email.sendAlert(a.email, title, body, org.id, attachments),
+        ),
       );
       void this.whatsapp.notifyOrgAdmins(org.id, `📊 Royáltica · ${title}. ${body}`);
-      if (admins.length > 0) sent += 1;
+      if (admins.length > 0) {
+        sent += 1;
+        void this.reports.recordReportSent(
+          org.id,
+          { from: weekAgo, to: now },
+          admins.length,
+        );
+      }
     }
 
     this.logger.log(`weekly-collection-digest: ${sent} organización(es) notificada(s).`);

@@ -16,6 +16,14 @@ export interface SendEmailInput {
   replyTo?: string | string[];
   /** Si se indica, se registra un UsageEvent EMAIL_SENT para esa organización. */
   organizationId?: string;
+  /** Adjuntos opcionales (p. ej. el PDF del reporte de cobranza). */
+  attachments?: SendEmailAttachment[];
+}
+
+export interface SendEmailAttachment {
+  filename: string;
+  /** Resend acepta Buffer o contenido base64 en `content`. */
+  content: Buffer | string;
 }
 
 /**
@@ -83,6 +91,10 @@ export class EmailService implements OnModuleInit {
         subject: input.subject,
         html: input.html,
         text: input.text,
+        attachments: input.attachments?.map((a) => ({
+          filename: a.filename,
+          content: a.content,
+        })),
       });
       if (error) {
         this.logger.warn(`Resend rechazó el correo: ${error.message}`);
@@ -142,6 +154,7 @@ export class EmailService implements OnModuleInit {
     title: string,
     body: string,
     organizationId?: string,
+    attachments?: SendEmailAttachment[],
   ): Promise<{ sent: boolean; id?: string }> {
     return this.send({
       to,
@@ -149,6 +162,7 @@ export class EmailService implements OnModuleInit {
       subject: `Royáltica · ${title}`,
       html: this.wrap(`<h2>${title}</h2><p>${body}</p>`),
       text: `${title}\n\n${body}`,
+      attachments,
     });
   }
 
@@ -176,6 +190,34 @@ export class EmailService implements OnModuleInit {
          <p style="color:#667085;font-size:13px;">Gracias por tu preferencia.</p>`,
       ),
       text: `Hola ${customerName}, tu factura ${folio} por $${total} ${currency} vence el ${dueDate}. Si ya pagaste, ignora este mensaje. Gracias.`,
+    });
+  }
+
+  /**
+   * Paso de la secuencia de escalamiento de cobranza (CollectionSequenceStep).
+   * A diferencia de `sendCollectionReminder` (plantilla fija), aquí el cuerpo
+   * ya viene resuelto por CollectionSequencesService (placeholders
+   * reemplazados) y varía de tono según el paso (GENTLE/STANDARD/FIRM/URGENT).
+   */
+  async sendCollectionSequenceStep(
+    to: string,
+    customerName: string,
+    body: string,
+    organizationId?: string,
+    tone?: string,
+  ): Promise<{ sent: boolean; id?: string }> {
+    return this.send({
+      to,
+      organizationId,
+      subject:
+        tone === 'URGENT' || tone === 'FIRM'
+          ? 'Royáltica · Cuenta pendiente de pago'
+          : 'Royáltica · Recordatorio de pago',
+      html: this.wrap(
+        `<h2>Hola, ${customerName}</h2>
+         <p style="white-space:pre-line;">${body}</p>`,
+      ),
+      text: body,
     });
   }
 

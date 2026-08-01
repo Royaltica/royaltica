@@ -131,6 +131,7 @@ model Organization {
   webhookEndpoints    WebhookEndpoint[]
   usageEvents         UsageEvent[]
   collectionPolicies  CollectionPolicy[]
+  collectionSequenceRuns CollectionSequenceRun[]
 
   @@index([isActive])
 }
@@ -312,6 +313,7 @@ model Invoice {
   auditLogs         InvoiceAuditLog[]
   factorajeRequests FactorajeRequest[]
   payments          Payment[]          @relation("PaymentInvoices")
+  collectionSequenceRuns CollectionSequenceRun[]
 
   @@index([organizationId])
   @@index([direction])
@@ -559,9 +561,89 @@ model CollectionPolicy {
   deletedAt DateTime?
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sequenceSteps CollectionSequenceStep[]
+  sequenceRuns  CollectionSequenceRun[]
 
   @@index([organizationId])
   @@index([isActive])
+}
+
+enum CollectionSequenceTone {
+  GENTLE
+  STANDARD
+  FIRM
+  URGENT
+}
+
+enum CollectionSequenceRunStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ESCALATED
+  CANCELLED
+}
+
+// Un paso de la cadena de escalamiento de cobranza de una CollectionPolicy.
+// Ej.: día 1 recordatorio suave por correo → día 5 WhatsApp → día 10 correo
+// firme → día 15+ escala a un humano. Requisito de Tradespace: escalamiento
+// configurable con auditoría completa (cada ejecución se registra en
+// ActivityLog desde CollectionSequencesService).
+model CollectionSequenceStep {
+  id                 String  @id @default(uuid())
+  collectionPolicyId String
+  // Orden del paso dentro de la secuencia (1, 2, 3...).
+  stepOrder          Int
+  // Días de atraso (respecto a dueDate) a partir de los cuales este paso
+  // puede dispararse.
+  daysAfterDue        Int
+  channel             CollectionContactChannel
+  tone                CollectionSequenceTone @default(STANDARD)
+  // Plantilla del mensaje con placeholders simples: {{customerName}},
+  // {{amount}}, {{dueDate}}, {{daysOverdue}}. Se resuelven con reemplazo de
+  // texto plano (sin motor de templates) al enviar el paso.
+  messageTemplate     String
+  // Si es true, este paso NO envía un mensaje automático: crea una
+  // notificación de handoff para los admins de la organización y la
+  // ejecución (CollectionSequenceRun) pasa a estado ESCALATED.
+  escalatesToHuman    Boolean @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  collectionPolicy CollectionPolicy @relation(fields: [collectionPolicyId], references: [id], onDelete: Cascade)
+
+  @@index([collectionPolicyId])
+  @@index([stepOrder])
+}
+
+// Estado de ejecución de la secuencia de escalamiento para UNA factura CxC.
+// organizationId está denormalizado (en vez de solo vía Invoice/Policy) para
+// aplicar Row Level Security directo con el mismo patrón que el resto de
+// tablas por-organización (20260701100000_row_level_security).
+model CollectionSequenceRun {
+  id                  String                      @id @default(uuid())
+  organizationId      String
+  invoiceId           String
+  collectionPolicyId  String
+  // Último paso (stepOrder) ejecutado con éxito. 0 = aún no se ha enviado
+  // ningún paso.
+  currentStepOrder    Int                         @default(0)
+  status              CollectionSequenceRunStatus @default(ACTIVE)
+  lastStepSentAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice          Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  collectionPolicy CollectionPolicy @relation(fields: [collectionPolicyId], references: [id], onDelete: Cascade)
+
+  // Una factura solo tiene una ejecución de secuencia activa a la vez.
+  @@unique([invoiceId])
+  @@index([organizationId])
+  @@index([collectionPolicyId])
+  @@index([status])
 }
 
 // Caché local de la lista 69-B del SAT (EFOS/EDOS). Global, no por org.
@@ -681,4 +763,27 @@ model Lead {
   @@index([status])
   @@index([email])
   @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────
+// Reportes de cobranza (PDF) — audit trail de reportes generados
+// ─────────────────────────────────────────────────────
+
+/// Registro de un reporte de cobranza en PDF generado para una organización
+/// (envío semanal/periódico a la dirección financiera, p. ej. Tradespace).
+/// Sin FK a Organization: log ligero, mismo criterio que AiFeedback — no
+/// queremos que borrar/archivar una org arrastre el historial de reportes.
+/// El PDF no se persiste aquí (se genera y envía en memoria); este modelo
+/// es solo bitácora de auditoría (qué se generó, cuándo, para qué período).
+model CollectionReport {
+  id             String   @id @default(uuid())
+  organizationId String
+  periodFrom     DateTime
+  periodTo       DateTime
+  generatedAt    DateTime @default(now())
+  emailSent      Boolean  @default(false)
+  recipientCount Int      @default(0)
+
+  @@index([organizationId])
+  @@index([generatedAt])
 }
