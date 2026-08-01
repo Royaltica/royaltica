@@ -35,6 +35,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { PaymentsModule } from './payments/payments.module';
 import { FactorajeModule } from './factoraje/factoraje.module';
 import { PortalModule } from './portal/portal.module';
+import { CustomerPortalModule } from './customer-portal/customer-portal.module';
 import { JobsModule } from './jobs/jobs.module';
 import { ErpModule } from './erp/erp.module';
 import { AiModule } from './ai/ai.module';
@@ -110,6 +111,7 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     PaymentsModule,
     FactorajeModule,
     PortalModule,
+    CustomerPortalModule,
     JobsModule,
     ErpModule,
     AiModule,

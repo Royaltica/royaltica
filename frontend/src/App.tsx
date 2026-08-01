@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Routes, Route } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
 import { auth, signInWithEmail } from './lib/firebase.ts';
@@ -12,8 +13,24 @@ import { LockScreen } from './pages/auth/LockScreen.tsx';
 import { AdminDashboard } from './pages/admin/AdminDashboard.tsx';
 import { CorporateDashboard } from './pages/corporate/CorporateDashboard.tsx';
 import { ProviderDashboard } from './pages/provider/ProviderDashboard.tsx';
+import { CustomerPortalPage } from './pages/customer-portal/CustomerPortalPage.tsx';
 
+/**
+ * Ruta pública SIN AUTH para el portal de autoservicio de clientes deudores
+ * (Tradespace): tiene prioridad absoluta y bypassa por completo la lógica
+ * interna de la app (auth, roles, 2FA, etc.), que sigue viviendo intacta en
+ * `LegacyApp` como ruta catch-all "*". No se toca esa lógica.
+ */
 export default function App() {
+  return (
+    <Routes>
+      <Route path="/portal-cliente/:token" element={<CustomerPortalPage />} />
+      <Route path="*" element={<LegacyApp />} />
+    </Routes>
+  );
+}
+
+function LegacyApp() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<Role>(null);

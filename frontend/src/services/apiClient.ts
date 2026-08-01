@@ -218,6 +218,36 @@ export interface Receivable {
   customer?: { id: string; name: string; rfc: string } | null;
 }
 
+// ── Portal de autoservicio del cliente (público, sin login) ────
+// Ver api/src/customer-portal. Identidad resuelta solo por el token de la
+// URL; estas llamadas NUNCA mandan el JWT corporativo.
+
+export interface CustomerPortalInvoice {
+  id: string;
+  folio: string | null;
+  total: number;
+  currency: string;
+  dueDate: string | null;
+  status: string;
+  daysOverdue: number;
+  alreadyClaimedPaid: boolean;
+}
+
+export interface CustomerPortalData {
+  customer: { name: string };
+  currency: string;
+  invoices: CustomerPortalInvoice[];
+  aging: {
+    current: number;
+    d1_30: number;
+    d31_60: number;
+    d61_90: number;
+    d90_plus: number;
+    totalPending: number;
+    totalOverdue: number;
+  };
+}
+
 export interface AgingBucket {
   label: string;
   count: number;
@@ -1227,6 +1257,31 @@ export const api = {
 
   async getAtRiskCustomers(): Promise<{ count: number; customers: AtRiskCustomer[] }> {
     return request('GET', '/dashboard/receivables/at-risk');
+  },
+
+  // ── Portal de autoservicio del cliente (público) ──────────
+  // explicitToken=null: NUNCA se manda el JWT corporativo en estas llamadas,
+  // la identidad viene solo del token opaco en la URL.
+
+  async getCustomerPortalData(token: string): Promise<CustomerPortalData> {
+    return request<CustomerPortalData>(
+      'GET',
+      `/public/customer-portal/${encodeURIComponent(token)}`,
+      undefined,
+      null,
+    );
+  },
+
+  async markInvoicePaid(
+    token: string,
+    invoiceId: string,
+  ): Promise<{ ok: true; alreadyFlagged: boolean }> {
+    return request(
+      'POST',
+      `/public/customer-portal/${encodeURIComponent(token)}/invoices/${encodeURIComponent(invoiceId)}/mark-paid`,
+      undefined,
+      null,
+    );
   },
 };
 

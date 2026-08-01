@@ -17,6 +17,11 @@ export const envSchema = z.object({
   // Llave dedicada para cifrar secretos TOTP (si falta, se deriva de JWT_SECRET).
   TOTP_ENCRYPTION_KEY: z.string().min(32).optional(),
 
+  // Origen público del frontend (SPA). Se usa para construir enlaces
+  // absolutos que se mandan fuera de la app, p. ej. el link del portal
+  // de autoservicio del cliente (sin login) en /portal-cliente/:token.
+  FRONTEND_URL: z.string().default('http://localhost:5173'),
+
   // Interruptor EXPLÍCITO para permitir /auth/dev-login en un despliegue con
   // NODE_ENV=production (p. ej. un ambiente de demo/staging temporal, antes
   // de tener Firebase configurado). Independiente de NODE_ENV a propósito:
