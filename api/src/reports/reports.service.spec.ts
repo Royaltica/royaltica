@@ -4,7 +4,10 @@ import { DashboardService } from '../dashboard/dashboard.service';
 
 describe('ReportsService — reporte de cobranza en PDF', () => {
   let service: ReportsService;
-  let prisma: { organization: { findUnique: jest.Mock }; collectionReport: { create: jest.Mock } };
+  let prisma: {
+    organization: { findUnique: jest.Mock };
+    collectionReport: { create: jest.Mock; findFirst: jest.Mock };
+  };
   let dashboard: {
     getReceivablesDigest: jest.Mock;
     getReceivablesAging: jest.Mock;
@@ -14,7 +17,7 @@ describe('ReportsService — reporte de cobranza en PDF', () => {
   beforeEach(() => {
     prisma = {
       organization: { findUnique: jest.fn() },
-      collectionReport: { create: jest.fn() },
+      collectionReport: { create: jest.fn(), findFirst: jest.fn() },
     };
     dashboard = {
       getReceivablesDigest: jest.fn(),
@@ -135,6 +138,36 @@ describe('ReportsService — reporte de cobranza en PDF', () => {
         }),
       }),
     );
+  });
+
+  it('rechaza periodos inválidos', async () => {
+    await expect(
+      service.generateCollectionReportPdf('org-1', {
+        from: new Date('2026-08-01T00:00:00.000Z'),
+        to: new Date('2026-07-25T00:00:00.000Z'),
+      }),
+    ).rejects.toThrow('período');
+    expect(prisma.organization.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('wasReportSent detecta reportes enviados para el mismo periodo y organización', async () => {
+    prisma.collectionReport.findFirst.mockResolvedValue({ id: 'rep-1' });
+    const range = {
+      from: new Date('2026-07-25T00:00:00.000Z'),
+      to: new Date('2026-08-01T00:00:00.000Z'),
+    };
+
+    await expect(service.wasReportSent('org-1', range)).resolves.toBe(true);
+
+    expect(prisma.collectionReport.findFirst).toHaveBeenCalledWith({
+      where: {
+        organizationId: 'org-1',
+        periodFrom: range.from,
+        periodTo: range.to,
+        emailSent: true,
+      },
+      select: { id: true },
+    });
   });
 
   it('recordReportSent no lanza si falla la escritura en BD', async () => {

@@ -57,6 +57,7 @@ describe('CollectionSequencesService', () => {
     collectionPolicy: { findFirst: jest.Mock };
     collectionSequenceRun: {
       findUnique: jest.Mock;
+      findMany: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
       updateMany: jest.Mock;
@@ -81,6 +82,7 @@ describe('CollectionSequencesService', () => {
       },
       collectionSequenceRun: {
         findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn().mockImplementation(({ data }) => ({
           id: 'run-1',
           currentStepOrder: 0,
@@ -208,5 +210,93 @@ describe('CollectionSequencesService', () => {
     expect(result.outcome).toBe('skipped');
     expect(result.reason).toBe('no-active-policy-or-steps');
     expect(prisma.collectionSequenceRun.create).not.toHaveBeenCalled();
+  });
+
+  it('factura pagada: cierra ejecuciones activas y no envía mensajes', async () => {
+    prisma.invoice.findUnique.mockResolvedValue({ ...baseInvoice, status: 'PAID' });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('skipped');
+    expect(result.reason).toBe('invoice-not-pending');
+    expect(prisma.collectionSequenceRun.updateMany).toHaveBeenCalledWith({
+      where: { invoiceId: 'inv-1', status: { in: ['ACTIVE', 'PAUSED'] } },
+      data: { status: 'COMPLETED' },
+    });
+    expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('run pausado: no avanza ni envía mensajes', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    prisma.collectionSequenceRun.findUnique.mockResolvedValue({
+      id: 'run-1',
+      organizationId: 'org-1',
+      invoiceId: 'inv-1',
+      collectionPolicyId: 'pol-1',
+      currentStepOrder: 0,
+      status: 'PAUSED',
+      lastStepSentAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('skipped');
+    expect(result.reason).toBe('run-paused');
+    expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+    expect(prisma.collectionSequenceRun.update).not.toHaveBeenCalled();
+  });
+
+  it('blackout date: no envía y no consume el paso', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    prisma.collectionPolicy.findFirst.mockResolvedValue({
+      ...basePolicy,
+      blackoutDates: [new Date('2026-08-01T00:00:00Z')],
+      sequenceSteps: [step1],
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('skipped');
+    expect(result.reason).toBe('blackout-date');
+    expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+    expect(prisma.collectionSequenceRun.update).not.toHaveBeenCalled();
+  });
+
+  it('ejecución repetida: no duplica el mensaje de un paso ya consumido', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    prisma.collectionSequenceRun.findUnique.mockResolvedValue({
+      id: 'run-1',
+      organizationId: 'org-1',
+      invoiceId: 'inv-1',
+      collectionPolicyId: 'pol-1',
+      currentStepOrder: 1,
+      status: 'ACTIVE',
+      lastStepSentAt: new Date('2026-07-30T12:00:00Z'),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('completed');
+    expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+    expect(prisma.collectionSequenceRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'COMPLETED' } }),
+    );
+  });
+
+  it('consulta runs aislados por organizationId del usuario', async () => {
+    const user = { id: 'u-1', organizationId: 'org-2' } as never;
+
+    await service.findRuns(user);
+
+    expect(prisma.withOrg).toHaveBeenCalledWith('org-2', expect.any(Function));
+    expect(prisma.collectionSequenceRun.findMany).toHaveBeenCalledWith({
+      where: { organizationId: 'org-2' },
+      orderBy: { updatedAt: 'desc' },
+    });
   });
 });

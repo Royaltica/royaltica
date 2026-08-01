@@ -120,17 +120,17 @@ model Organization {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  users               User[]
-  suppliers           Supplier[]
-  customers           Customer[]
-  invoices            Invoice[]
-  payments            Payment[]
-  diotDeclarations    DiotDeclaration[]
-  financialStatements FinancialStatement[]
-  activityLogs        ActivityLog[]
-  webhookEndpoints    WebhookEndpoint[]
-  usageEvents         UsageEvent[]
-  collectionPolicies  CollectionPolicy[]
+  users                  User[]
+  suppliers              Supplier[]
+  customers              Customer[]
+  invoices               Invoice[]
+  payments               Payment[]
+  diotDeclarations       DiotDeclaration[]
+  financialStatements    FinancialStatement[]
+  activityLogs           ActivityLog[]
+  webhookEndpoints       WebhookEndpoint[]
+  usageEvents            UsageEvent[]
+  collectionPolicies     CollectionPolicy[]
   collectionSequenceRuns CollectionSequenceRun[]
 
   @@index([isActive])
@@ -261,58 +261,58 @@ model SupplierDocument {
 }
 
 model Invoice {
-  id               String           @id @default(uuid())
-  organizationId   String
+  id                 String           @id @default(uuid())
+  organizationId     String
   // Sentido de la factura. PAYABLE (CxP) usa supplierId; RECEIVABLE (CxC) usa
   // customerId. Toda query de CxP filtra direction=PAYABLE y CxC=RECEIVABLE.
-  direction        InvoiceDirection @default(PAYABLE)
-  supplierId       String?
-  customerId       String?
-  folio            String?
-  cfdiUuid         String           @unique
-  rfcEmisor        String
-  rfcReceptor      String
-  subtotal         Decimal        @db.Decimal(15, 2)
-  iva              Decimal        @db.Decimal(15, 2)
-  total            Decimal        @db.Decimal(15, 2)
-  currency         String         @default("MXN")
-  exchangeRate     Decimal        @default(1) @db.Decimal(15, 6)
-  date             DateTime
-  dueDate          DateTime?
-  status           InvoiceStatus  @default(PENDING)
-  paymentRoute     PaymentRoute?
-  paymentType      PaymentType?
-  poNumber         String?
-  description      String?
-  satStatus        String?
-  paidDate         DateTime?
-  scheduledPayDate DateTime?
+  direction          InvoiceDirection @default(PAYABLE)
+  supplierId         String?
+  customerId         String?
+  folio              String?
+  cfdiUuid           String           @unique
+  rfcEmisor          String
+  rfcReceptor        String
+  subtotal           Decimal          @db.Decimal(15, 2)
+  iva                Decimal          @db.Decimal(15, 2)
+  total              Decimal          @db.Decimal(15, 2)
+  currency           String           @default("MXN")
+  exchangeRate       Decimal          @default(1) @db.Decimal(15, 6)
+  date               DateTime
+  dueDate            DateTime?
+  status             InvoiceStatus    @default(PENDING)
+  paymentRoute       PaymentRoute?
+  paymentType        PaymentType?
+  poNumber           String?
+  description        String?
+  satStatus          String?
+  paidDate           DateTime?
+  scheduledPayDate   DateTime?
   // REP (Recibo Electrónico de Pago / complemento de pago).
   // Royáltica NO timbra: solo rastrea si el cliente ya emitió el REP de
   // una factura PPD pagada y recuerda emitirlo. repStatus: NA (no aplica,
   // p. ej. PUE) | PENDING (PPD pagada, falta REP) | RECEIVED (REP registrado).
-  repStatus        String         @default("NA")
-  repUuid          String?
-  repReceivedAt    DateTime?
-  forensicStatus   ForensicStatus   @default(PENDING)
-  forensicScore    Int?
-  auditAnalysis    Json?
-  signatures       Int              @default(0)
-  cfdiXmlUrl       String?
-  pdfUrl           String?
+  repStatus          String           @default("NA")
+  repUuid            String?
+  repReceivedAt      DateTime?
+  forensicStatus     ForensicStatus   @default(PENDING)
+  forensicScore      Int?
+  auditAnalysis      Json?
+  signatures         Int              @default(0)
+  cfdiXmlUrl         String?
+  pdfUrl             String?
   // Última vez que el agente de cobranza (CxC) envió un recordatorio de esta
   // factura al cliente. Evita reenviar el mismo día. Null = nunca se envió.
   lastReminderSentAt DateTime?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  deletedAt        DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  deletedAt          DateTime?
 
-  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  supplier          Supplier?          @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  customer          Customer?          @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  auditLogs         InvoiceAuditLog[]
-  factorajeRequests FactorajeRequest[]
-  payments          Payment[]          @relation("PaymentInvoices")
+  organization           Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  supplier               Supplier?               @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  customer               Customer?               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  auditLogs              InvoiceAuditLog[]
+  factorajeRequests      FactorajeRequest[]
+  payments               Payment[]               @relation("PaymentInvoices")
   collectionSequenceRuns CollectionSequenceRun[]
 
   @@index([organizationId])
@@ -544,7 +544,7 @@ model CollectionPolicy {
   timezone                String
 
   // Días de gracia tras el vencimiento antes de iniciar cobranza.
-  gracePeriodDays Int
+  gracePeriodDays         Int
   // Días de atraso a partir de los cuales se escala a un humano.
   escalationThresholdDays Int
 
@@ -560,7 +560,7 @@ model CollectionPolicy {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization  Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   sequenceSteps CollectionSequenceStep[]
   sequenceRuns  CollectionSequenceRun[]
 
@@ -589,23 +589,23 @@ enum CollectionSequenceRunStatus {
 // configurable con auditoría completa (cada ejecución se registra en
 // ActivityLog desde CollectionSequencesService).
 model CollectionSequenceStep {
-  id                 String  @id @default(uuid())
+  id                 String                   @id @default(uuid())
   collectionPolicyId String
   // Orden del paso dentro de la secuencia (1, 2, 3...).
   stepOrder          Int
   // Días de atraso (respecto a dueDate) a partir de los cuales este paso
   // puede dispararse.
-  daysAfterDue        Int
-  channel             CollectionContactChannel
-  tone                CollectionSequenceTone @default(STANDARD)
+  daysAfterDue       Int
+  channel            CollectionContactChannel
+  tone               CollectionSequenceTone   @default(STANDARD)
   // Plantilla del mensaje con placeholders simples: {{customerName}},
   // {{amount}}, {{dueDate}}, {{daysOverdue}}. Se resuelven con reemplazo de
   // texto plano (sin motor de templates) al enviar el paso.
-  messageTemplate     String
+  messageTemplate    String
   // Si es true, este paso NO envía un mensaje automático: crea una
   // notificación de handoff para los admins de la organización y la
   // ejecución (CollectionSequenceRun) pasa a estado ESCALATED.
-  escalatesToHuman    Boolean @default(false)
+  escalatesToHuman   Boolean                  @default(false)
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -622,15 +622,15 @@ model CollectionSequenceStep {
 // aplicar Row Level Security directo con el mismo patrón que el resto de
 // tablas por-organización (20260701100000_row_level_security).
 model CollectionSequenceRun {
-  id                  String                      @id @default(uuid())
-  organizationId      String
-  invoiceId           String
-  collectionPolicyId  String
+  id                 String                      @id @default(uuid())
+  organizationId     String
+  invoiceId          String
+  collectionPolicyId String
   // Último paso (stepOrder) ejecutado con éxito. 0 = aún no se ha enviado
   // ningún paso.
-  currentStepOrder    Int                         @default(0)
-  status              CollectionSequenceRunStatus @default(ACTIVE)
-  lastStepSentAt      DateTime?
+  currentStepOrder   Int                         @default(0)
+  status             CollectionSequenceRunStatus @default(ACTIVE)
+  lastStepSentAt     DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -741,23 +741,23 @@ enum LeadStatus {
 /// Lead público capturado en royaltica.com (agendar demo o contactar).
 /// Sin FK a Organization: es un prospecto, aún no cliente.
 model Lead {
-  id             String     @id @default(uuid())
-  type           LeadType
-  status         LeadStatus @default(NEW)
-  name           String
-  company        String?
-  email          String
-  phone          String?
-  jobTitle       String?
-  companySize    Int?
-  subject        String?
-  message        String?
-  preferredDate  DateTime?
-  preferredTime  String?
-  source         String?
+  id              String     @id @default(uuid())
+  type            LeadType
+  status          LeadStatus @default(NEW)
+  name            String
+  company         String?
+  email           String
+  phone           String?
+  jobTitle        String?
+  companySize     Int?
+  subject         String?
+  message         String?
+  preferredDate   DateTime?
+  preferredTime   String?
+  source          String?
   handledByUserId String?
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
 
   @@index([type])
   @@index([status])
