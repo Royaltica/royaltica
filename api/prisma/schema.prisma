@@ -115,6 +115,17 @@ model Organization {
   locale    String    @default("es-MX")
   // Moneda del tenant. Valores válidos: MXN, CAD.
   currency  String    @default("MXN")
+  // ── White label (Tradespace: marca propia sobre la plataforma) ──
+  // Todos opcionales/nulos: una org sin branding propio hereda el look
+  // por defecto de Royáltica (no requieren backfill ni valor default).
+  /// Nombre visible que reemplaza "Royáltica" en la UI cuando está definido.
+  brandDisplayName   String?
+  /// URL del logo propio (reemplaza el logo de Royáltica en login/header).
+  brandLogoUrl       String?
+  /// Color primario de marca en hex (#RRGGBB).
+  brandPrimaryColor  String?
+  /// Color de acento de marca en hex (#RRGGBB); sobreescribe --color-brand-gold.
+  brandAccentColor   String?
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -132,6 +143,7 @@ model Organization {
   usageEvents            UsageEvent[]
   collectionPolicies     CollectionPolicy[]
   collectionSequenceRuns CollectionSequenceRun[]
+  customerPortalAccesses CustomerPortalAccess[]
 
   @@index([isActive])
 }
@@ -234,10 +246,35 @@ model Customer {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   invoices     Invoice[]
+  portalAccesses CustomerPortalAccess[]
 
   @@unique([organizationId, rfc])
   @@index([organizationId])
   @@index([isActive])
+}
+
+// Portal de autoservicio SIN CUENTA para clientes deudores (Tradespace,
+// Canadá): un enlace con token opaco y expiración, sin password ni login,
+// para que el cliente vea sus facturas pendientes y marque "ya pagué".
+// organizationId va denormalizado (igual que CollectionSequenceRun) para
+// poder aplicar la misma política simple de RLS por columna directa.
+model CustomerPortalAccess {
+  id             String    @id @default(uuid())
+  organizationId String
+  customerId     String
+  // Token opaco, generado con crypto.randomBytes(32).toString('hex'):
+  // no es adivinable ni sigue un patrón secuencial.
+  token          String    @unique
+  expiresAt      DateTime
+  createdAt      DateTime  @default(now())
+  lastAccessedAt DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([customerId])
+  @@index([expiresAt])
 }
 
 model SupplierDocument {

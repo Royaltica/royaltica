@@ -25,6 +25,8 @@ export function OrgSettingsForm() {
   const [form, setForm] = useState({
     displayName: '', fiscalRegimen: '', fiscalAddress: '',
     documentAlertDays: 15, factorajeFeePercent: 0, costRatio: 0.65, erpProvider: '',
+    // White label (Tradespace): marca propia del tenant sobre la plataforma.
+    brandDisplayName: '', brandLogoUrl: '', brandPrimaryColor: '', brandAccentColor: '',
   });
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -41,6 +43,10 @@ export function OrgSettingsForm() {
         factorajeFeePercent: s.factorajeFeePercent ?? 0,
         costRatio: s.costRatio ?? 0.65,
         erpProvider: s.erpProvider ?? '',
+        brandDisplayName: s.brandDisplayName ?? '',
+        brandLogoUrl: s.brandLogoUrl ?? '',
+        brandPrimaryColor: s.brandPrimaryColor ?? '',
+        brandAccentColor: s.brandAccentColor ?? '',
       });
       setLoaded(true);
     }).catch(() => setLoaded(true));
@@ -57,6 +63,10 @@ export function OrgSettingsForm() {
         factorajeFeePercent: Number(form.factorajeFeePercent),
         costRatio: Number(form.costRatio),
         erpProvider: form.erpProvider || null,
+        brandDisplayName: form.brandDisplayName.trim() || null,
+        brandLogoUrl: form.brandLogoUrl.trim() || null,
+        brandPrimaryColor: form.brandPrimaryColor.trim() || null,
+        brandAccentColor: form.brandAccentColor.trim() || null,
       });
       setMsg('Configuración guardada.');
     } catch (e) {
@@ -113,6 +123,33 @@ export function OrgSettingsForm() {
               <input type="number" step="0.01" min={0} max={1} className={inputCls} value={form.costRatio} onChange={e => setForm({ ...form, costRatio: Number(e.target.value) })} />
             </Field>
           </div>
+
+          {/* ── White label (Tradespace: marca propia) ────────────────── */}
+          <div className="pt-2 border-t border-brand-sand/30">
+            <p className="text-[9px] uppercase font-bold tracking-widest text-brand-ink/40 mb-3">Marca propia (White Label)</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label='Nombre de marca (reemplaza "Royáltica")'>
+                <input className={inputCls} value={form.brandDisplayName} onChange={e => setForm({ ...form, brandDisplayName: e.target.value })} placeholder="Tradespace" />
+              </Field>
+              <Field label="URL del logo">
+                <input className={inputCls} value={form.brandLogoUrl} onChange={e => setForm({ ...form, brandLogoUrl: e.target.value })} placeholder="https://.../logo.png" />
+              </Field>
+              <Field label="Color primario (hex)">
+                <div className="flex items-center gap-2">
+                  <input className={inputCls} value={form.brandPrimaryColor} onChange={e => setForm({ ...form, brandPrimaryColor: e.target.value })} placeholder="#111827" />
+                  {form.brandPrimaryColor && <span className="w-8 h-8 rounded-lg border border-brand-sand flex-shrink-0" style={{ backgroundColor: form.brandPrimaryColor }} />}
+                </div>
+              </Field>
+              <Field label="Color de acento (hex)">
+                <div className="flex items-center gap-2">
+                  <input className={inputCls} value={form.brandAccentColor} onChange={e => setForm({ ...form, brandAccentColor: e.target.value })} placeholder="#06B6D4" />
+                  {form.brandAccentColor && <span className="w-8 h-8 rounded-lg border border-brand-sand flex-shrink-0" style={{ backgroundColor: form.brandAccentColor }} />}
+                </div>
+              </Field>
+            </div>
+            <p className="text-[9px] text-brand-ink/30 font-serif mt-2">Deja estos campos vacíos para usar la marca por defecto de Royáltica. Los cambios de color se aplican al refrescar la página.</p>
+          </div>
+
           <div className="flex items-center gap-3">
             <button onClick={save} disabled={busy} className="flex items-center gap-2 px-6 py-3 bg-brand-ink text-brand-bone rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-brand-gold hover:text-brand-ink transition-all disabled:opacity-50">
               {busy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} {busy ? 'Guardando...' : 'Guardar Cambios'}

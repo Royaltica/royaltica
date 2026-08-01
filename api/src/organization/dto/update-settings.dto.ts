@@ -7,6 +7,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -14,7 +15,11 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { SUPPORTED_ERPS } from '../../settings/settings.service';
-import { SUPPORTED_LOCALES, SUPPORTED_CURRENCIES } from '../organization.constants';
+import {
+  SUPPORTED_LOCALES,
+  SUPPORTED_CURRENCIES,
+  HEX_COLOR_REGEX,
+} from '../organization.constants';
 
 /** Un autorizador operativo (su cantidad define las firmas requeridas). */
 export class AuthorizerEntryDto {
@@ -97,4 +102,28 @@ export class UpdateSettingsDto {
   @IsOptional()
   @IsIn([...SUPPORTED_CURRENCIES])
   currency?: string;
+
+  // ── White label (Tradespace: marca propia) ──────────────
+
+  /** Nombre visible que reemplaza "Royáltica" en la UI. null lo desactiva. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  brandDisplayName?: string;
+
+  /** URL del logo propio. Validación laxa (string) para tolerar CDNs internas. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  brandLogoUrl?: string;
+
+  /** Color primario de marca en hex (#RRGGBB). */
+  @IsOptional()
+  @Matches(HEX_COLOR_REGEX, { message: 'brandPrimaryColor debe ser un hex #RRGGBB.' })
+  brandPrimaryColor?: string;
+
+  /** Color de acento de marca en hex (#RRGGBB); sobreescribe --color-brand-gold. */
+  @IsOptional()
+  @Matches(HEX_COLOR_REGEX, { message: 'brandAccentColor debe ser un hex #RRGGBB.' })
+  brandAccentColor?: string;
 }

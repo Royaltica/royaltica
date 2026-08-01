@@ -32,6 +32,10 @@ export class OrganizationService {
         createdAt: true,
         locale: true,
         currency: true,
+        brandDisplayName: true,
+        brandLogoUrl: true,
+        brandPrimaryColor: true,
+        brandAccentColor: true,
       },
     });
     if (!org) throw new NotFoundException('Organización no encontrada.');
@@ -42,32 +46,52 @@ export class OrganizationService {
 
   async getSettings(user: AuthenticatedUser) {
     const organizationId = this.requireOrg(user);
-    return this.settings.get(organizationId);
+    const settings = await this.settings.get(organizationId);
+    // locale/currency/branding son columnas propias de Organization (no
+    // viven en el JSON `settings`): se anexan aparte para que el frontend
+    // pueda leerlas con una sola llamada a GET /organization/settings.
+    const org = await this.orgColumns(organizationId);
+    return { ...settings, ...org };
   }
 
   async updateSettings(user: AuthenticatedUser, dto: UpdateSettingsDto) {
     const organizationId = this.requireOrg(user);
-    const { locale, currency, ...settingsPatch } = dto;
+    const {
+      locale,
+      currency,
+      brandDisplayName,
+      brandLogoUrl,
+      brandPrimaryColor,
+      brandAccentColor,
+      ...settingsPatch
+    } = dto;
     const updated = await this.settings.update(organizationId, settingsPatch);
 
-    // locale/currency son columnas propias de Organization (no viven en el
-    // JSON `settings`): se persisten aparte cuando vienen en el parche.
-    let org = { locale: undefined as string | undefined, currency: undefined as string | undefined };
-    if (locale !== undefined || currency !== undefined) {
-      org = await this.prisma.organization.update({
-        where: { id: organizationId },
-        data: {
-          ...(locale !== undefined ? { locale } : {}),
-          ...(currency !== undefined ? { currency } : {}),
-        },
-        select: { locale: true, currency: true },
-      });
-    } else {
-      org = await this.prisma.organization.findUniqueOrThrow({
-        where: { id: organizationId },
-        select: { locale: true, currency: true },
-      });
-    }
+    // locale/currency/branding son columnas propias de Organization (no
+    // viven en el JSON `settings`): se persisten aparte cuando vienen en
+    // el parche.
+    const hasOrgColumnPatch =
+      locale !== undefined ||
+      currency !== undefined ||
+      brandDisplayName !== undefined ||
+      brandLogoUrl !== undefined ||
+      brandPrimaryColor !== undefined ||
+      brandAccentColor !== undefined;
+
+    const org = hasOrgColumnPatch
+      ? await this.prisma.organization.update({
+          where: { id: organizationId },
+          data: {
+            ...(locale !== undefined ? { locale } : {}),
+            ...(currency !== undefined ? { currency } : {}),
+            ...(brandDisplayName !== undefined ? { brandDisplayName } : {}),
+            ...(brandLogoUrl !== undefined ? { brandLogoUrl } : {}),
+            ...(brandPrimaryColor !== undefined ? { brandPrimaryColor } : {}),
+            ...(brandAccentColor !== undefined ? { brandAccentColor } : {}),
+          },
+          select: this.orgColumnSelect(),
+        })
+      : await this.orgColumns(organizationId);
 
     await this.activity.record({
       organizationId,
@@ -78,7 +102,26 @@ export class OrganizationService {
       metadata: { changed: Object.keys(dto) },
     });
 
-    return { ...updated, locale: org.locale, currency: org.currency };
+    return { ...updated, ...org };
+  }
+
+  private orgColumnSelect() {
+    return {
+      locale: true,
+      currency: true,
+      brandDisplayName: true,
+      brandLogoUrl: true,
+      brandPrimaryColor: true,
+      brandAccentColor: true,
+    } as const;
+  }
+
+  /** Columnas propias de Organization que se anexan a la config efectiva. */
+  private async orgColumns(organizationId: string) {
+    return this.prisma.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: this.orgColumnSelect(),
+    });
   }
 
   private requireOrg(user: AuthenticatedUser): string {

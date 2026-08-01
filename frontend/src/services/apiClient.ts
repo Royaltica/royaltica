@@ -879,6 +879,10 @@ export const api = {
     erpProvider: string | null;
     locale: string;
     currency: string;
+    brandDisplayName: string | null;
+    brandLogoUrl: string | null;
+    brandPrimaryColor: string | null;
+    brandAccentColor: string | null;
   }>): Promise<OrgSettings> {
     return request<OrgSettings>('PATCH', '/organization/settings', patch);
   },
@@ -1316,6 +1320,15 @@ export interface OrgSettings {
   locale?: string;
   /** Moneda del tenant (MXN | CAD). Ver nota de `locale`. */
   currency?: string;
+  // ── White label (Tradespace: marca propia) ──────────────
+  /** Nombre visible que reemplaza "Royáltica" en la UI. null = sin branding propio. */
+  brandDisplayName?: string | null;
+  /** URL del logo propio. null = usa el logo por defecto de Royáltica. */
+  brandLogoUrl?: string | null;
+  /** Color primario de marca en hex (#RRGGBB). */
+  brandPrimaryColor?: string | null;
+  /** Color de acento de marca en hex (#RRGGBB); sobreescribe --color-brand-gold. */
+  brandAccentColor?: string | null;
 }
 
 /** Resultado de POST /invoices/:id/audit (ver InvoiceAuditService backend). */

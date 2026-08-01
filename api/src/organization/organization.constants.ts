@@ -11,3 +11,9 @@ export type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
 
 export const DEFAULT_LOCALE: SupportedLocale = 'es-MX';
 export const DEFAULT_CURRENCY: SupportedCurrency = 'MXN';
+
+/**
+ * White label (Tradespace): validación de colores de marca en hex.
+ * Se valida a nivel de DTO; el valor se persiste tal cual (con "#").
+ */
+export const HEX_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/;

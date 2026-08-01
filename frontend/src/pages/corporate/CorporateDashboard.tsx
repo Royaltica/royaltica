@@ -23,6 +23,7 @@ import { SettingsView } from './views/SettingsView.tsx';
 import { FiscalAuditDashboard } from './views/FiscalAuditDashboard.tsx';
 import { ContabilidadView } from './views/ContabilidadView.tsx';
 import { HistorialView } from './views/HistorialView.tsx';
+import { useOrgBranding } from '../../hooks/useOrgBranding.ts';
 
 export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, permissions = [], role = '' }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, sessionStartedAt?: Date, permissions?: string[], role?: string }) {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'suppliers' | 'audits' | 'pending_invoices' | 'receivables' | 'financing' | 'settings' | 'fiscal_audit' | 'contabilidad' | 'historial'>('dashboard');
@@ -31,7 +32,10 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
   const isFullAccess = role === 'CORPORATE_ADMIN' || role === 'SUPERADMIN' || permissions.includes('*');
   const canSee = (area: string) => isFullAccess || permissions.includes(area);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => window.innerWidth < 900);
-  
+  // White label (Tradespace): nombre/logo/colores propios del tenant, con
+  // fallback al look por defecto de Royáltica.
+  const branding = useOrgBranding();
+
   // ─── Budget State (persisted in localStorage, aislado por usuario/org) ───
   const budgetKey = `royaltica_budget_${user.uid}`;
   const [totalBudget, setTotalBudget] = useState<number>(() => {
@@ -300,13 +304,17 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
         <div className={`flex flex-col h-full overflow-y-auto overflow-x-hidden px-4 pt-6 transition-all duration-300 ${isSidebarCollapsed ? 'opacity-0 invisible pointer-events-none' : 'opacity-100 visible'}`}>
           <div className="mb-12 overflow-hidden whitespace-nowrap flex-shrink-0">
             <button onClick={onBackToRole} className="text-left cursor-pointer group flex items-center gap-3">
-               <div className="w-8 h-8 flex-shrink-0 bg-brand-bone rounded flex items-center justify-center shadow-inner">
-                  <span className="font-serif font-bold text-brand-ink leading-none text-sm">R</span>
+               <div className="w-8 h-8 flex-shrink-0 bg-brand-bone rounded flex items-center justify-center shadow-inner overflow-hidden">
+                  {branding.logoUrl ? (
+                    <img src={branding.logoUrl} alt={branding.displayName} className="w-full h-full object-contain" />
+                  ) : (
+                    <span className="font-serif font-bold text-brand-ink leading-none text-sm">{branding.displayName.charAt(0)}</span>
+                  )}
                </div>
               {!isSidebarCollapsed && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                   <span className="label-caps mb-1 block !opacity-40">IA Fintech</span>
-                  <h1 className="text-xl font-serif tracking-widest leading-none">Royáltica</h1>
+                  <h1 className="text-xl font-serif tracking-widest leading-none">{branding.displayName}</h1>
                 </motion.div>
               )}
             </button>
