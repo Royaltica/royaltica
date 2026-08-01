@@ -14,6 +14,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { SUPPORTED_ERPS } from '../../settings/settings.service';
+import { SUPPORTED_LOCALES, SUPPORTED_CURRENCIES } from '../organization.constants';
 
 /** Un autorizador operativo (su cantidad define las firmas requeridas). */
 export class AuthorizerEntryDto {
@@ -86,4 +87,14 @@ export class UpdateSettingsDto {
   @IsOptional()
   @IsIn([...SUPPORTED_ERPS])
   erpProvider?: string;
+
+  /** Configuración regional del tenant (Tradespace: en-CA / fr-CA). */
+  @IsOptional()
+  @IsIn([...SUPPORTED_LOCALES])
+  locale?: string;
+
+  /** Moneda del tenant (Tradespace: CAD). */
+  @IsOptional()
+  @IsIn([...SUPPORTED_CURRENCIES])
+  currency?: string;
 }

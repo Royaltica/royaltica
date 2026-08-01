@@ -30,11 +30,7 @@ import {
   type RankedCustomer,
   type AtRiskCustomer,
 } from '../../../services/apiClient.ts';
-
-const CURRENCY_FORMATTER = new Intl.NumberFormat('es-MX', {
-  style: 'currency',
-  currency: 'MXN',
-});
+import { getCurrencyFormatter, getDateFormatter } from '../../../utils/locale.ts';
 
 const BUCKET_COLOR: Record<string, string> = {
   current: 'bg-emerald-500',
@@ -85,7 +81,24 @@ function RiskRing({ days, ring, initial }: { days: number; ring: string; initial
  * (WhatsApp + correo, ver JobsService.receivableReminders en el backend).
  */
 export function ReceivablesView() {
-  const fmt = (n: number) => CURRENCY_FORMATTER.format(n);
+  // Locale/moneda del tenant (Tradespace: en-CA/CAD). Cae a es-MX/MXN hasta
+  // que resuelva el fetch de settings, para no afectar a orgs mexicanas.
+  const [orgLocale, setOrgLocale] = React.useState<string | undefined>(undefined);
+  const [orgCurrency, setOrgCurrency] = React.useState<string | undefined>(undefined);
+  React.useEffect(() => {
+    api.getSettings()
+      .then(s => { setOrgLocale(s.locale); setOrgCurrency(s.currency); })
+      .catch(() => {});
+  }, []);
+  const currencyFormatter = React.useMemo(
+    () => getCurrencyFormatter(orgLocale, orgCurrency),
+    [orgLocale, orgCurrency],
+  );
+  const dateFormatter = React.useMemo(
+    () => getDateFormatter(orgLocale),
+    [orgLocale],
+  );
+  const fmt = (n: number) => currencyFormatter.format(n);
   const [customers, setCustomers] = React.useState<CxcCustomer[]>([]);
   const [receivables, setReceivables] = React.useState<Receivable[]>([]);
   const [aging, setAging] = React.useState<ReceivablesAging | null>(null);
@@ -493,8 +506,8 @@ export function ReceivablesView() {
                         </div>
                       </td>
                       <td className="px-5 py-4 text-right font-serif font-bold text-brand-ink">{fmt(r.total)}</td>
-                      <td className="px-5 py-4 text-[11px] text-brand-ink/60">{r.dueDate ? new Date(r.dueDate).toLocaleDateString('es-MX') : '—'}</td>
-                      <td className="px-5 py-4 text-[10px] text-brand-ink/40">{r.lastReminderSentAt ? new Date(r.lastReminderSentAt).toLocaleDateString('es-MX') : '—'}</td>
+                      <td className="px-5 py-4 text-[11px] text-brand-ink/60">{r.dueDate ? dateFormatter.format(new Date(r.dueDate)) : '—'}</td>
+                      <td className="px-5 py-4 text-[10px] text-brand-ink/40">{r.lastReminderSentAt ? dateFormatter.format(new Date(r.lastReminderSentAt)) : '—'}</td>
                       <td className="px-5 py-4">
                         <div className="flex gap-1.5 justify-end">
                           {!paid && !rejected && (

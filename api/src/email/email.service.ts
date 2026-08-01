@@ -160,6 +160,8 @@ export class EmailService implements OnModuleInit {
     total: string,
     dueDate: string,
     organizationId?: string,
+    // Moneda del tenant (default MXN para no romper orgs existentes).
+    currency = 'MXN',
   ): Promise<{ sent: boolean; id?: string }> {
     return this.send({
       to,
@@ -168,12 +170,12 @@ export class EmailService implements OnModuleInit {
       html: this.wrap(
         `<h2>Hola, ${customerName}</h2>
          <p>Te recordamos que tu factura <strong>${folio}</strong> por
-         <strong>$${total} MXN</strong> vence el <strong>${dueDate}</strong>.</p>
+         <strong>$${total} ${currency}</strong> vence el <strong>${dueDate}</strong>.</p>
          <p>Si ya realizaste el pago, ignora este mensaje. Si necesitas apoyo o
          un comprobante, responde a este correo y con gusto te ayudamos.</p>
          <p style="color:#667085;font-size:13px;">Gracias por tu preferencia.</p>`,
       ),
-      text: `Hola ${customerName}, tu factura ${folio} por $${total} MXN vence el ${dueDate}. Si ya pagaste, ignora este mensaje. Gracias.`,
+      text: `Hola ${customerName}, tu factura ${folio} por $${total} ${currency} vence el ${dueDate}. Si ya pagaste, ignora este mensaje. Gracias.`,
     });
   }
 

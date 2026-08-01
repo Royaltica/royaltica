@@ -30,6 +30,8 @@ export class OrganizationService {
         plan: true,
         isActive: true,
         createdAt: true,
+        locale: true,
+        currency: true,
       },
     });
     if (!org) throw new NotFoundException('Organización no encontrada.');
@@ -45,7 +47,27 @@ export class OrganizationService {
 
   async updateSettings(user: AuthenticatedUser, dto: UpdateSettingsDto) {
     const organizationId = this.requireOrg(user);
-    const updated = await this.settings.update(organizationId, dto);
+    const { locale, currency, ...settingsPatch } = dto;
+    const updated = await this.settings.update(organizationId, settingsPatch);
+
+    // locale/currency son columnas propias de Organization (no viven en el
+    // JSON `settings`): se persisten aparte cuando vienen en el parche.
+    let org = { locale: undefined as string | undefined, currency: undefined as string | undefined };
+    if (locale !== undefined || currency !== undefined) {
+      org = await this.prisma.organization.update({
+        where: { id: organizationId },
+        data: {
+          ...(locale !== undefined ? { locale } : {}),
+          ...(currency !== undefined ? { currency } : {}),
+        },
+        select: { locale: true, currency: true },
+      });
+    } else {
+      org = await this.prisma.organization.findUniqueOrThrow({
+        where: { id: organizationId },
+        select: { locale: true, currency: true },
+      });
+    }
 
     await this.activity.record({
       organizationId,
@@ -56,7 +78,7 @@ export class OrganizationService {
       metadata: { changed: Object.keys(dto) },
     });
 
-    return updated;
+    return { ...updated, locale: org.locale, currency: org.currency };
   }
 
   private requireOrg(user: AuthenticatedUser): string {

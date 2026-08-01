@@ -111,6 +111,10 @@ model Organization {
   legalName String
   plan      Plan      @default(FREE)
   settings  Json      @default("{}")
+  // Configuración regional del tenant. Valores válidos: es-MX, en-CA, fr-CA.
+  locale    String    @default("es-MX")
+  // Moneda del tenant. Valores válidos: MXN, CAD.
+  currency  String    @default("MXN")
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -126,6 +130,7 @@ model Organization {
   activityLogs        ActivityLog[]
   webhookEndpoints    WebhookEndpoint[]
   usageEvents         UsageEvent[]
+  collectionPolicies  CollectionPolicy[]
 
   @@index([isActive])
 }
@@ -506,6 +511,57 @@ model WebhookDelivery {
   @@index([endpointId])
   @@index([event])
   @@index([createdAt])
+}
+
+// Canal preferido para contactar al deudor en cobranza automatizada.
+enum CollectionContactChannel {
+  EMAIL
+  WHATSAPP
+  SMS
+  PHONE
+}
+
+// "Guard rail" de cobranza (accounts-receivable) configurable por
+// organización: define cómo y cuándo el agente automático de cobranza puede
+// contactar a un deudor, para cumplir requisitos regulatorios/contractuales
+// del cliente (ej. Tradespace, Canadá). Una organización puede tener varias
+// políticas (ej. una por línea de negocio); isActive marca la vigente.
+model CollectionPolicy {
+  id             String  @id @default(uuid())
+  organizationId String
+  name           String
+  isActive       Boolean @default(true)
+
+  // Tope de intentos de contacto por semana (anti-hostigamiento).
+  maxContactsPerWeek Int
+
+  // Ventana horaria permitida para contactar (hora local, 0-23).
+  allowedContactStartHour Int
+  allowedContactEndHour   Int
+  // Zona horaria (IANA, ej. "America/Toronto") para evaluar la ventana.
+  timezone                String
+
+  // Días de gracia tras el vencimiento antes de iniciar cobranza.
+  gracePeriodDays Int
+  // Días de atraso a partir de los cuales se escala a un humano.
+  escalationThresholdDays Int
+
+  preferredChannel CollectionContactChannel
+
+  // Mensaje usado cuando el sistema decide "dar marcha atrás" (pausa).
+  pauseMessage String?
+
+  // Fechas en las que no se debe contactar (feriados, acuerdos puntuales).
+  blackoutDates DateTime[] @default([])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([isActive])
 }
 
 // Caché local de la lista 69-B del SAT (EFOS/EDOS). Global, no por org.

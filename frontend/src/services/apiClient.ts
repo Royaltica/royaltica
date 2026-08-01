@@ -877,6 +877,8 @@ export const api = {
     factorajeFeePercent: number;
     costRatio: number;
     erpProvider: string | null;
+    locale: string;
+    currency: string;
   }>): Promise<OrgSettings> {
     return request<OrgSettings>('PATCH', '/organization/settings', patch);
   },
@@ -1309,6 +1311,11 @@ export interface OrgSettings {
   fiscalAddress: string | null;
   displayName: string | null;
   erpProvider: string | null;
+  /** Locale del tenant (es-MX | en-CA | fr-CA). Puede venir undefined en
+   * respuestas parciales; el formateador cae a es-MX si no está presente. */
+  locale?: string;
+  /** Moneda del tenant (MXN | CAD). Ver nota de `locale`. */
+  currency?: string;
 }
 
 /** Resultado de POST /invoices/:id/audit (ver InvoiceAuditService backend). */

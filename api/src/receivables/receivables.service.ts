@@ -42,8 +42,13 @@ const serialize = (i: Invoice) => ({
   total: Number(i.total),
 });
 
-const money = (n: number) =>
-  n.toLocaleString('es-MX', { minimumFractionDigits: 2 });
+/**
+ * Formatea un monto según el locale/moneda del tenant. Cae a es-MX/MXN si
+ * la organización aún no tiene locale/currency configurados (orgs previas
+ * a la migración de multi-tenant regional).
+ */
+const money = (n: number, locale = 'es-MX') =>
+  n.toLocaleString(locale, { minimumFractionDigits: 2 });
 
 @Injectable()
 export class ReceivablesService {
@@ -490,10 +495,19 @@ export class ReceivablesService {
       phone: string | null;
     },
   ): Promise<{ emailSent: boolean; whatsappSent: boolean }> {
-    const total = money(Number(invoice.total));
-    const due = (invoice.dueDate ?? invoice.date).toLocaleDateString('es-MX');
+    // Locale/moneda del tenant (fallback a es-MX/MXN si aún no están
+    // configurados, para no cambiar el comportamiento de orgs existentes).
+    const org = await this.prisma.organization.findUnique({
+      where: { id: invoice.organizationId },
+      select: { locale: true, currency: true },
+    });
+    const locale = org?.locale ?? 'es-MX';
+    const currency = org?.currency ?? 'MXN';
+
+    const total = money(Number(invoice.total), locale);
+    const due = (invoice.dueDate ?? invoice.date).toLocaleDateString(locale);
     const folio = invoice.folio ?? invoice.cfdiUuid.slice(0, 8);
-    const text = `Hola ${customer.name}, tu factura ${folio} por $${total} MXN vence el ${due}. Por favor confirma tu pago o contáctanos si necesitas apoyo. Gracias.`;
+    const text = `Hola ${customer.name}, tu factura ${folio} por $${total} ${currency} vence el ${due}. Por favor confirma tu pago o contáctanos si necesitas apoyo. Gracias.`;
 
     let whatsappSent = false;
     if (customer.phone) {
@@ -510,6 +524,7 @@ export class ReceivablesService {
         total,
         due,
         invoice.organizationId,
+        currency,
       );
       emailSent = res.sent;
     }

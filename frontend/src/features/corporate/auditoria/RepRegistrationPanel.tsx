@@ -2,13 +2,21 @@ import React from 'react';
 import { FileText, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { api, isRealId } from '../../../services/apiClient.ts';
 import { Invoice } from '../../../types.ts';
-
-const CURRENCY_FORMATTER = new Intl.NumberFormat('es-MX', {
-  style: 'currency',
-  currency: 'MXN',
-});
+import { getCurrencyFormatter } from '../../../utils/locale.ts';
 
 export function RepRegistrationPanel() {
+  // Locale/moneda del tenant (fallback a es-MX/MXN, ver utils/locale.ts).
+  const [orgLocale, setOrgLocale] = React.useState<string | undefined>(undefined);
+  const [orgCurrency, setOrgCurrency] = React.useState<string | undefined>(undefined);
+  React.useEffect(() => {
+    api.getSettings()
+      .then(s => { setOrgLocale(s.locale); setOrgCurrency(s.currency); })
+      .catch(() => {});
+  }, []);
+  const CURRENCY_FORMATTER = React.useMemo(
+    () => getCurrencyFormatter(orgLocale, orgCurrency),
+    [orgLocale, orgCurrency],
+  );
   const [invoices, setInvoices] = React.useState<Invoice[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [inputs, setInputs] = React.useState<Record<string, string>>({});

@@ -18,11 +18,11 @@ import {
 } from 'lucide-react';
 import { WebhookERPService, type WebhookEvent } from '../../../services/mockServices.ts';
 import { MOCK_INVOICES } from '../../../types.ts';
+import { getCurrencyFormatter, DEFAULT_LOCALE, DEFAULT_CURRENCY } from '../../../utils/locale.ts';
 
-const CURRENCY_FORMATTER = new Intl.NumberFormat('es-MX', {
-  style: 'currency',
-  currency: 'MXN',
-});
+// TODO: este panel usa datos mock; cuando consuma datos reales de la
+// organización, wirear locale/currency reales (ver ReceivablesView.tsx).
+const CURRENCY_FORMATTER = getCurrencyFormatter(DEFAULT_LOCALE, DEFAULT_CURRENCY);
 
 // ─── ConectividadERPPanel (unified Webhooks + Sync + Outbound) ───────────────
 type OutboundERPEvent = {
@@ -153,7 +153,7 @@ export function ConectividadERPPanel() {
   const runSync = (id: string) => {
     setSyncing(id);
     setTimeout(() => {
-      setSyncJobs(prev => prev.map(j => j.id === id ? { ...j, lastRun: new Date().toLocaleString('es-MX'), status: 'success' as const, records: j.records + Math.floor(Math.random() * 10) } : j));
+      setSyncJobs(prev => prev.map(j => j.id === id ? { ...j, lastRun: new Date().toLocaleString(DEFAULT_LOCALE), status: 'success' as const, records: j.records + Math.floor(Math.random() * 10) } : j));
       setSyncing(null);
     }, 2500);
   };
@@ -161,7 +161,7 @@ export function ConectividadERPPanel() {
   const runAll = () => {
     setSyncing('all');
     setTimeout(() => {
-      setSyncJobs(prev => prev.map(j => ({ ...j, lastRun: new Date().toLocaleString('es-MX'), status: 'success' as const })));
+      setSyncJobs(prev => prev.map(j => ({ ...j, lastRun: new Date().toLocaleString(DEFAULT_LOCALE), status: 'success' as const })));
       setSyncing(null);
     }, 4000);
   };
@@ -338,7 +338,7 @@ export function ConectividadERPPanel() {
                         <tr key={ev.id} className="hover:bg-brand-gold/5 transition-all">
                           <td className="px-5 py-3">
                             <span className="text-[9px] font-bold font-mono text-brand-ink block">{ev.id}</span>
-                            <span className="text-[8px] text-brand-ink/30">{ev.bank} · {new Date(ev.date).toLocaleString('es-MX')}</span>
+                            <span className="text-[8px] text-brand-ink/30">{ev.bank} · {new Date(ev.date).toLocaleString(DEFAULT_LOCALE)}</span>
                           </td>
                           <td className="px-5 py-3"><span className="text-[9px] font-mono bg-brand-sand/20 px-2 py-1 rounded-md text-brand-ink/60">{ev.tx_reference}</span></td>
                           <td className="px-5 py-3 text-sm font-bold font-serif text-brand-ink">{CURRENCY_FORMATTER.format(ev.amount)}</td>

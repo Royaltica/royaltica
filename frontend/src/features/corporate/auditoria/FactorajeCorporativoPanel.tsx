@@ -1,11 +1,7 @@
 import React from 'react';
 import { DollarSign, RefreshCw, CheckCircle2, AlertTriangle, HelpCircle, Loader2 } from 'lucide-react';
 import { api, type CorpFactoraje } from '../../../services/apiClient.ts';
-
-const CURRENCY_FORMATTER = new Intl.NumberFormat('es-MX', {
-  style: 'currency',
-  currency: 'MXN',
-});
+import { getCurrencyFormatter } from '../../../utils/locale.ts';
 
 // El corporativo revisa las solicitudes que mandan los proveedores y las
 // aprueba / rechaza / desembolsa. El desembolso opera en modo manual mientras
@@ -16,6 +12,19 @@ export function FactorajeCorporativoPanel() {
   const [busy, setBusy] = React.useState<string | null>(null);
   const [err, setErr] = React.useState<string | null>(null);
   const [msg, setMsg] = React.useState<string | null>(null);
+
+  // Locale/moneda del tenant (fallback a es-MX/MXN, ver utils/locale.ts).
+  const [orgLocale, setOrgLocale] = React.useState<string | undefined>(undefined);
+  const [orgCurrency, setOrgCurrency] = React.useState<string | undefined>(undefined);
+  React.useEffect(() => {
+    api.getSettings()
+      .then(s => { setOrgLocale(s.locale); setOrgCurrency(s.currency); })
+      .catch(() => {});
+  }, []);
+  const CURRENCY_FORMATTER = React.useMemo(
+    () => getCurrencyFormatter(orgLocale, orgCurrency),
+    [orgLocale, orgCurrency],
+  );
 
   const load = React.useCallback(async () => {
     setLoading(true);
