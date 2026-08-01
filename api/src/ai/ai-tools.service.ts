@@ -81,6 +81,16 @@ export class AiToolsService {
           return this.financialStatements(tx, organizationId, args);
         case 'get_activity_log':
           return this.activityLog(tx, organizationId, args);
+        case 'get_receivables_aging_report':
+          return this.receivablesAgingReport(organizationId);
+        case 'get_at_risk_customers':
+          return this.atRiskCustomers(organizationId);
+        case 'get_ranked_customers':
+          return this.rankedCustomers(organizationId);
+        case 'get_reminder_effectiveness':
+          return this.reminderEffectiveness(organizationId);
+        case 'get_cash_conversion_cycle':
+          return this.cashConversionCycle(organizationId);
         default:
           this.logger.warn(`Herramienta desconocida solicitada: ${name}`);
           return { error: `Herramienta no soportada: ${name}` };
@@ -96,6 +106,56 @@ export class AiToolsService {
    */
   private async financialRatios(organizationId: string) {
     return this.dashboard.getFinancialRatios({
+      organizationId,
+    } as AuthenticatedUser);
+  }
+
+  /**
+   * Reporte de antigüedad de saldos POR COBRAR (CxC / AR aging), por cliente.
+   * Reusa el cálculo autoritativo de DashboardService (mismo patrón que
+   * financialRatios: solo se le pasa el organizationId ya validado aquí).
+   */
+  private async receivablesAgingReport(organizationId: string) {
+    return this.dashboard.getReceivablesAging({
+      organizationId,
+    } as AuthenticatedUser);
+  }
+
+  /**
+   * Clientes en riesgo de impago (morosidad actual + mal historial de
+   * puntualidad), con el motivo explícito de por qué se marcaron.
+   */
+  private async atRiskCustomers(organizationId: string) {
+    return this.dashboard.getAtRiskCustomers({
+      organizationId,
+    } as AuthenticatedUser);
+  }
+
+  /**
+   * Ranking de clientes por comportamiento de pago histórico (mejor a peor
+   * pagador): puntualidad, atraso promedio y volumen.
+   */
+  private async rankedCustomers(organizationId: string) {
+    return this.dashboard.getCustomerRanking({
+      organizationId,
+    } as AuthenticatedUser);
+  }
+
+  /**
+   * Efectividad del agente de cobranza: cobertura de recordatorios y días
+   * promedio entre el último recordatorio y el pago.
+   */
+  private async reminderEffectiveness(organizationId: string) {
+    return this.dashboard.getReminderEffectiveness({
+      organizationId,
+    } as AuthenticatedUser);
+  }
+
+  /**
+   * Ciclo de conversión de efectivo (CCC = DSO − DPO), incluye el DSO vigente.
+   */
+  private async cashConversionCycle(organizationId: string) {
+    return this.dashboard.getCashConversionCycle({
       organizationId,
     } as AuthenticatedUser);
   }

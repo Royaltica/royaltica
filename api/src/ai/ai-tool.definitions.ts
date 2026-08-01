@@ -209,4 +209,60 @@ export const AI_TOOL_DECLARATIONS = [
       },
     },
   },
+
+  // ── Herramientas de CxC / cobranza (AR / collections) ──────────
+
+  {
+    name: 'get_receivables_aging_report',
+    description:
+      'Reporte de antigüedad de saldos POR COBRAR (aging de CxC). Clasifica ' +
+      'las facturas de venta pendientes de cobro en cubetas por días vencidos ' +
+      '(vigente, 1-30, 31-60, 61-90, 90+) e incluye el desglose por cliente, ' +
+      'con el monto total y vencido de cada uno. Úsala para preguntas sobre ' +
+      'cuánto le deben a la organización, qué tan vencida está la cartera, o ' +
+      'qué clientes concentran más saldo pendiente.',
+    parameters: { type: T.OBJECT, properties: {} },
+  },
+  {
+    name: 'get_at_risk_customers',
+    description:
+      'Lista los clientes en riesgo de impago: aquellos con morosidad actual ' +
+      '(varias facturas vencidas o una con atraso significativo) combinada con ' +
+      'mal historial de puntualidad o sin historial de pagos. Incluye el motivo ' +
+      'explícito, el monto vencido y el % histórico de pagos a tiempo de cada ' +
+      'cliente. Úsala para identificar a quién priorizar en la estrategia de ' +
+      'cobranza o a quién conviene escalar.',
+    parameters: { type: T.OBJECT, properties: {} },
+  },
+  {
+    name: 'get_ranked_customers',
+    description:
+      'Ranking de todos los clientes con historial de pagos, del mejor al peor ' +
+      'pagador: % de facturas cobradas a tiempo, atraso promedio en días de las ' +
+      'facturas tardías y volumen total pagado. Úsala para calibrar el tono de ' +
+      'la comunicación de cobranza (firme vs. flexible) según el comportamiento ' +
+      'histórico real de cada cliente, o para preguntas sobre cuáles clientes ' +
+      'pagan mejor o peor.',
+    parameters: { type: T.OBJECT, properties: {} },
+  },
+  {
+    name: 'get_reminder_effectiveness',
+    description:
+      'Efectividad de los recordatorios de cobranza enviados a clientes: ' +
+      'cuántas facturas cobradas tuvieron un recordatorio previo (cobertura), ' +
+      'el promedio de días entre el último recordatorio y el pago, y el total ' +
+      'de recordatorios enviados. Úsala para preguntas sobre si los ' +
+      'recordatorios de cobranza están funcionando.',
+    parameters: { type: T.OBJECT, properties: {} },
+  },
+  {
+    name: 'get_cash_conversion_cycle',
+    description:
+      'Ciclo de conversión de efectivo (CCC = DSO − DPO), incluyendo el DSO ' +
+      '(días promedio de cobro) y el DPO (días promedio de pago) vigentes, con ' +
+      'una interpretación de si la operación se autofinancia o no. Úsala para ' +
+      'preguntas sobre DSO, salud del flujo de efectivo o comparación entre lo ' +
+      'que tarda en cobrar vs. lo que tarda en pagar.',
+    parameters: { type: T.OBJECT, properties: {} },
+  },
 ] as unknown as FunctionDeclaration[];
