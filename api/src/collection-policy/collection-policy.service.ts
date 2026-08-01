@@ -43,6 +43,7 @@ export class CollectionPolicyService {
           preferredChannel: dto.preferredChannel,
           pauseMessage: dto.pauseMessage,
           blackoutDates: (dto.blackoutDates ?? []).map((d) => new Date(d)),
+          aiDecisionEnabled: dto.aiDecisionEnabled ?? false,
         },
       }),
     );
@@ -115,6 +116,8 @@ export class CollectionPolicyService {
       if (dto.pauseMessage !== undefined) data.pauseMessage = dto.pauseMessage;
       if (dto.blackoutDates !== undefined)
         data.blackoutDates = dto.blackoutDates.map((d) => new Date(d));
+      if (dto.aiDecisionEnabled !== undefined)
+        data.aiDecisionEnabled = dto.aiDecisionEnabled;
 
       return tx.collectionPolicy.update({ where: { id }, data });
     });

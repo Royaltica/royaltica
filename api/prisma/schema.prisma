@@ -593,6 +593,14 @@ model CollectionPolicy {
   // Fechas en las que no se debe contactar (feriados, acuerdos puntuales).
   blackoutDates DateTime[] @default([])
 
+  // Opt-in por organización: si es true, `advanceSequence` consulta primero
+  // a CollectionSequencesAiDecisionService (Gemini) para decidir acción/canal/
+  // tono según el riesgo real del cliente, en vez de seguir ciegamente el paso
+  // fijo de la secuencia. Default false = comportamiento 100% determinista
+  // (sin cambios para organizaciones existentes). Los guard rails de arriba
+  // SIEMPRE se siguen aplicando server-side, sin importar lo que sugiera la IA.
+  aiDecisionEnabled Boolean @default(false)
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?

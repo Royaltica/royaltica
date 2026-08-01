@@ -4,6 +4,7 @@ import { ActivityLogService } from '../activity/activity-log.service';
 import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { CollectionSequencesAiDecisionService } from './collection-sequences-ai-decision.service';
 
 /** Política base: ventana 9-17 UTC, sin gracia, sin tope de contactos. */
 const basePolicy = {
@@ -70,6 +71,7 @@ describe('CollectionSequencesService', () => {
   let email: { sendCollectionSequenceStep: jest.Mock };
   let whatsapp: { sendMessage: jest.Mock };
   let notifications: { notifyOrgAdmins: jest.Mock };
+  let aiDecision: { decideNextAction: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -109,6 +111,9 @@ describe('CollectionSequencesService', () => {
     };
     whatsapp = { sendMessage: jest.fn().mockResolvedValue({ sent: true }) };
     notifications = { notifyOrgAdmins: jest.fn().mockResolvedValue(1) };
+    // Por defecto no se llama (aiDecisionEnabled=false en basePolicy); las
+    // pruebas que activan el flag configuran su propio mockResolvedValue.
+    aiDecision = { decideNextAction: jest.fn() };
 
     service = new CollectionSequencesService(
       prisma as unknown as PrismaService,
@@ -116,6 +121,7 @@ describe('CollectionSequencesService', () => {
       email as unknown as EmailService,
       whatsapp as unknown as WhatsappService,
       notifications as unknown as NotificationsService,
+      aiDecision as unknown as CollectionSequencesAiDecisionService,
     );
   });
 
@@ -285,6 +291,103 @@ describe('CollectionSequencesService', () => {
     expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
     expect(prisma.collectionSequenceRun.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: 'COMPLETED' } }),
+    );
+  });
+
+  it('aiDecisionEnabled=false (default): no consulta la IA y el comportamiento determinista no cambia', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    // basePolicy no define aiDecisionEnabled (undefined = falsy = comportamiento previo).
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('sent');
+    expect(result.stepOrder).toBe(1);
+    expect(aiDecision.decideNextAction).not.toHaveBeenCalled();
+    expect(email.sendCollectionSequenceStep).toHaveBeenCalledTimes(1);
+    const [, , , , tone] = email.sendCollectionSequenceStep.mock.calls[0];
+    expect(tone).toBe('GENTLE'); // tono fijo del paso, no el de la IA
+  });
+
+  it('aiDecisionEnabled=true + acción HOLD: no envía ni avanza el paso', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    prisma.collectionPolicy.findFirst.mockResolvedValue({
+      ...basePolicy,
+      aiDecisionEnabled: true,
+      sequenceSteps: [step1],
+    });
+    aiDecision.decideNextAction.mockResolvedValue({
+      action: 'HOLD',
+      reasoning: 'Cliente de alto valor, primer atraso: no presionar aún.',
+      aiDriven: true,
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('skipped');
+    expect(result.reason).toBe('ai-hold');
+    expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+    expect(prisma.collectionSequenceRun.update).not.toHaveBeenCalled();
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'COLLECTION_SEQUENCE_STEP_SKIPPED',
+        metadata: expect.objectContaining({ reason: 'ai-hold' }),
+      }),
+    );
+  });
+
+  it('aiDecisionEnabled=true + acción ESCALATE: escala igual que un paso escalatesToHuman', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    prisma.collectionPolicy.findFirst.mockResolvedValue({
+      ...basePolicy,
+      aiDecisionEnabled: true,
+      sequenceSteps: [step1], // step1.escalatesToHuman = false
+    });
+    aiDecision.decideNextAction.mockResolvedValue({
+      action: 'ESCALATE',
+      reasoning: 'Monto alto y atraso severo: requiere seguimiento humano.',
+      aiDriven: true,
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('escalated');
+    expect(notifications.notifyOrgAdmins).toHaveBeenCalledTimes(1);
+    expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'COLLECTION_SEQUENCE_ESCALATED',
+        metadata: expect.objectContaining({
+          aiReasoning: 'Monto alto y atraso severo: requiere seguimiento humano.',
+        }),
+      }),
+    );
+  });
+
+  it('aiDecisionEnabled=true + acción SEND con canal sugerido: usa el canal de la IA', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    prisma.collectionPolicy.findFirst.mockResolvedValue({
+      ...basePolicy,
+      aiDecisionEnabled: true,
+      sequenceSteps: [step1], // step1.channel = EMAIL
+    });
+    aiDecision.decideNextAction.mockResolvedValue({
+      action: 'SEND',
+      channel: 'WHATSAPP',
+      tone: 'FIRM',
+      reasoning: 'Cliente no responde a correo; WhatsApp históricamente funciona mejor.',
+      aiDriven: true,
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('sent');
+    expect(whatsapp.sendMessage).toHaveBeenCalledTimes(1);
+    expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'COLLECTION_SEQUENCE_STEP_SENT',
+        metadata: expect.objectContaining({ channel: 'WHATSAPP', tone: 'FIRM' }),
+      }),
     );
   });
 

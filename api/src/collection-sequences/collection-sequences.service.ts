@@ -18,6 +18,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateSequenceStepDto } from './dto/create-sequence-step.dto';
 import { UpdateSequenceStepDto } from './dto/update-sequence-step.dto';
+import {
+  CollectionSequencesAiDecisionService,
+  type CollectionAiDecision,
+} from './collection-sequences-ai-decision.service';
 
 /** Monto formateado como moneda (mismo helper que ReceivablesService). */
 const money = (n: number, locale = 'es-MX') =>
@@ -54,6 +58,7 @@ export class CollectionSequencesService {
     private readonly email: EmailService,
     private readonly whatsapp: WhatsappService,
     private readonly notifications: NotificationsService,
+    private readonly aiDecision: CollectionSequencesAiDecisionService,
   ) {}
 
   // ── CRUD de pasos (anidado bajo una CollectionPolicy) ─────
@@ -437,7 +442,51 @@ export class CollectionSequencesService {
       (s) => s.stepOrder > nextStep.stepOrder,
     );
 
-    if (nextStep.escalatesToHuman) {
+    // ── Decisión IA opcional (Tradespace: "discernir" según riesgo/relación) ──
+    // Opt-in por CollectionPolicy.aiDecisionEnabled (default false = sin
+    // cambios). Los guard rails de arriba YA se aplicaron sin importar esto;
+    // la IA solo influye en acción/canal/tono dentro de lo ya permitido.
+    let aiDecision: CollectionAiDecision | null = null;
+    if (policy.aiDecisionEnabled) {
+      aiDecision = await this.aiDecision.decideNextAction(invoiceId, {
+        organizationId: invoice.organizationId,
+        customerId: invoice.customer.id,
+        customerName,
+        daysOverdue,
+        amount: Number(invoice.total),
+        currency,
+        step: nextStep,
+        policy: {
+          maxContactsPerWeek: policy.maxContactsPerWeek,
+          allowedContactStartHour: policy.allowedContactStartHour,
+          allowedContactEndHour: policy.allowedContactEndHour,
+          timezone: policy.timezone,
+          escalationThresholdDays: policy.escalationThresholdDays,
+        },
+      });
+
+      if (aiDecision.action === 'HOLD') {
+        await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_STEP_SKIPPED', {
+          reason: 'ai-hold',
+          aiReasoning: aiDecision.reasoning,
+          aiDriven: aiDecision.aiDriven,
+        });
+        return { outcome: 'skipped', reason: 'ai-hold', stepOrder: nextStep.stepOrder };
+      }
+    }
+
+    const shouldEscalate = nextStep.escalatesToHuman || aiDecision?.action === 'ESCALATE';
+    // Canal/tono efectivos: la IA solo puede sobreescribirlos cuando decide
+    // SEND; en cualquier otro caso (IA deshabilitada, HOLD ya resuelto arriba,
+    // o sin sugerencia explícita) se usan los valores fijos del paso.
+    const effectiveChannel =
+      aiDecision?.action === 'SEND' && aiDecision.channel
+        ? aiDecision.channel
+        : nextStep.channel;
+    const effectiveTone =
+      aiDecision?.action === 'SEND' && aiDecision.tone ? aiDecision.tone : nextStep.tone;
+
+    if (shouldEscalate) {
       await this.notifications.notifyOrgAdmins(invoice.organizationId, {
         type: 'COLLECTION_SEQUENCE_ESCALATED',
         title: 'Cobranza escalada a un humano',
@@ -449,6 +498,9 @@ export class CollectionSequencesService {
       });
       await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_ESCALATED', {
         daysOverdue,
+        ...(aiDecision
+          ? { aiReasoning: aiDecision.reasoning, aiDriven: aiDecision.aiDriven }
+          : {}),
       });
       return { outcome: 'escalated', stepOrder: nextStep.stepOrder };
     }
@@ -462,19 +514,19 @@ export class CollectionSequencesService {
 
     let channelSent = false;
     let manualChannelRequired = false;
-    if (nextStep.channel === 'EMAIL' && invoice.customer.email) {
+    if (effectiveChannel === 'EMAIL' && invoice.customer.email) {
       const res = await this.email.sendCollectionSequenceStep(
         invoice.customer.email,
         customerName,
         body,
         invoice.organizationId,
-        nextStep.tone,
+        effectiveTone,
       );
       channelSent = res.sent;
-    } else if (nextStep.channel === 'WHATSAPP' && invoice.customer.phone) {
+    } else if (effectiveChannel === 'WHATSAPP' && invoice.customer.phone) {
       const res = await this.whatsapp.sendMessage(invoice.customer.phone, body);
       channelSent = res.sent;
-    } else if (nextStep.channel === 'SMS' || nextStep.channel === 'PHONE') {
+    } else if (effectiveChannel === 'SMS' || effectiveChannel === 'PHONE') {
       // Sin proveedor automático para SMS/llamada: se notifica a los admins
       // para que hagan el contacto manualmente, pero el paso SÍ avanza (el
       // sistema ya hizo su parte al detectarlo y avisar).
@@ -485,14 +537,14 @@ export class CollectionSequencesService {
       await this.notifications.notifyOrgAdmins(invoice.organizationId, {
         type: 'COLLECTION_SEQUENCE_MANUAL_CHANNEL',
         title: 'Paso de cobranza requiere contacto manual',
-        body: `El paso ${nextStep.stepOrder} de la secuencia (${nextStep.channel}) para la factura ${this.folioOf(invoice)} no tiene canal automatizado disponible; contacta manualmente a ${customerName}.`,
+        body: `El paso ${nextStep.stepOrder} de la secuencia (${effectiveChannel}) para la factura ${this.folioOf(invoice)} no tiene canal automatizado disponible; contacta manualmente a ${customerName}.`,
       });
     } else if (!channelSent) {
       // Sin correo/teléfono disponible para el canal del paso, o falló el
       // envío: no se consume el paso, se reintenta en la siguiente corrida.
       await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_STEP_SKIPPED', {
         reason: 'no-contact-channel-or-send-failed',
-        channel: nextStep.channel,
+        channel: effectiveChannel,
       });
       return { outcome: 'skipped', reason: 'send-failed' };
     }
@@ -506,10 +558,13 @@ export class CollectionSequencesService {
       },
     });
     await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_STEP_SENT', {
-      channel: nextStep.channel,
-      tone: nextStep.tone,
+      channel: effectiveChannel,
+      tone: effectiveTone,
       daysOverdue,
       manualChannelRequired,
+      ...(aiDecision
+        ? { aiReasoning: aiDecision.reasoning, aiDriven: aiDecision.aiDriven }
+        : {}),
     });
 
     return {

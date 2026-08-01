@@ -1,9 +1,10 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { UsageFeature } from '@prisma/client';
+import type { FunctionDeclaration } from '@google-cloud/vertexai';
 import type { Env } from '../config/env.validation';
 import { UsageService } from '../usage/usage.service';
-import { extractText } from './vertex-response.util';
+import { extractText, extractFunctionCalls } from './vertex-response.util';
 
 /** Contexto opcional para registrar el costo (tokens) del llamado a Gemini. */
 export interface GeminiUsageContext {
@@ -96,6 +97,72 @@ export class GeminiService implements OnModuleInit {
     } catch (err) {
       this.logger.warn(
         `Fallo al obtener/parsear respuesta de Gemini: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Fuerza a Gemini a devolver una decisión estructurada llamando a UNA
+   * función obligatoria (function-calling en modo ANY, restringido a esa
+   * función), en vez de parsear prosa libre. Pensado para llamadas de
+   * decisión autónoma (no conversacionales) que necesitan una forma
+   * confiable, como CollectionSequencesAiDecisionService.
+   *
+   * Devuelve null si Gemini no está configurado, si la llamada falla, o si
+   * el modelo no invoca la función esperada: el consumidor SIEMPRE debe caer
+   * a un comportamiento determinista de respaldo (nunca bloquear por esto).
+   */
+  async generateFunctionCall<T = Record<string, unknown>>(
+    params: {
+      systemInstruction: string;
+      prompt: string;
+      functionDeclaration: FunctionDeclaration;
+    },
+    ctx?: GeminiUsageContext,
+  ): Promise<T | null> {
+    if (!this.model) return null;
+
+    try {
+      const result = await this.model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: params.prompt }] }],
+        systemInstruction: params.systemInstruction,
+        tools: [{ functionDeclarations: [params.functionDeclaration] }],
+        toolConfig: {
+          functionCallingConfig: {
+            // 'ANY' fuerza al modelo a responder con una llamada a función
+            // (nunca texto libre), restringida al nombre indicado.
+            mode: 'ANY' as never,
+            allowedFunctionNames: [params.functionDeclaration.name as string],
+          },
+        },
+        generationConfig: { temperature: 0.2 },
+      });
+
+      if (ctx) {
+        const um = result.response.usageMetadata;
+        void this.usage.record({
+          organizationId: ctx.organizationId,
+          feature: ctx.feature,
+          inputTokens: um?.promptTokenCount ?? 0,
+          outputTokens: um?.candidatesTokenCount ?? 0,
+        });
+      }
+
+      const calls = extractFunctionCalls(result.response);
+      const call = calls.find((c) => c.name === params.functionDeclaration.name);
+      if (!call || !call.args || typeof call.args !== 'object') {
+        this.logger.warn(
+          `Gemini no devolvió la función esperada (${params.functionDeclaration.name}).`,
+        );
+        return null;
+      }
+      return call.args as T;
+    } catch (err) {
+      this.logger.warn(
+        `Fallo al obtener la decisión estructurada de Gemini: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );

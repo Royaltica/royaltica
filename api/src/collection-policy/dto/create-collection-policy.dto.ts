@@ -71,4 +71,14 @@ export class CreateCollectionPolicyDto {
   @ArrayMaxSize(366)
   @IsISO8601({}, { each: true })
   blackoutDates?: string[];
+
+  /**
+   * Opt-in: si es true, el motor de escalamiento consulta primero a Gemini
+   * (CollectionSequencesAiDecisionService) para decidir acción/canal/tono
+   * según el riesgo real del cliente, antes de seguir el paso fijo de la
+   * secuencia. Default false = 100% determinista (sin cambio de comportamiento).
+   */
+  @IsOptional()
+  @IsBoolean()
+  aiDecisionEnabled?: boolean;
 }
