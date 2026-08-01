@@ -38,6 +38,7 @@ import { PortalModule } from './portal/portal.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
 import { JobsModule } from './jobs/jobs.module';
 import { ErpModule } from './erp/erp.module';
+import { ExternalDataSyncModule } from './external-data-sync/external-data-sync.module';
 import { AiModule } from './ai/ai.module';
 import { UsageModule } from './usage/usage.module';
 import { AdminModule } from './admin/admin.module';
@@ -114,6 +115,7 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     CustomerPortalModule,
     JobsModule,
     ErpModule,
+    ExternalDataSyncModule,
     AiModule,
     AdminModule,
     MarketingModule,

@@ -46,6 +46,22 @@ export interface OrgSettings {
   displayName: string | null;
   /** ERP del corporativo para sincronización (aspel|bind|odoo|null). */
   erpProvider: string | null;
+  /**
+   * Conector de datos externos CxC (clientes/facturas de venta) configurado
+   * para esta organización. 'generic-csv' = importación manual por archivo
+   * (siempre disponible, no requiere configuración). 'generic-rest' = API
+   * REST configurable (baseUrl + authHeader), útil una vez que el cliente
+   * (ej. Tradespace) confirme el shape real de su sistema ("Soga").
+   */
+  externalSyncProvider: string | null;
+  /** URL base de la API REST externa (solo aplica a externalSyncProvider='generic-rest'). */
+  externalSyncRestBaseUrl: string | null;
+  /**
+   * Valor completo del header de autenticación a enviar (ej. "Bearer xxx" o
+   * "ApiKey xxx"). Se guarda como header ya armado en vez de separar
+   * esquema/token porque aún no sabemos qué mecanismo usa el sistema externo.
+   */
+  externalSyncRestAuthHeader: string | null;
 }
 
 export const DEFAULT_SETTINGS: OrgSettings = {
@@ -60,10 +76,19 @@ export const DEFAULT_SETTINGS: OrgSettings = {
   fiscalAddress: null,
   displayName: null,
   erpProvider: null,
+  externalSyncProvider: null,
+  externalSyncRestBaseUrl: null,
+  externalSyncRestAuthHeader: null,
 };
 
 /** ERPs soportados por los conectores (adaptadores). */
 export const SUPPORTED_ERPS = ['aspel', 'bind', 'odoo'] as const;
+
+/** Conectores de datos externos CxC soportados (ver ExternalDataConnector). */
+export const SUPPORTED_EXTERNAL_SYNC_PROVIDERS = [
+  'generic-csv',
+  'generic-rest',
+] as const;
 
 /**
  * Parche de configuración aceptado por `update()`. `requiredSignatures` no
@@ -75,6 +100,8 @@ export type SettingsPatch = Partial<
 > & {
   authorizers?: Array<{ name?: string; cargo?: string; email?: string }>;
 };
+
+type ExternalSyncProvider = (typeof SUPPORTED_EXTERNAL_SYNC_PROVIDERS)[number];
 
 @Injectable()
 export class SettingsService {
@@ -145,6 +172,21 @@ export class SettingsService {
         SUPPORTED_ERPS.includes(s.erpProvider as (typeof SUPPORTED_ERPS)[number])
           ? s.erpProvider
           : null,
+      externalSyncProvider:
+        typeof s.externalSyncProvider === 'string' &&
+        SUPPORTED_EXTERNAL_SYNC_PROVIDERS.includes(
+          s.externalSyncProvider as ExternalSyncProvider,
+        )
+          ? s.externalSyncProvider
+          : null,
+      externalSyncRestBaseUrl:
+        typeof s.externalSyncRestBaseUrl === 'string'
+          ? s.externalSyncRestBaseUrl
+          : null,
+      externalSyncRestAuthHeader:
+        typeof s.externalSyncRestAuthHeader === 'string'
+          ? s.externalSyncRestAuthHeader
+          : null,
     };
   }
 
@@ -177,6 +219,19 @@ export class SettingsService {
           ? patch.erpProvider
           : null;
     }
+    if (patch.externalSyncProvider !== undefined) {
+      out.externalSyncProvider =
+        patch.externalSyncProvider &&
+        SUPPORTED_EXTERNAL_SYNC_PROVIDERS.includes(
+          patch.externalSyncProvider as ExternalSyncProvider,
+        )
+          ? patch.externalSyncProvider
+          : null;
+    }
+    if (patch.externalSyncRestBaseUrl !== undefined)
+      out.externalSyncRestBaseUrl = patch.externalSyncRestBaseUrl;
+    if (patch.externalSyncRestAuthHeader !== undefined)
+      out.externalSyncRestAuthHeader = patch.externalSyncRestAuthHeader;
     return out;
   }
 

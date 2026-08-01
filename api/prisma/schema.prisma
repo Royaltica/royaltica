@@ -100,6 +100,13 @@ enum InvoiceDirection {
   RECEIVABLE
 }
 
+// Entidad a la que aplica un ExternalSyncFieldMapping: catálogo de clientes o
+// facturas de venta (CxC). No incluye proveedores/CxP: eso lo cubre /erp.
+enum ExternalSyncEntityType {
+  CUSTOMER
+  RECEIVABLE
+}
+
 // ─────────────────────────────────────────────────────
 // Models
 // ─────────────────────────────────────────────────────
@@ -144,6 +151,7 @@ model Organization {
   collectionPolicies     CollectionPolicy[]
   collectionSequenceRuns CollectionSequenceRun[]
   customerPortalAccesses CustomerPortalAccess[]
+  externalSyncFieldMappings ExternalSyncFieldMapping[]
 
   @@index([isActive])
 }
@@ -239,6 +247,12 @@ model Customer {
   // Días de crédito otorgados (informativo; el vencimiento real vive en la
   // factura). Null = contado / sin crédito definido.
   creditLimitDays Int?
+  // Llave de idempotencia para importar desde un sistema externo (Tradespace
+  // y otros clientes CxC cuyos datos viven fuera de Royáltica): el ID del
+  // registro en ESE sistema. Null = cliente creado nativamente en Royáltica.
+  // Único por organización (no global): dos orgs pueden compartir el mismo
+  // externalId si vienen de sistemas distintos.
+  externalId      String?
   isActive        Boolean   @default(true)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -249,6 +263,7 @@ model Customer {
   portalAccesses CustomerPortalAccess[]
 
   @@unique([organizationId, rfc])
+  @@unique([organizationId, externalId])
   @@index([organizationId])
   @@index([isActive])
 }
@@ -275,6 +290,26 @@ model CustomerPortalAccess {
   @@index([organizationId])
   @@index([customerId])
   @@index([expiresAt])
+}
+
+// Mapeo de campos configurable, por organización y por tipo de entidad, para
+// importar datos desde el sistema externo de un cliente CxC (Tradespace y
+// similares) cuyo schema NO conocemos de antemano. Ej. para CUSTOMER:
+// {"name":"CustomerName","rfc":"TaxId","email":"ContactEmail"}. Si no existe
+// fila para una org/entidad, el conector cae a un mapeo identidad (asume que
+// las columnas del CSV/JSON ya se llaman igual que los campos de Royáltica).
+model ExternalSyncFieldMapping {
+  id             String                 @id @default(uuid())
+  organizationId String
+  entityType     ExternalSyncEntityType
+  mapping        Json                   @default("{}")
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, entityType])
+  @@index([organizationId])
 }
 
 model SupplierDocument {
@@ -340,6 +375,10 @@ model Invoice {
   // Última vez que el agente de cobranza (CxC) envió un recordatorio de esta
   // factura al cliente. Evita reenviar el mismo día. Null = nunca se envió.
   lastReminderSentAt DateTime?
+  // Llave de idempotencia para importar facturas de venta desde el sistema
+  // externo de un cliente CxC (Tradespace, etc.): el ID de la factura en ESE
+  // sistema. Null = factura nativa de Royáltica (CFDI o captura manual).
+  externalId         String?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   deletedAt          DateTime?
@@ -352,6 +391,7 @@ model Invoice {
   payments               Payment[]               @relation("PaymentInvoices")
   collectionSequenceRuns CollectionSequenceRun[]
 
+  @@unique([organizationId, externalId])
   @@index([organizationId])
   @@index([direction])
   @@index([supplierId])
