@@ -105,31 +105,31 @@ enum InvoiceDirection {
 // ─────────────────────────────────────────────────────
 
 model Organization {
-  id        String    @id @default(uuid())
-  name      String
-  rfc       String    @unique
-  legalName String
-  plan      Plan      @default(FREE)
-  settings  Json      @default("{}")
+  id                String    @id @default(uuid())
+  name              String
+  rfc               String    @unique
+  legalName         String
+  plan              Plan      @default(FREE)
+  settings          Json      @default("{}")
   // Configuración regional del tenant. Valores válidos: es-MX, en-CA, fr-CA.
-  locale    String    @default("es-MX")
+  locale            String    @default("es-MX")
   // Moneda del tenant. Valores válidos: MXN, CAD.
-  currency  String    @default("MXN")
+  currency          String    @default("MXN")
   // ── White label (Tradespace: marca propia sobre la plataforma) ──
   // Todos opcionales/nulos: una org sin branding propio hereda el look
   // por defecto de Royáltica (no requieren backfill ni valor default).
   /// Nombre visible que reemplaza "Royáltica" en la UI cuando está definido.
-  brandDisplayName   String?
+  brandDisplayName  String?
   /// URL del logo propio (reemplaza el logo de Royáltica en login/header).
-  brandLogoUrl       String?
+  brandLogoUrl      String?
   /// Color primario de marca en hex (#RRGGBB).
-  brandPrimaryColor  String?
+  brandPrimaryColor String?
   /// Color de acento de marca en hex (#RRGGBB); sobreescribe --color-brand-gold.
-  brandAccentColor   String?
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  deletedAt DateTime?
+  brandAccentColor  String?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
 
   users                  User[]
   suppliers              Supplier[]
@@ -244,8 +244,8 @@ model Customer {
   updatedAt       DateTime  @updatedAt
   deletedAt       DateTime?
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  invoices     Invoice[]
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoices       Invoice[]
   portalAccesses CustomerPortalAccess[]
 
   @@unique([organizationId, rfc])
