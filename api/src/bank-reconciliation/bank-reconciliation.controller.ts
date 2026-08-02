@@ -46,6 +46,16 @@ export class BankReconciliationController {
     return this.service.importStatement(user, file, dto.bankName);
   }
 
+  @Get('imports')
+  listImports(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.listImports(user);
+  }
+
+  @Get('review-queue')
+  reviewQueue(@CurrentUser() user: AuthenticatedUser) {
+    return this.service.reviewQueue(user);
+  }
+
   @Get('imports/:id')
   getImport(
     @CurrentUser() user: AuthenticatedUser,

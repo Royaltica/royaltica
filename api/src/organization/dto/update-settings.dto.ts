@@ -14,7 +14,10 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { SUPPORTED_ERPS } from '../../settings/settings.service';
+import {
+  SUPPORTED_ERPS,
+  SUPPORTED_EXTERNAL_SYNC_PROVIDERS,
+} from '../../settings/settings.service';
 import {
   SUPPORTED_LOCALES,
   SUPPORTED_CURRENCIES,
@@ -92,6 +95,23 @@ export class UpdateSettingsDto {
   @IsOptional()
   @IsIn([...SUPPORTED_ERPS])
   erpProvider?: string;
+
+  /** Conector CxC externo (CSV universal o REST configurable). */
+  @IsOptional()
+  @IsIn([...SUPPORTED_EXTERNAL_SYNC_PROVIDERS])
+  externalSyncProvider?: string;
+
+  /** URL base del conector REST externo. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  externalSyncRestBaseUrl?: string;
+
+  /** Header completo de autenticación del conector REST externo. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  externalSyncRestAuthHeader?: string;
 
   /** Configuración regional del tenant (Tradespace: en-CA / fr-CA). */
   @IsOptional()

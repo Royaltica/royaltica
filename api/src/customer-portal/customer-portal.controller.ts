@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../auth/decorators/public.decorator';
@@ -41,5 +41,35 @@ export class CustomerPortalController {
     @Param('invoiceId') invoiceId: string,
   ): Promise<{ ok: true; alreadyFlagged: boolean }> {
     return this.service.markInvoicePaid(token, invoiceId);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post(':token/invoices/:invoiceId/promise-to-pay')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'El cliente deja una promesa de pago para una factura pendiente.',
+  })
+  promiseToPay(
+    @Param('token') token: string,
+    @Param('invoiceId') invoiceId: string,
+    @Body() body: { promisedDate?: string; note?: string },
+  ): Promise<{ ok: true }> {
+    return this.service.promiseToPay(token, invoiceId, body);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post(':token/invoices/:invoiceId/dispute')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'El cliente disputa una factura pendiente.',
+  })
+  dispute(
+    @Param('token') token: string,
+    @Param('invoiceId') invoiceId: string,
+    @Body() body: { reason?: string },
+  ): Promise<{ ok: true }> {
+    return this.service.disputeInvoice(token, invoiceId, body);
   }
 }

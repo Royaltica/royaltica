@@ -95,6 +95,49 @@ export class BankReconciliationService {
     return row;
   }
 
+  async listImports(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const rows = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.$queryRaw<BankStatementImportRow[]>`
+        SELECT * FROM "BankStatementImport"
+        WHERE "organizationId" = ${organizationId}
+        ORDER BY "importedAt" DESC
+        LIMIT 50
+      `,
+    );
+    return rows;
+  }
+
+  async reviewQueue(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const rows = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.$queryRaw<BankTransactionRow[]>`
+        SELECT * FROM "BankTransaction"
+        WHERE "organizationId" = ${organizationId}
+          AND "matchStatus" IN (
+            'AUTO_MATCHED'::"BankTransactionMatchStatus",
+            'AMBIGUOUS'::"BankTransactionMatchStatus",
+            'UNMATCHED'::"BankTransactionMatchStatus"
+          )
+        ORDER BY
+          CASE "matchStatus"
+            WHEN 'AUTO_MATCHED' THEN 1
+            WHEN 'AMBIGUOUS' THEN 2
+            ELSE 3
+          END,
+          "transactionDate" DESC
+        LIMIT 100
+      `,
+    );
+    return {
+      total: rows.length,
+      autoMatched: rows.filter((r) => r.matchStatus === 'AUTO_MATCHED').length,
+      ambiguous: rows.filter((r) => r.matchStatus === 'AMBIGUOUS').length,
+      unmatched: rows.filter((r) => r.matchStatus === 'UNMATCHED').length,
+      items: rows.map(serializeTransaction),
+    };
+  }
+
   async listTransactions(
     user: AuthenticatedUser,
     importId: string,

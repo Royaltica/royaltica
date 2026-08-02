@@ -99,6 +99,26 @@ async function downloadCsv(path: string, filename: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+async function uploadForm<T>(path: string, form: FormData): Promise<T> {
+  const token = getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: form,
+  });
+  if (!res.ok) {
+    let message = `Error ${res.status}`;
+    try {
+      const data = await res.json();
+      message = data.message ?? message;
+    } catch {
+      /* respuesta sin JSON */
+    }
+    throw new Error(Array.isArray(message) ? message.join(', ') : message);
+  }
+  return res.json() as Promise<T>;
+}
+
 // ── Tipos del backend (los campos que consumimos) ──────────
 
 export interface ApiUser {
@@ -336,6 +356,128 @@ export interface AtRiskCustomer {
   onTimePct: number;
 }
 
+export interface ReadinessItem {
+  key: string;
+  label: string;
+  status: boolean;
+  detail: string;
+}
+
+export interface OrgReadiness {
+  completed: number;
+  total: number;
+  percent: number;
+  items: ReadinessItem[];
+}
+
+export interface ProductionReadiness {
+  passed: number;
+  total: number;
+  percent: number;
+  productionSafe: boolean;
+  items: ReadinessItem[];
+}
+
+export interface CollectionCommandItem {
+  id: string;
+  status: 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'ESCALATED' | 'CANCELLED';
+  currentStepOrder: number;
+  lastStepSentAt: string | null;
+  updatedAt: string;
+  daysOverdue: number;
+  needsHuman: boolean;
+  policy: { name: string; preferredChannel: string };
+  invoice: {
+    id: string;
+    folio: string | null;
+    total: number;
+    currency: string;
+    dueDate: string | null;
+    status: string;
+    customer: { id: string; name: string; email: string | null; phone: string | null } | null;
+  };
+}
+
+export interface CollectionCommandCenter {
+  total: number;
+  needsHuman: number;
+  active: number;
+  escalated: number;
+  items: CollectionCommandItem[];
+}
+
+export interface AiActionItem {
+  id: string;
+  action: string;
+  createdAt: string;
+  runId: string | null;
+  invoiceId?: string;
+  stepOrder?: number;
+  channel?: string;
+  tone?: string;
+  reason?: string;
+  aiReasoning?: string;
+}
+
+export interface ExternalSyncStatus {
+  externalSyncProvider: string | null;
+  restConfigured: boolean;
+  message: string;
+}
+
+export interface FieldMappingResponse {
+  entityType: 'CUSTOMER' | 'RECEIVABLE' | 'BANK_STATEMENT';
+  mapping: Record<string, string>;
+  isDefault: boolean;
+}
+
+export interface ExternalSyncResult {
+  provider: string;
+  mode: 'live' | 'stub';
+  imported: number;
+  skipped: number;
+  errors: string[];
+  message: string;
+}
+
+export interface BankImportSummary {
+  id: string;
+  organizationId: string;
+  bankName: string;
+  importedAt: string;
+  periodFrom: string | null;
+  periodTo: string | null;
+  totalTransactions: number;
+  matchedCount: number;
+  unmatchedCount: number;
+  createdAt: string;
+}
+
+export interface BankTransactionItem {
+  id: string;
+  bankStatementImportId: string;
+  organizationId: string;
+  transactionDate: string;
+  amount: number;
+  description: string;
+  referenceNumber: string | null;
+  rawRowData: Record<string, unknown>;
+  matchStatus: 'UNMATCHED' | 'AUTO_MATCHED' | 'MANUALLY_MATCHED' | 'REJECTED' | 'AMBIGUOUS';
+  matchedInvoiceId: string | null;
+  matchConfidence: number | null;
+  matchedAt: string | null;
+  matchedBy: string | null;
+  createdAt: string;
+}
+
+export interface BankReviewQueue {
+  total: number;
+  autoMatched: number;
+  ambiguous: number;
+  unmatched: number;
+  items: BankTransactionItem[];
+}
+
 // ── Autenticación ──────────────────────────────────────────
 
 export const api = {
@@ -481,6 +623,14 @@ export const api = {
 
   async getSettings(): Promise<OrgSettings> {
     return request<OrgSettings>('GET', '/organization/settings');
+  },
+
+  async getOrgReadiness(): Promise<OrgReadiness> {
+    return request<OrgReadiness>('GET', '/organization/readiness');
+  },
+
+  async getProductionReadiness(): Promise<ProductionReadiness> {
+    return request<ProductionReadiness>('GET', '/organization/production-readiness');
   },
 
   /**
@@ -913,6 +1063,9 @@ export const api = {
     brandLogoUrl: string | null;
     brandPrimaryColor: string | null;
     brandAccentColor: string | null;
+    externalSyncProvider: string | null;
+    externalSyncRestBaseUrl: string | null;
+    externalSyncRestAuthHeader: string | null;
   }>): Promise<OrgSettings> {
     return request<OrgSettings>('PATCH', '/organization/settings', patch);
   },
@@ -1259,6 +1412,86 @@ export const api = {
     return request('GET', '/dashboard/receivables/at-risk');
   },
 
+  async getCollectionCommandCenter(): Promise<CollectionCommandCenter> {
+    return request<CollectionCommandCenter>('GET', '/collection-sequences/runs/command-center');
+  },
+
+  async getAiActionsInbox(): Promise<{ total: number; items: AiActionItem[] }> {
+    return request('GET', '/collection-sequences/runs/ai-actions');
+  },
+
+  async pauseCollectionRun(id: string): Promise<unknown> {
+    return request('PATCH', `/collection-sequences/runs/${id}/pause`);
+  },
+
+  async resumeCollectionRun(id: string): Promise<unknown> {
+    return request('PATCH', `/collection-sequences/runs/${id}/resume`);
+  },
+
+  async cancelCollectionRun(id: string): Promise<unknown> {
+    return request('PATCH', `/collection-sequences/runs/${id}/cancel`);
+  },
+
+  // ── Integraciones CxC externas ──────────────────────────
+
+  async getExternalSyncStatus(): Promise<ExternalSyncStatus> {
+    return request<ExternalSyncStatus>('GET', '/external-data-sync/status');
+  },
+
+  async getFieldMapping(entityType: 'CUSTOMER' | 'RECEIVABLE' | 'BANK_STATEMENT'): Promise<FieldMappingResponse> {
+    return request<FieldMappingResponse>('GET', `/external-data-sync/field-mapping/${entityType}`);
+  },
+
+  async setFieldMapping(entityType: 'CUSTOMER' | 'RECEIVABLE' | 'BANK_STATEMENT', mapping: Record<string, string>): Promise<FieldMappingResponse> {
+    return request<FieldMappingResponse>('PUT', `/external-data-sync/field-mapping/${entityType}`, { mapping });
+  },
+
+  async syncExternalCustomers(file?: File): Promise<ExternalSyncResult> {
+    if (!file) return request<ExternalSyncResult>('POST', '/external-data-sync/customers');
+    const form = new FormData();
+    form.append('file', file);
+    return uploadForm<ExternalSyncResult>('/external-data-sync/customers', form);
+  },
+
+  async syncExternalReceivables(file?: File): Promise<ExternalSyncResult> {
+    if (!file) return request<ExternalSyncResult>('POST', '/external-data-sync/receivables');
+    const form = new FormData();
+    form.append('file', file);
+    return uploadForm<ExternalSyncResult>('/external-data-sync/receivables', form);
+  },
+
+  // ── Conciliación bancaria CxC ───────────────────────────
+
+  async listBankImports(): Promise<BankImportSummary[]> {
+    return request<BankImportSummary[]>('GET', '/bank-reconciliation/imports');
+  },
+
+  async getBankReviewQueue(): Promise<BankReviewQueue> {
+    return request<BankReviewQueue>('GET', '/bank-reconciliation/review-queue');
+  },
+
+  async importBankStatement(file: File, bankName?: string): Promise<{
+    importId: string;
+    imported: number;
+    skipped: number;
+    errors: string[];
+    autoMatched: number;
+    ambiguous: number;
+  }> {
+    const form = new FormData();
+    form.append('file', file);
+    if (bankName) form.append('bankName', bankName);
+    return uploadForm('/bank-reconciliation/imports', form);
+  },
+
+  async confirmBankMatch(transactionId: string, invoiceId?: string): Promise<{ ok: true; invoiceId: string }> {
+    return request('POST', `/bank-reconciliation/transactions/${transactionId}/confirm`, invoiceId ? { invoiceId } : {});
+  },
+
+  async rejectBankMatch(transactionId: string): Promise<{ ok: true }> {
+    return request('POST', `/bank-reconciliation/transactions/${transactionId}/reject`);
+  },
+
   // ── Portal de autoservicio del cliente (público) ──────────
   // explicitToken=null: NUNCA se manda el JWT corporativo en estas llamadas,
   // la identidad viene solo del token opaco en la URL.
@@ -1280,6 +1513,32 @@ export const api = {
       'POST',
       `/public/customer-portal/${encodeURIComponent(token)}/invoices/${encodeURIComponent(invoiceId)}/mark-paid`,
       undefined,
+      null,
+    );
+  },
+
+  async promiseToPay(
+    token: string,
+    invoiceId: string,
+    payload: { promisedDate?: string; note?: string },
+  ): Promise<{ ok: true }> {
+    return request(
+      'POST',
+      `/public/customer-portal/${encodeURIComponent(token)}/invoices/${encodeURIComponent(invoiceId)}/promise-to-pay`,
+      payload,
+      null,
+    );
+  },
+
+  async disputePortalInvoice(
+    token: string,
+    invoiceId: string,
+    payload: { reason?: string },
+  ): Promise<{ ok: true }> {
+    return request(
+      'POST',
+      `/public/customer-portal/${encodeURIComponent(token)}/invoices/${encodeURIComponent(invoiceId)}/dispute`,
+      payload,
       null,
     );
   },
@@ -1384,6 +1643,10 @@ export interface OrgSettings {
   brandPrimaryColor?: string | null;
   /** Color de acento de marca en hex (#RRGGBB); sobreescribe --color-brand-gold. */
   brandAccentColor?: string | null;
+  /** Conector CxC externo seleccionado (CSV universal o REST configurable). */
+  externalSyncProvider?: string | null;
+  externalSyncRestBaseUrl?: string | null;
+  externalSyncRestAuthHeader?: string | null;
 }
 
 /** Resultado de POST /invoices/:id/audit (ver InvoiceAuditService backend). */

@@ -23,6 +23,16 @@ export class OrganizationController {
     return this.organization.getSettings(user);
   }
 
+  @Get('readiness')
+  getReadiness(@CurrentUser() user: AuthenticatedUser) {
+    return this.organization.getReadiness(user);
+  }
+
+  @Get('production-readiness')
+  getProductionReadiness() {
+    return this.organization.getProductionReadiness();
+  }
+
   @Patch('settings')
   updateSettings(
     @CurrentUser() user: AuthenticatedUser,

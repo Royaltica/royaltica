@@ -29,6 +29,16 @@ export class CollectionSequenceRunsController {
     return this.sequences.findRuns(user);
   }
 
+  @Get('command-center')
+  commandCenter(@CurrentUser() user: AuthenticatedUser) {
+    return this.sequences.commandCenter(user);
+  }
+
+  @Get('ai-actions')
+  aiActionsInbox(@CurrentUser() user: AuthenticatedUser) {
+    return this.sequences.aiActionsInbox(user);
+  }
+
   @Get(':id')
   findOne(
     @CurrentUser() user: AuthenticatedUser,

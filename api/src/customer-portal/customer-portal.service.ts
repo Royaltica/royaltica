@@ -318,7 +318,101 @@ export class CustomerPortalService {
     return { ok: true, alreadyFlagged: false };
   }
 
+  async promiseToPay(
+    token: string,
+    invoiceId: string,
+    body: { promisedDate?: string; note?: string },
+  ): Promise<{ ok: true }> {
+    const access = await this.resolveAccess(token);
+    const invoice = await this.getPendingPortalInvoice(access, invoiceId);
+    const promisedDate = body.promisedDate ? new Date(body.promisedDate) : null;
+    if (promisedDate && Number.isNaN(promisedDate.getTime())) {
+      throw new ConflictException('La fecha prometida no es válida.');
+    }
+
+    await this.touchLastAccessed(access);
+    await this.activity.record({
+      organizationId: access.organizationId,
+      action: 'CUSTOMER_PROMISED_PAYMENT',
+      entityType: 'Invoice',
+      entityId: invoiceId,
+      metadata: {
+        portalAccessId: access.id,
+        customerId: access.customerId,
+        folio: invoice.folio,
+        promisedDate: promisedDate ? promisedDate.toISOString() : null,
+        note: body.note?.slice(0, 500) ?? null,
+      },
+    });
+
+    await this.notifications.notifyOrgAdmins(access.organizationId, {
+      type: 'CUSTOMER_PAYMENT_PROMISE',
+      title: 'Un cliente prometió una fecha de pago',
+      body: `${invoice.customer?.name ?? 'El cliente'} prometió pagar la factura ${
+        invoice.folio ?? invoice.cfdiUuid.slice(0, 8)
+      }${promisedDate ? ` el ${promisedDate.toISOString().slice(0, 10)}` : ''}.`,
+      metadata: { invoiceId, customerId: access.customerId },
+    });
+    return { ok: true };
+  }
+
+  async disputeInvoice(
+    token: string,
+    invoiceId: string,
+    body: { reason?: string },
+  ): Promise<{ ok: true }> {
+    const access = await this.resolveAccess(token);
+    const invoice = await this.getPendingPortalInvoice(access, invoiceId);
+
+    await this.touchLastAccessed(access);
+    await this.activity.record({
+      organizationId: access.organizationId,
+      action: 'CUSTOMER_DISPUTED_INVOICE',
+      entityType: 'Invoice',
+      entityId: invoiceId,
+      metadata: {
+        portalAccessId: access.id,
+        customerId: access.customerId,
+        folio: invoice.folio,
+        reason: body.reason?.slice(0, 1000) ?? null,
+      },
+    });
+
+    await this.notifications.notifyOrgAdmins(access.organizationId, {
+      type: 'CUSTOMER_INVOICE_DISPUTE',
+      title: 'Un cliente disputó una factura',
+      body: `${invoice.customer?.name ?? 'El cliente'} disputó la factura ${
+        invoice.folio ?? invoice.cfdiUuid.slice(0, 8)
+      }. Revisa el motivo en la bitácora.`,
+      metadata: { invoiceId, customerId: access.customerId },
+    });
+    return { ok: true };
+  }
+
   // ── helpers ───────────────────────────────────────────────
+
+  private async getPendingPortalInvoice(
+    access: CustomerPortalAccessRow,
+    invoiceId: string,
+  ) {
+    const invoice = await this.prisma.withOrg(access.organizationId, (tx) =>
+      tx.invoice.findFirst({
+        where: {
+          id: invoiceId,
+          organizationId: access.organizationId,
+          customerId: access.customerId,
+          direction: 'RECEIVABLE',
+          deletedAt: null,
+        },
+        include: { customer: { select: { name: true } } },
+      }),
+    );
+    if (!invoice) throw new NotFoundException('Factura no encontrada.');
+    if (invoice.status !== 'PENDING') {
+      throw new ConflictException('Esta factura ya no está pendiente de cobro.');
+    }
+    return invoice;
+  }
 
   /**
    * Resuelve el token a un acceso válido y vigente. Nunca revela si un token

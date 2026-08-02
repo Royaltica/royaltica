@@ -29,6 +29,8 @@ interface InvoiceRowProps {
   currency: string;
   locale: string;
   onMarkPaid: (id: string) => void | Promise<void>;
+  onPromise: (id: string) => void | Promise<void>;
+  onDispute: (id: string) => void | Promise<void>;
   marking: boolean;
 }
 
@@ -37,6 +39,8 @@ const InvoiceRow: React.FC<InvoiceRowProps> = ({
   currency,
   locale,
   onMarkPaid,
+  onPromise,
+  onDispute,
   marking,
 }) => {
   const tone = riskTone(invoice.daysOverdue);
@@ -73,15 +77,33 @@ const InvoiceRow: React.FC<InvoiceRowProps> = ({
             <Clock size={12} /> En revisión
           </span>
         ) : (
-          <button
-            type="button"
-            disabled={marking}
-            onClick={() => onMarkPaid(invoice.id)}
-            className="w-full sm:w-auto text-[10px] uppercase font-bold tracking-widest text-brand-ink border border-brand-sand rounded-lg px-3 py-2.5 hover:bg-brand-cream transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
-          >
-            {marking ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
-            Ya pagué esta factura
-          </button>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <button
+              type="button"
+              disabled={marking}
+              onClick={() => onMarkPaid(invoice.id)}
+              className="text-[10px] uppercase font-bold tracking-widest text-brand-ink border border-brand-sand rounded-lg px-3 py-2.5 hover:bg-brand-cream transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              {marking ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+              Ya pagué
+            </button>
+            <button
+              type="button"
+              disabled={marking}
+              onClick={() => onPromise(invoice.id)}
+              className="text-[10px] uppercase font-bold tracking-widest text-brand-ink border border-brand-sand rounded-lg px-3 py-2.5 hover:bg-brand-cream transition-colors disabled:opacity-50"
+            >
+              Prometer pago
+            </button>
+            <button
+              type="button"
+              disabled={marking}
+              onClick={() => onDispute(invoice.id)}
+              className="text-[10px] uppercase font-bold tracking-widest text-red-600 border border-red-100 rounded-lg px-3 py-2.5 hover:bg-red-50 transition-colors disabled:opacity-50"
+            >
+              Disputar
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -93,6 +115,7 @@ export function CustomerPortalPage() {
   const [data, setData] = React.useState<CustomerPortalData | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [notice, setNotice] = React.useState<string | null>(null);
   const [markingId, setMarkingId] = React.useState<string | null>(null);
 
   const locale = 'en-CA'; // Tradespace opera en Canadá; sin branding propio aún cargado por org aquí.
@@ -136,6 +159,37 @@ export function CustomerPortalPage() {
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo registrar tu confirmación.');
+    } finally {
+      setMarkingId(null);
+    }
+  };
+
+  const handlePromise = async (invoiceId: string) => {
+    if (!token) return;
+    const promisedDate = window.prompt('Fecha prometida de pago (YYYY-MM-DD):')?.trim();
+    if (!promisedDate) return;
+    const note = window.prompt('Nota opcional para el equipo de cobranza:')?.trim() ?? '';
+    setMarkingId(invoiceId);
+    try {
+      await api.promiseToPay(token, invoiceId, { promisedDate, note });
+      setNotice('Gracias. Registramos tu promesa de pago para revisión.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo registrar la promesa de pago.');
+    } finally {
+      setMarkingId(null);
+    }
+  };
+
+  const handleDispute = async (invoiceId: string) => {
+    if (!token) return;
+    const reason = window.prompt('Cuéntanos brevemente el motivo de la disputa:')?.trim();
+    if (!reason) return;
+    setMarkingId(invoiceId);
+    try {
+      await api.disputePortalInvoice(token, invoiceId, { reason });
+      setNotice('Recibimos tu disputa. El equipo la revisará.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo registrar la disputa.');
     } finally {
       setMarkingId(null);
     }
@@ -215,6 +269,8 @@ export function CustomerPortalPage() {
                 locale={locale}
                 marking={markingId === inv.id}
                 onMarkPaid={handleMarkPaid}
+                onPromise={handlePromise}
+                onDispute={handleDispute}
               />
             ))
           )}
@@ -223,6 +279,11 @@ export function CustomerPortalPage() {
         {error && (
           <p className="text-xs text-red-600 flex items-center gap-1.5">
             <AlertTriangle size={12} /> {error}
+          </p>
+        )}
+        {notice && (
+          <p className="text-xs text-emerald-700 flex items-center gap-1.5">
+            <CheckCircle2 size={12} /> {notice}
           </p>
         )}
       </motion.div>

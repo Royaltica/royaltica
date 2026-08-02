@@ -23,10 +23,11 @@ import { SettingsView } from './views/SettingsView.tsx';
 import { FiscalAuditDashboard } from './views/FiscalAuditDashboard.tsx';
 import { ContabilidadView } from './views/ContabilidadView.tsx';
 import { HistorialView } from './views/HistorialView.tsx';
+import { GrowthOpsView } from './views/GrowthOpsView.tsx';
 import { useOrgBranding } from '../../hooks/useOrgBranding.ts';
 
 export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, permissions = [], role = '' }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, sessionStartedAt?: Date, permissions?: string[], role?: string }) {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'suppliers' | 'audits' | 'pending_invoices' | 'receivables' | 'financing' | 'settings' | 'fiscal_audit' | 'contabilidad' | 'historial'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'suppliers' | 'audits' | 'pending_invoices' | 'receivables' | 'growth' | 'financing' | 'settings' | 'fiscal_audit' | 'contabilidad' | 'historial'>('dashboard');
   // Filtro de pestañas por permisos del JWT. Admin ve todo; el operativo solo
   // las áreas que se le asignaron al invitarlo (comodín '*' = acceso total).
   const isFullAccess = role === 'CORPORATE_ADMIN' || role === 'SUPERADMIN' || permissions.includes('*');
@@ -325,6 +326,7 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
             {canSee('proveedores') && <SidebarLink icon={<Building2 size={18} />} label="Proveedores" active={activeTab === 'suppliers'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('suppliers')} />}
             {canSee('finanzas') && <SidebarLink icon={<FileText size={18} />} label="F. por pagar" active={activeTab === 'pending_invoices'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('pending_invoices')} />}
             {canSee('cxc') && <SidebarLink icon={<DollarSign size={18} />} label="F. por cobrar" active={activeTab === 'receivables'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('receivables')} />}
+            {canSee('cxc') && <SidebarLink icon={<Sparkles size={18} />} label="Crecimiento" active={activeTab === 'growth'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('growth')} />}
             {canSee('finanzas') && <SidebarLink icon={<ShieldCheck size={18} />} label="Validación" active={activeTab === 'audits'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('audits')} />}
             {canSee('estados') && <SidebarLink icon={<Activity size={18} />} label="Auditoría" active={activeTab === 'fiscal_audit'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('fiscal_audit')} />}
             {canSee('estados') && <SidebarLink icon={<BookOpen size={18} />} label="Contabilidad" active={activeTab === 'contabilidad'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('contabilidad')} />}
@@ -465,6 +467,10 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
 
           {activeTab === 'receivables' && (
               <ReceivablesView />
+          )}
+
+          {activeTab === 'growth' && (
+              <GrowthOpsView />
           )}
 
           {activeTab === 'audits' && (
@@ -709,4 +715,3 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
     </div>
   );
 }
-

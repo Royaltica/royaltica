@@ -198,6 +198,111 @@ export class CollectionSequencesService {
     );
   }
 
+  /** Bandeja operacional de cobranza: runs enriquecidos con factura, cliente
+   * y política para que el equipo sepa qué requiere atención humana. */
+  async commandCenter(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const runs = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.collectionSequenceRun.findMany({
+        where: { organizationId },
+        orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }],
+        include: {
+          collectionPolicy: { select: { name: true, preferredChannel: true } },
+          invoice: {
+            select: {
+              id: true,
+              folio: true,
+              total: true,
+              currency: true,
+              dueDate: true,
+              status: true,
+              customer: { select: { id: true, name: true, email: true, phone: true } },
+            },
+          },
+        },
+      }),
+    );
+
+    const now = Date.now();
+    const items = runs.map((run) => {
+      const dueDate = run.invoice.dueDate;
+      const daysOverdue = dueDate
+        ? Math.max(0, Math.floor((now - dueDate.getTime()) / 86_400_000))
+        : 0;
+      const needsHuman =
+        run.status === 'ESCALATED' ||
+        run.status === 'PAUSED' ||
+        daysOverdue >= 30 ||
+        (!(run.invoice.customer?.email) && !(run.invoice.customer?.phone));
+      return {
+        id: run.id,
+        status: run.status,
+        currentStepOrder: run.currentStepOrder,
+        lastStepSentAt: run.lastStepSentAt,
+        updatedAt: run.updatedAt,
+        daysOverdue,
+        needsHuman,
+        policy: run.collectionPolicy,
+        invoice: {
+          ...run.invoice,
+          total: Number(run.invoice.total),
+        },
+      };
+    });
+
+    return {
+      total: items.length,
+      needsHuman: items.filter((i) => i.needsHuman).length,
+      active: items.filter((i) => i.status === 'ACTIVE').length,
+      escalated: items.filter((i) => i.status === 'ESCALATED').length,
+      items,
+    };
+  }
+
+  /** Decisiones recientes de IA dentro del motor de cobranza. */
+  async aiActionsInbox(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const logs = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.activityLog.findMany({
+        where: {
+          organizationId,
+          action: {
+            in: [
+              'COLLECTION_SEQUENCE_STEP_SENT',
+              'COLLECTION_SEQUENCE_STEP_SKIPPED',
+              'COLLECTION_SEQUENCE_ESCALATED',
+            ],
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+    );
+
+    const items = logs
+      .filter((log) => {
+        const metadata = log.metadata as Record<string, unknown>;
+        return metadata?.aiDriven === true;
+      })
+      .map((log) => {
+        const metadata = log.metadata as Record<string, unknown>;
+        return {
+          id: log.id,
+          action: log.action,
+          createdAt: log.createdAt,
+          runId: log.entityId,
+          invoiceId: metadata.invoiceId,
+          stepOrder: metadata.stepOrder,
+          channel: metadata.channel,
+          tone: metadata.tone,
+          reason: metadata.reason,
+          aiReasoning: metadata.aiReasoning,
+        };
+      });
+
+    return { total: items.length, items };
+  }
+
   async findRun(user: AuthenticatedUser, id: string) {
     const organizationId = this.requireOrg(user);
     const run = await this.prisma.withOrg(organizationId, (tx) =>
