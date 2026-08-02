@@ -100,11 +100,34 @@ enum InvoiceDirection {
   RECEIVABLE
 }
 
-// Entidad a la que aplica un ExternalSyncFieldMapping: catálogo de clientes o
-// facturas de venta (CxC). No incluye proveedores/CxP: eso lo cubre /erp.
+// Entidad a la que aplica un ExternalSyncFieldMapping: catálogo de clientes,
+// facturas de venta (CxC), o estados de cuenta bancarios (conciliación).
+// No incluye proveedores/CxP: eso lo cubre /erp.
 enum ExternalSyncEntityType {
   CUSTOMER
   RECEIVABLE
+  // Mapeo de columnas de un CSV/OFX bancario (fecha/monto/descripción/
+  // referencia) hacia BankTransaction. Ver bank-reconciliation/.
+  BANK_STATEMENT
+}
+
+// Estado de conciliación de una BankTransaction contra las facturas CxC
+// pendientes de una organización. Ver bank-reconciliation-matching.service.ts.
+enum BankTransactionMatchStatus {
+  // Aún no se corrió el motor de match, o no encontró ningún candidato.
+  UNMATCHED
+  // El motor encontró un único candidato de alta confianza (ver
+  // AUTO_MATCH_CONFIDENCE_THRESHOLD) y lo asignó, pero SIN marcar la
+  // factura como PAID: eso requiere confirmación humana (confirmMatch).
+  AUTO_MATCHED
+  // Un humano confirmó manualmente el match (o corrigió uno propuesto).
+  MANUALLY_MATCHED
+  // Un humano rechazó el match propuesto; vuelve a quedar disponible para
+  // re-matchear manualmente.
+  REJECTED
+  // Hay más de un candidato plausible: el motor NO adivina, deja la
+  // decisión a un humano (ver matchTransaction).
+  AMBIGUOUS
 }
 
 // ─────────────────────────────────────────────────────
@@ -152,6 +175,8 @@ model Organization {
   collectionSequenceRuns CollectionSequenceRun[]
   customerPortalAccesses CustomerPortalAccess[]
   externalSyncFieldMappings ExternalSyncFieldMapping[]
+  bankStatementImports      BankStatementImport[]
+  bankTransactions          BankTransaction[]
 
   @@index([isActive])
 }
@@ -390,6 +415,7 @@ model Invoice {
   factorajeRequests      FactorajeRequest[]
   payments               Payment[]               @relation("PaymentInvoices")
   collectionSequenceRuns CollectionSequenceRun[]
+  bankTransactions       BankTransaction[]
 
   @@unique([organizationId, externalId])
   @@index([organizationId])
@@ -871,4 +897,74 @@ model CollectionReport {
 
   @@index([organizationId])
   @@index([generatedAt])
+}
+
+// ─────────────────────────────────────────────────────
+// Conciliación bancaria (bank-reconciliation/) — fundación genérica,
+// agnóstica del banco: aún no se confirma qué banco(s) canadiense(s) usa
+// Tradespace (EFT/Interac e-Transfer son los rieles probables, sin
+// confirmar), así que este import + matching engine funciona con CUALQUIER
+// export CSV/OFX vía mapeo de columnas configurable (ExternalSyncFieldMapping
+// con entityType=BANK_STATEMENT). El adaptador específico del banco se
+// agrega después, sin tocar este motor.
+// ─────────────────────────────────────────────────────
+
+/// Un archivo de estado de cuenta bancario subido para conciliar contra CxC.
+/// Una fila por archivo importado (no por transacción; ver BankTransaction).
+model BankStatementImport {
+  id                String    @id @default(uuid())
+  organizationId    String
+  // Texto libre a propósito ("RBC", "TD", "Scotiabank", "unknown"): no hay
+  // un catálogo cerrado de bancos todavía porque no se conoce cuál usa
+  // Tradespace. "unknown" es el valor por defecto hasta confirmar.
+  bankName          String    @default("unknown")
+  importedAt        DateTime  @default(now())
+  periodFrom        DateTime?
+  periodTo          DateTime?
+  totalTransactions Int       @default(0)
+  matchedCount      Int       @default(0)
+  unmatchedCount    Int       @default(0)
+  createdAt         DateTime  @default(now())
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@index([organizationId])
+  @@index([importedAt])
+}
+
+/// Una línea (depósito/transacción) parseada de un BankStatementImport,
+/// candidata a conciliarse contra una Invoice RECEIVABLE pendiente.
+model BankTransaction {
+  id                     String                      @id @default(uuid())
+  bankStatementImportId  String
+  // Denormalizado a propósito para RLS directa sobre esta tabla (mismo
+  // patrón que CollectionSequenceRun/CustomerPortalAccess): evita un JOIN
+  // contra BankStatementImport solo para resolver el tenant.
+  organizationId         String
+  transactionDate        DateTime
+  amount                 Decimal                     @db.Decimal(15, 2)
+  // Texto crudo de la línea (concepto/descripción bancaria); usado para
+  // fuzzy-match contra folio/nombre del cliente cuando el monto no alcanza.
+  description            String
+  referenceNumber        String?
+  // Fila original tal como la parseó el conector (CSV hoy, OFX/REST del
+  // banco específico después), para auditoría/debug sin volver a parsear.
+  rawRowData              Json
+  matchStatus            BankTransactionMatchStatus @default(UNMATCHED)
+  matchedInvoiceId        String?
+  // 0-1. Null hasta que el motor corra matchTransaction/runAutoMatch.
+  matchConfidence         Float?
+  matchedAt               DateTime?
+  matchedBy               String?
+  createdAt               DateTime                   @default(now())
+
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  bankStatementImport  BankStatementImport  @relation(fields: [bankStatementImportId], references: [id], onDelete: Cascade)
+  matchedInvoice       Invoice?             @relation(fields: [matchedInvoiceId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([bankStatementImportId])
+  @@index([matchStatus])
+  @@index([matchedInvoiceId])
 }

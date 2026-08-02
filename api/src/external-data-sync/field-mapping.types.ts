@@ -1,9 +1,17 @@
-/** Entidades soportadas por el mapeo de campos (espejo de ExternalSyncEntityType en Prisma). */
-export type ExternalSyncEntityType = 'CUSTOMER' | 'RECEIVABLE';
+/**
+ * Entidades soportadas por el mapeo de campos (espejo de
+ * ExternalSyncEntityType en Prisma). BANK_STATEMENT se agregó para
+ * bank-reconciliation/ (conciliación bancaria genérica, agnóstica del
+ * banco): reutiliza esta misma abstracción de mapeo configurable en vez de
+ * duplicarla, ya que el problema es idéntico (columnas de un CSV externo →
+ * campos de Royáltica, configurable por organización).
+ */
+export type ExternalSyncEntityType = 'CUSTOMER' | 'RECEIVABLE' | 'BANK_STATEMENT';
 
 export const EXTERNAL_SYNC_ENTITY_TYPES: ExternalSyncEntityType[] = [
   'CUSTOMER',
   'RECEIVABLE',
+  'BANK_STATEMENT',
 ];
 
 /** { campoRoyaltica: campoExterno }, ej. {"name":"CustomerName","rfc":"TaxId"}. */
@@ -38,6 +46,15 @@ export const IDENTITY_MAPPING: Record<ExternalSyncEntityType, FieldMapping> = {
     dueDate: 'dueDate',
     description: 'description',
   },
+  // Columnas típicas de un export CSV bancario genérico (RBC/TD/Scotiabank/
+  // cualquiera, aún sin confirmar): fecha, monto, descripción/concepto y
+  // referencia. Ver bank-reconciliation/bank-statement-csv.connector.ts.
+  BANK_STATEMENT: {
+    transactionDate: 'transactionDate',
+    amount: 'amount',
+    description: 'description',
+    referenceNumber: 'referenceNumber',
+  },
 };
 
 /**
@@ -48,6 +65,10 @@ export const IDENTITY_MAPPING: Record<ExternalSyncEntityType, FieldMapping> = {
 export const REQUIRED_FIELDS: Record<ExternalSyncEntityType, string[]> = {
   CUSTOMER: ['externalId', 'name'],
   RECEIVABLE: ['externalId', 'customerExternalId', 'total', 'dueDate'],
+  // referenceNumber es opcional a propósito: muchos exports bancarios no
+  // traen columna de referencia, la conciliación igual funciona solo con
+  // monto + fecha + descripción (ver bank-reconciliation-matching.service.ts).
+  BANK_STATEMENT: ['transactionDate', 'amount', 'description'],
 };
 
 /** Al menos uno de estos campos debe venir con valor para un CUSTOMER. */
