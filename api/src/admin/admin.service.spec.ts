@@ -8,11 +8,13 @@ jest.mock('firebase-admin/app', () => ({
 jest.mock('firebase-admin/auth', () => ({ getAuth: jest.fn() }));
 
 import { ConflictException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { AdminService } from './admin.service';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { FirebaseService } from '../auth/firebase/firebase.service';
 import { EmailService } from '../email/email.service';
 import { UsageService } from '../usage/usage.service';
+import type { Env } from '../config/env.validation';
 
 describe('AdminService.createOrganization', () => {
   let service: AdminService;
@@ -24,6 +26,7 @@ describe('AdminService.createOrganization', () => {
   let firebase: { isConfigured: boolean; createOrGetUser: jest.Mock; generateInviteLink: jest.Mock };
   let email: { sendInvitation: jest.Mock };
   let usage: { record: jest.Mock };
+  let config: { get: jest.Mock };
 
   const dto = {
     name: 'ACME',
@@ -58,11 +61,13 @@ describe('AdminService.createOrganization', () => {
     };
     email = { sendInvitation: jest.fn().mockResolvedValue({ sent: false }) };
     usage = { record: jest.fn() };
+    config = { get: jest.fn().mockReturnValue('') };
     service = new AdminService(
       prisma as unknown as PrismaService,
       firebase as unknown as FirebaseService,
       email as unknown as EmailService,
       usage as unknown as UsageService,
+      config as unknown as ConfigService<Env, true>,
     );
   });
 

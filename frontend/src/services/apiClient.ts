@@ -630,7 +630,8 @@ export const api = {
   },
 
   async getProductionReadiness(): Promise<ProductionReadiness> {
-    return request<ProductionReadiness>('GET', '/organization/production-readiness');
+    // SUPERADMIN-only: vive en /admin, no en /organization (ver admin.controller.ts).
+    return request<ProductionReadiness>('GET', '/admin/production-readiness');
   },
 
   /**

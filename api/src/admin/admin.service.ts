@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InvoiceStatus, type Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { FirebaseService } from '../auth/firebase/firebase.service';
@@ -13,6 +14,7 @@ import { UsageService, type UsagePeriod } from '../usage/usage.service';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { QueryCostsDto } from './dto/query-costs.dto';
+import type { Env } from '../config/env.validation';
 
 const num = (v: Prisma.Decimal | null): number => (v ? Number(v) : 0);
 
@@ -33,6 +35,7 @@ export class AdminService {
     private readonly firebase: FirebaseService,
     private readonly email: EmailService,
     private readonly usage: UsageService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   // ── Organizaciones ────────────────────────────────────────
@@ -360,6 +363,90 @@ export class AdminService {
 
   realtimeCosts() {
     return this.usage.realtime();
+  }
+
+  // ── Hardening checklist ────────────────────────────────────
+
+  /**
+   * Checklist de hardening por ambiente. No revela secretos, solo presencia.
+   * Vive en el panel SUPERADMIN (no en /organization) porque expone postura
+   * de infraestructura de toda la plataforma, no algo que un admin de un
+   * tenant individual deba poder consultar.
+   */
+  getProductionReadiness() {
+    const nodeEnv = this.config.get('NODE_ENV', { infer: true });
+    const has = (key: keyof Env) =>
+      String(this.config.get(key, { infer: true }) ?? '').length > 0;
+    const allowDevLogin =
+      this.config.get('ALLOW_DEV_LOGIN', { infer: true }) === 'true';
+
+    const items = [
+      {
+        key: 'node_env',
+        label: 'NODE_ENV production',
+        status: nodeEnv === 'production',
+        detail: `NODE_ENV=${nodeEnv}`,
+      },
+      {
+        key: 'dev_login',
+        label: 'Dev-login apagado',
+        status: !allowDevLogin,
+        detail: allowDevLogin
+          ? 'ALLOW_DEV_LOGIN=true; no usar con datos reales.'
+          : 'ALLOW_DEV_LOGIN=false.',
+      },
+      {
+        key: 'firebase',
+        label: 'Firebase Admin real',
+        status:
+          has('FIREBASE_PROJECT_ID') &&
+          has('FIREBASE_CLIENT_EMAIL') &&
+          has('FIREBASE_PRIVATE_KEY'),
+        detail: 'Requiere project id, client email y private key.',
+      },
+      {
+        key: 'cors',
+        label: 'CORS restringido',
+        status: !this.config.get('ALLOWED_ORIGINS', { infer: true }).includes('*'),
+        detail: this.config.get('ALLOWED_ORIGINS', { infer: true }),
+      },
+      {
+        key: 'sentry',
+        label: 'Sentry configurado',
+        status: has('SENTRY_DSN'),
+        detail: has('SENTRY_DSN') ? 'Errores enviados a Sentry.' : 'Sentry no-op.',
+      },
+      {
+        key: 'email',
+        label: 'Email real',
+        status: has('RESEND_API_KEY'),
+        detail: has('RESEND_API_KEY') ? 'Resend activo.' : 'Email en stub.',
+      },
+      {
+        key: 'storage',
+        label: 'Storage real',
+        status:
+          has('GCS_BUCKET_NAME') ||
+          (has('S3_BUCKET') && has('S3_ACCESS_KEY_ID') && has('S3_SECRET_ACCESS_KEY')),
+        detail: 'GCS o S3-compatible configurado.',
+      },
+      {
+        key: 'jobs',
+        label: 'Jobs explícitamente configurados',
+        status: ['true', 'false'].includes(
+          this.config.get('JOBS_ENABLED', { infer: true }),
+        ),
+        detail: `JOBS_ENABLED=${this.config.get('JOBS_ENABLED', { infer: true })}`,
+      },
+    ];
+    const passed = items.filter((i) => i.status).length;
+    return {
+      passed,
+      total: items.length,
+      percent: Math.round((passed / items.length) * 100),
+      productionSafe: items.every((i) => i.status),
+      items,
+    };
   }
 
   // ── helpers ───────────────────────────────────────────────

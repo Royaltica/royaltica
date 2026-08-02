@@ -96,4 +96,11 @@ export class AdminController {
   ) {
     return this.admin.costForOrganization(orgId, query);
   }
+
+  // ── Hardening checklist ────────────────────────────────────
+
+  @Get('production-readiness')
+  getProductionReadiness() {
+    return this.admin.getProductionReadiness();
+  }
 }
