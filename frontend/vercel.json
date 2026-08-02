@@ -4,16 +4,6 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/((?!api/|_public/).*)",
-      "has": [{ "type": "header", "key": "host", "value": "royaltica.com" }],
-      "destination": "/_public/index.html"
-    },
-    {
-      "source": "/((?!api/|_public/).*)",
-      "has": [{ "type": "header", "key": "host", "value": "www.royaltica.com" }],
-      "destination": "/_public/index.html"
-    },
-    {
       "source": "/api/:path*",
       "destination": "https://api.royaltica.com/:path*"
     }
