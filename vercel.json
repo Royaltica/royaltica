@@ -1,20 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "cd frontend && npm install && npm run build && mkdir -p dist/_public && cp ../landing/index.html dist/_public/index.html",
+  "buildCommand": "cd frontend && npm install && npm run build",
   "outputDirectory": "frontend/dist",
   "installCommand": "echo skip",
   "framework": null,
   "rewrites": [
-    {
-      "source": "/:path((?!api/|_public/).*)",
-      "has": [{ "type": "header", "key": "host", "value": "royaltica.com" }],
-      "destination": "/_public/index.html"
-    },
-    {
-      "source": "/:path((?!api/|_public/).*)",
-      "has": [{ "type": "header", "key": "host", "value": "www.royaltica.com" }],
-      "destination": "/_public/index.html"
-    },
     {
       "source": "/api/:path*",
       "destination": "https://api.royaltica.com/:path*"

@@ -1,11 +1,21 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build",
+  "buildCommand": "npm run build && mkdir -p dist/_public && cp ../landing/index.html dist/_public/index.html",
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/:path((?!api/|_public/).*)",
+      "has": [{ "type": "header", "key": "host", "value": "royaltica.com" }],
+      "destination": "/_public/index.html"
+    },
+    {
+      "source": "/:path((?!api/|_public/).*)",
+      "has": [{ "type": "header", "key": "host", "value": "www.royaltica.com" }],
+      "destination": "/_public/index.html"
+    },
+    {
       "source": "/api/:path*",
-      "destination": "https://royaltica-production.up.railway.app/:path*"
+      "destination": "https://api.royaltica.com/:path*"
     }
   ],
   "headers": [
