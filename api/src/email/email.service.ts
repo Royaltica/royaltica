@@ -188,9 +188,15 @@ export class EmailService implements OnModuleInit {
     // Moneda del tenant (default MXN para no romper orgs existentes).
     currency = 'MXN',
   ): Promise<{ sent: boolean; id?: string }> {
+    // Reply-To dedicado a cobranza: si el cliente responde este correo, la
+    // respuesta debe llegar al webhook de correo entrante (ver
+    // api/docs/cloudflare-email-worker/), no a no-reply@.
+    const replyTo = this.config.get('COLLECTIONS_REPLY_TO', { infer: true });
+
     return this.send({
       to,
       organizationId,
+      replyTo,
       subject: `Recordatorio de pago · factura ${folio}`,
       html: this.wrap(
         `<h2>Hola, ${customerName}</h2>

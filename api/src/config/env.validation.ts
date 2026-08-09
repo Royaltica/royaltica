@@ -63,6 +63,9 @@ export const envSchema = z.object({
   // Resend — opcionales por ahora
   RESEND_API_KEY: z.string().optional().default(''),
   RESEND_FROM_EMAIL: z.string().optional().default('no-reply@royaltica.com'),
+  // A dónde debe responder el cliente un recordatorio de cobranza para que
+  // el correo entrante lo capture (ver api/docs/cloudflare-email-worker/).
+  COLLECTIONS_REPLY_TO: z.string().optional().default('cobranza@royaltica.com'),
 
   // Correo del equipo al que llegan los leads de royaltica.com
   // (agendar demo + contacto). Si no se define, cae a hello@royaltica.com.
@@ -121,6 +124,11 @@ export const envSchema = z.object({
   // app secret para validar la firma HMAC de los mensajes entrantes (POST).
   WHATSAPP_VERIFY_TOKEN: z.string().optional().default(''),
   WHATSAPP_APP_SECRET: z.string().optional().default(''),
+
+  // Webhook de correo ENTRANTE (respuestas de clientes a la cobranza).
+  // Secreto con el que se firma el cuerpo del webhook. Si va vacío, la firma
+  // NO se valida: aceptable en desarrollo, nunca en producción.
+  EMAIL_INBOUND_SECRET: z.string().optional().default(''),
 
   // ── Stripe (pagos con tarjeta / suscripciones) ──
   // Si STRIPE_SECRET_KEY está vacío, el módulo queda en modo stub.
