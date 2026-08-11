@@ -97,3 +97,6 @@ temp/
 *.sql.gz
 RoyalticaBackups/
 .vercel
+
+# Caché local del detector de diseño (impeccable); la config sí se versiona.
+.impeccable/hook.cache.json
