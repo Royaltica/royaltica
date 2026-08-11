@@ -5,12 +5,20 @@ import { RequestAccessScreen } from './auth/RequestAccessScreen.tsx';
 import { ScheduleDemoScreen } from './auth/ScheduleDemoScreen.tsx';
 import { ContactScreen } from './auth/ContactScreen.tsx';
 
-export function LandingPage({ onLogin }: { onLogin: (email: string, password: string) => Promise<void> }) {
+export function LandingPage({
+  onLogin,
+  onGoogleLogin,
+}: {
+  onLogin: (email: string, password: string) => Promise<void>;
+  /** Opcional: si no se pasa, no se muestra el botón de Google. */
+  onGoogleLogin?: () => Promise<void>;
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   // Pantalla de "Solicitar acceso" (el CEO recibe el aviso y da de alta).
   const [showRequest, setShowRequest] = useState(false);
   // Pantallas públicas del sitio marketing (royaltica.com).
@@ -28,6 +36,23 @@ export function LandingPage({ onLogin }: { onLogin: (email: string, password: st
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Cuenta no encontrada o sin acceso. Solicita acceso abajo.');
       setIsLoading(false);
+    }
+  };
+
+  const handleGoogleClick = async () => {
+    if (!onGoogleLogin) return;
+    setError('');
+    setIsGoogleLoading(true);
+    try {
+      await onGoogleLogin();
+    } catch (err) {
+      // El popup cerrado por el usuario no es un error real, no lo mostramos.
+      const code = (err as { code?: string })?.code;
+      if (code !== 'auth/popup-closed-by-user' && code !== 'auth/cancelled-popup-request') {
+        setError(err instanceof Error ? err.message : 'No se pudo iniciar sesión con Google.');
+      }
+    } finally {
+      setIsGoogleLoading(false);
     }
   };
 
@@ -115,6 +140,34 @@ export function LandingPage({ onLogin }: { onLogin: (email: string, password: st
               {isLoading ? 'Verificando...' : 'Iniciar Sesión'}
             </button>
           </form>
+
+          {onGoogleLogin && (
+            <>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-brand-sand" />
+                <span className="text-[9px] uppercase tracking-widest text-brand-ink/30 font-bold">o</span>
+                <div className="flex-1 h-px bg-brand-sand" />
+              </div>
+              <button
+                type="button"
+                onClick={handleGoogleClick}
+                disabled={isGoogleLoading}
+                className="w-full py-3.5 bg-white border border-brand-sand text-brand-ink rounded-xl text-[10px] uppercase font-bold tracking-[0.15em] hover:bg-brand-cream transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center gap-3"
+              >
+                {isGoogleLoading ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                    <path fill="#4285F4" d="M23.52 12.27c0-.85-.08-1.67-.22-2.45H12v4.63h6.47a5.53 5.53 0 0 1-2.4 3.63v3.02h3.87c2.27-2.09 3.58-5.17 3.58-8.83z" />
+                    <path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.94-2.9l-3.87-3.02c-1.08.72-2.45 1.15-4.07 1.15-3.13 0-5.78-2.11-6.73-4.96H1.28v3.11A11.99 11.99 0 0 0 12 24z" />
+                    <path fill="#FBBC05" d="M5.27 14.27a7.2 7.2 0 0 1 0-4.54V6.62H1.28a12 12 0 0 0 0 10.76l3.99-3.11z" />
+                    <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.69 1.28 6.62l3.99 3.11C6.22 6.87 8.87 4.75 12 4.75z" />
+                  </svg>
+                )}
+                {isGoogleLoading ? 'Verificando...' : 'Iniciar sesión con Google'}
+              </button>
+            </>
+          )}
 
           <div className="text-center">
             <button

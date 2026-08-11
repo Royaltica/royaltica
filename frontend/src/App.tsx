@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
-import { auth, signInWithEmail } from './lib/firebase.ts';
+import { auth, signInWithEmail, signInWithGoogle } from './lib/firebase.ts';
 import { type Supplier } from './types.ts';
 import { api } from './services/apiClient.ts';
 import type { Role } from './utils/role.ts';
@@ -69,14 +69,14 @@ function LegacyApp() {
     );
   }
 
-  // Login ÚNICO + ruteo por rol: Firebase valida correo+contraseña, el backend
-  // canjea ese ID token por la sesión propia (POST /auth/verify-token) y
-  // devuelve el ROL de la cuenta; la app manda al portal correcto. El admin no
-  // se elige, se deduce de la cuenta (queda oculto para los demás). Lanza si
-  // la contraseña es incorrecta o la cuenta no existe en el backend, para que
+  // Login ÚNICO + ruteo por rol: Firebase valida la identidad (correo+contraseña
+  // o Google), el backend canjea ese ID token por la sesión propia
+  // (POST /auth/verify-token) y devuelve el ROL de la cuenta; la app manda al
+  // portal correcto. El admin no se elige, se deduce de la cuenta (queda oculto
+  // para los demás). Lanza si la cuenta no existe en el backend (invitation-only:
+  // un correo real de Google que no esté invitado igual queda fuera), para que
   // la pantalla de login muestre el error.
-  const handleLogin = async (email: string, password: string) => {
-    const idToken = await signInWithEmail(email, password);
+  const finishLogin = async (idToken: string) => {
     const login = await api.verifyToken(idToken);
     const apiUser = login.user;
     // 2FA real: si la cuenta lo tiene activo, el backend NO emite sesión
@@ -116,6 +116,21 @@ function LegacyApp() {
     }
   };
 
+  const handleLogin = async (email: string, password: string) => {
+    const idToken = await signInWithEmail(email, password);
+    await finishLogin(idToken);
+  };
+
+  // Alternativa a correo+contraseña: la identidad la confirma la cuenta real
+  // de Google de la persona (sin contraseña propia que administrar o filtrar).
+  // El filtro de acceso sigue siendo el mismo: si el correo de Google no está
+  // invitado en el backend, finishLogin lanza igual que con contraseña.
+  const handleGoogleLogin = async () => {
+    const credential = await signInWithGoogle();
+    const idToken = await credential.user.getIdToken();
+    await finishLogin(idToken);
+  };
+
   const handleUnlock = () => setIsLocked(false);
 
   // Cierra sesión y vuelve a la pantalla de login (ya no hay selección de rol).
@@ -130,7 +145,7 @@ function LegacyApp() {
   };
 
   if (!user) {
-    return <LandingPage onLogin={handleLogin} />;
+    return <LandingPage onLogin={handleLogin} onGoogleLogin={handleGoogleLogin} />;
   }
 
   if (needs2FA) {
@@ -161,5 +176,5 @@ function LegacyApp() {
   }
 
   // Fallback de seguridad: sin rol resuelto, de vuelta al login.
-  return <LandingPage onLogin={handleLogin} />;
+  return <LandingPage onLogin={handleLogin} onGoogleLogin={handleGoogleLogin} />;
 }
