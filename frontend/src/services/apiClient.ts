@@ -981,6 +981,66 @@ export const api = {
     );
   },
 
+  /**
+   * Igual que `aiChat` pero en streaming (SSE): invoca `onDelta` con cada
+   * fragmento de texto conforme llega, `onTool` cuando el asistente invoca
+   * una herramienta, y resuelve con la respuesta final + herramientas usadas
+   * cuando termina. `EventSource` no soporta POST con headers, así que se
+   * parsea el stream `data: {...}\n\n` a mano sobre `fetch`.
+   */
+  async aiChatStream(
+    message: string,
+    history: { role: 'user' | 'assistant'; content: string }[],
+    handlers: { onDelta?: (text: string) => void; onTool?: (name: string) => void } = {},
+  ): Promise<{ reply: string; toolsUsed: string[] }> {
+    const mapped = history.map((m) => ({
+      role: m.role === 'assistant' ? ('model' as const) : ('user' as const),
+      content: m.content,
+    }));
+    const token = getToken();
+    const res = await fetch(`${BASE}/ai/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ message, history: mapped }),
+    });
+    if (!res.ok || !res.body) {
+      if (res.status === 401) clearToken();
+      throw new Error(`Error ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let final: { reply: string; toolsUsed: string[] } | null = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() ?? '';
+      for (const raw of events) {
+        const line = raw.split('\n').find((l) => l.startsWith('data: '));
+        if (!line) continue;
+        const event = JSON.parse(line.slice(6)) as
+          | { type: 'delta'; text: string }
+          | { type: 'tool'; name: string }
+          | { type: 'done'; reply: string; toolsUsed: string[] }
+          | { type: 'error'; message: string };
+        if (event.type === 'delta') handlers.onDelta?.(event.text);
+        else if (event.type === 'tool') handlers.onTool?.(event.name);
+        else if (event.type === 'done') final = { reply: event.reply, toolsUsed: event.toolsUsed };
+        else if (event.type === 'error') throw new Error(event.message);
+      }
+    }
+
+    if (!final) throw new Error('El asistente no devolvió una respuesta.');
+    return final;
+  },
+
   /** Califica una respuesta del asistente (👍/👎) para retroalimentar al modelo. */
   async aiFeedback(payload: {
     rating: 'UP' | 'DOWN';

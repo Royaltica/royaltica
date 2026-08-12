@@ -158,32 +158,60 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
   const handleGlobalChatSend = React.useCallback(async () => {
     if (!globalChatInput.trim() || globalChatLoading) return;
     const userMsg: ChatMessage = { role: 'user', content: globalChatInput.trim() };
+    const history = globalChatMessages;
     setGlobalChatMessages(prev => [...prev, userMsg]);
     setGlobalChatInput('');
     setGlobalChatLoading(true);
     setGlobalThinkingStage(0);
-    const stageTimers: ReturnType<typeof setTimeout>[] = [];
-    [1, 2, 3].forEach((s, i) => {
-      stageTimers.push(setTimeout(() => setGlobalThinkingStage(s), (i + 1) * 800));
-    });
+    // Placeholder que se va rellenando en vivo con los fragmentos del stream
+    // (reemplaza el timer falso de "etapas de pensamiento": ahora hay texto
+    // real llegando del backend en cuanto el modelo empieza a responder).
+    let placeholderIndex = -1;
+    let streamedText = '';
+    let usedAnyTool = false;
     try {
-      // El asistente corre en el backend (Gemini vía Vertex AI): consulta los
-      // datos reales de la organización con sus herramientas. El historial son
-      // los turnos previos (el mensaje actual va aparte).
-      const { reply, toolsUsed } = await api.aiChat(userMsg.content, globalChatMessages);
-      stageTimers.forEach(clearTimeout);
+      const { reply, toolsUsed } = await api.aiChatStream(userMsg.content, history, {
+        onTool: () => {
+          usedAnyTool = true;
+          setGlobalThinkingStage(prev => Math.min(prev + 1, 3));
+        },
+        onDelta: (text) => {
+          streamedText += text;
+          setGlobalChatMessages(prev => {
+            if (placeholderIndex === -1) {
+              placeholderIndex = prev.length;
+              return [...prev, { role: 'assistant' as const, content: streamedText }];
+            }
+            const next = [...prev];
+            next[placeholderIndex] = { role: 'assistant', content: streamedText };
+            return next;
+          });
+        },
+      });
       setGlobalChatMessages(prev => {
-        const next = [...prev, { role: 'assistant' as const, content: reply }];
-        chatToolsRef.current[next.length - 1] = toolsUsed ?? [];
+        const next = [...prev];
+        if (placeholderIndex === -1) {
+          placeholderIndex = next.length;
+          next.push({ role: 'assistant', content: reply });
+        } else {
+          next[placeholderIndex] = { role: 'assistant', content: reply };
+        }
+        chatToolsRef.current[placeholderIndex] = toolsUsed ?? [];
         return next;
       });
+      void usedAnyTool;
     } catch {
-      stageTimers.forEach(clearTimeout);
-      setGlobalChatMessages(prev => [...prev, { role: 'assistant', content: 'Error al procesar la consulta. Intenta de nuevo.' }]);
+      setGlobalChatMessages(prev => {
+        const next = [...prev];
+        const msg = { role: 'assistant' as const, content: CHAT_ERROR_MSG };
+        if (placeholderIndex === -1) next.push(msg);
+        else next[placeholderIndex] = msg;
+        return next;
+      });
     }
     setGlobalChatLoading(false);
     setGlobalThinkingStage(0);
-  }, [globalChatInput, globalChatLoading, globalChatMessages, buildGlobalOpsContext]);
+  }, [globalChatInput, globalChatLoading, globalChatMessages]);
 
   useEffect(() => {
     globalChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });

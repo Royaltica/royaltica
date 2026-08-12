@@ -109,6 +109,13 @@ export interface ChatResult {
   toolsUsed: string[];
 }
 
+/** Eventos que emite `chatStream()` por SSE, uno por línea `data: `. */
+export type AiStreamEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'tool'; name: string }
+  | { type: 'done'; reply: string; toolsUsed: string[] }
+  | { type: 'error'; message: string };
+
 /**
  * Asistente conversacional con function-calling de Gemini (vía Vertex AI).
  *
@@ -257,7 +264,8 @@ export class AiService implements OnModuleInit {
         metadata: { toolsUsed },
       });
 
-      return { reply: extractText(result.response), toolsUsed };
+      const reply = this.finalizeReply(result.response, organizationId);
+      return { reply, toolsUsed };
     } catch (err) {
       this.logger.error(
         `Fallo en el chat de IA: ${err instanceof Error ? err.message : String(err)}`,
@@ -265,6 +273,124 @@ export class AiService implements OnModuleInit {
       throw new ServiceUnavailableException(
         'El asistente de IA no pudo procesar tu mensaje en este momento.',
       );
+    }
+  }
+
+  /**
+   * Arma la respuesta final. Si tras MAX_TOOL_ROUNDS el modelo TODAVÍA está
+   * pidiendo herramientas (no llegó a una respuesta de texto conclusiva),
+   * se lo advertimos explícitamente al usuario en vez de devolver una
+   * respuesta truncada en silencio, y lo dejamos en el log para monitoreo.
+   */
+  private finalizeReply(
+    response: import('@google-cloud/vertexai').GenerateContentResponse,
+    organizationId: string,
+  ): string {
+    const text = extractText(response);
+    const stillWantsTools = extractFunctionCalls(response).length > 0;
+    if (!stillWantsTools) return text;
+
+    this.logger.warn(
+      `Chat alcanzó el límite de ${MAX_TOOL_ROUNDS} rondas de herramientas sin concluir (org ${organizationId}).`,
+    );
+    const note =
+      'Nota: no alcancé a completar esta respuesta — necesité más consultas de las que tengo permitidas por mensaje. Intenta dividir tu pregunta en partes más pequeñas o pídeme un tema a la vez.';
+    return text ? `${text}\n\n${note}` : note;
+  }
+
+  /**
+   * Variante en streaming de `chat()`: va cediendo (yield) fragmentos de texto
+   * conforme llegan de Vertex AI, para que la UI pueda mostrarlos en vivo en
+   * vez de esperar la respuesta completa. Usa el mismo bucle de rondas de
+   * herramientas y las mismas reglas de aislamiento/costeo que `chat()`.
+   */
+  async *chatStream(
+    user: AuthenticatedUser,
+    dto: ChatDto,
+  ): AsyncGenerator<AiStreamEvent> {
+    if (!this.model) {
+      yield {
+        type: 'error',
+        message: 'El asistente de IA no está disponible (falta configurar Vertex AI).',
+      };
+      return;
+    }
+    const organizationId = user.organizationId;
+    if (!organizationId) {
+      yield { type: 'error', message: 'Tu cuenta no pertenece a una organización.' };
+      return;
+    }
+
+    const history: GeminiContent[] = (dto.history ?? []).map((turn) => ({
+      role: turn.role,
+      parts: [{ text: turn.content }],
+    }));
+
+    const toolsUsed: string[] = [];
+    let inputTokens = 0;
+    let outputTokens = 0;
+    const accumulate = (um?: {
+      promptTokenCount?: number;
+      candidatesTokenCount?: number;
+    }) => {
+      inputTokens += um?.promptTokenCount ?? 0;
+      outputTokens += um?.candidatesTokenCount ?? 0;
+    };
+
+    try {
+      const chat = this.model.startChat({ history });
+      let pending: string | import('@google-cloud/vertexai').Part[] = dto.message;
+      let lastResponse: import('@google-cloud/vertexai').GenerateContentResponse | null = null;
+
+      for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+        const streamResult = await chat.sendMessageStream(pending);
+
+        for await (const chunk of streamResult.stream) {
+          const text = (chunk.candidates?.[0]?.content?.parts ?? [])
+            .map((p) => p.text ?? '')
+            .join('');
+          if (text) yield { type: 'delta', text };
+        }
+
+        const aggregated = await streamResult.response;
+        lastResponse = aggregated;
+        accumulate(aggregated.usageMetadata);
+
+        const calls = extractFunctionCalls(aggregated);
+        if (!calls || calls.length === 0 || round === MAX_TOOL_ROUNDS) break;
+
+        const responseParts = [];
+        for (const call of calls) {
+          toolsUsed.push(call.name);
+          yield { type: 'tool', name: call.name };
+          const data = await this.runTool(call.name, call.args, organizationId);
+          responseParts.push({
+            functionResponse: { name: call.name, response: data },
+          });
+        }
+        pending = responseParts;
+      }
+
+      void this.usage.record({
+        organizationId,
+        feature: 'GEMINI_CHAT',
+        inputTokens,
+        outputTokens,
+        metadata: { toolsUsed, streamed: true },
+      });
+
+      const reply = lastResponse
+        ? this.finalizeReply(lastResponse, organizationId)
+        : '';
+      yield { type: 'done', reply, toolsUsed };
+    } catch (err) {
+      this.logger.error(
+        `Fallo en el chat (stream) de IA: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      yield {
+        type: 'error',
+        message: 'El asistente de IA no pudo procesar tu mensaje en este momento.',
+      };
     }
   }
 
