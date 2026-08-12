@@ -19,6 +19,11 @@ export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   return {
     plugins: [react(), tailwindcss()],
+    test: {
+      environment: 'jsdom',
+      setupFiles: ['./src/test/setup.ts'],
+      globals: true,
+    },
     // SEGURIDAD: aquí NO se inyectan API keys al bundle del navegador. Toda
     // llamada a IA pasa por el backend (/api/ai/*); la credencial vive solo
     // en el servidor. geminiService.ts queda en modo simulación sin key.

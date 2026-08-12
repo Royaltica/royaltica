@@ -60,9 +60,9 @@ jobs:
           GCS_BUCKET_NAME: test-bucket
           WHATSAPP_PROVIDER: meta
 
-  # ── Frontend: type-check & build ───────────────────────
+  # ── Frontend: type-check, tests & build ────────────────
   frontend:
-    name: Frontend – Build
+    name: Frontend – Lint, Test & Build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -81,6 +81,9 @@ jobs:
 
       - name: Type check
         run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm run test
 
       - name: Build
         run: npm run build

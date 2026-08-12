@@ -7,9 +7,8 @@ export const CURRENCY_FORMATTER = new Intl.NumberFormat('es-MX', {
 
 export const DEFAULT_BUDGET = 5000000;
 
-export const getPriorityInfo = (dateStr: string) => {
+export const getPriorityInfo = (dateStr: string, today: Date = new Date()) => {
   const date = new Date(dateStr);
-  const today = new Date('2024-04-27'); // Reference date based on current system time
   const diffTime = Math.abs(today.getTime() - date.getTime());
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
