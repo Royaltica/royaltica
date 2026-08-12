@@ -16,8 +16,10 @@
 SAT_VERIFY_MODE=live
 ```
 
+**Estado confirmado (11-ago-2026, `railway variables --service "Royáltica"`): `SAT_VERIFY_MODE` NO aparece en producción → sigue en `mock` por default.** El código real ya está listo (arriba), pero nadie ha cambiado la variable todavía.
+
 **Checklist de activación:**
-- [ ] Cambiar la variable en Railway.
+- [ ] Cambiar la variable en Railway: `railway variables --service "Royáltica" --set "SAT_VERIFY_MODE=live"` (o desde el dashboard, pestaña Variables del servicio).
 - [ ] Redeploy (Railway lo hace solo al cambiar una variable, confirmar en el dashboard).
 - [ ] Probar con `POST /sat/verify` (ver `sat.controller.ts` para el endpoint exacto) con 5-10 CFDIs reales conocidos: al menos 2 vigentes, 1 cancelado si tienen alguno a la mano, 1 con UUID inventado (debe regresar `"No Encontrado"`).
 - [ ] Confirmar `JOBS_ENABLED=true` en producción (ya debería estarlo, es el default).
