@@ -1,34 +1,46 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Cpu, Download, AlertTriangle, FileBarChart, Loader2 } from 'lucide-react';
 import { api, type StatementApi } from '../../../services/apiClient.ts';
 import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
 
+// Ejemplo de referencia de migracion a TanStack Query: reemplaza el patron
+// manual useState+useEffect+fetch por useQuery (lectura) y useMutation
+// (escritura), con invalidacion automatica de la lista tras generar un
+// nuevo estado. Ver docs/plan-100-funcional.md para el resto de vistas
+// pendientes de migrar (mismo patron: 14 archivos usan useEffect+fetch hoy).
 export function EstadoResultadosReal() {
   const now = new Date();
   const [month, setMonth] = useState<string>(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
   const [revenue, setRevenue] = useState('');
   const [result, setResult] = useState<StatementApi | null>(null);
-  const [list, setList] = useState<StatementApi[]>([]);
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const loadList = React.useCallback(() => {
-    api.getStatements().then(setList).catch(() => setList([]));
-  }, []);
-  React.useEffect(() => { loadList(); }, [loadList]);
+  const queryClient = useQueryClient();
 
-  const handleGenerate = async () => {
-    setBusy(true); setErr(null);
-    try {
-      const rev = revenue.trim() ? Number(revenue.replace(/[^0-9.]/g, '')) : undefined;
-      const r = await api.generateStatement(month, rev);
+  const { data: list = [] } = useQuery({
+    queryKey: ['statements'],
+    queryFn: () => api.getStatements(),
+  });
+
+  const generateMutation = useMutation({
+    mutationFn: (vars: { month: string; revenue?: number }) =>
+      api.generateStatement(vars.month, vars.revenue),
+    onSuccess: (r) => {
       setResult(r);
-      loadList();
-    } catch (e) {
+      setErr(null);
+      queryClient.invalidateQueries({ queryKey: ['statements'] });
+    },
+    onError: (e) => {
       setErr(e instanceof Error ? e.message : 'No se pudo generar el estado.');
-    } finally {
-      setBusy(false);
-    }
+    },
+  });
+
+  const busy = generateMutation.isPending;
+
+  const handleGenerate = () => {
+    const rev = revenue.trim() ? Number(revenue.replace(/[^0-9.]/g, '')) : undefined;
+    generateMutation.mutate({ month, revenue: rev });
   };
 
   const handleExport = () => {
