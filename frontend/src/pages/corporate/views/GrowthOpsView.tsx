@@ -1,4 +1,5 @@
 import React from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Bot,
@@ -78,12 +79,10 @@ export function GrowthOpsView() {
 }
 
 function OnboardingPanel() {
-  const [data, setData] = React.useState<OrgReadiness | null>(null);
-  const [loading, setLoading] = React.useState(true);
-
-  React.useEffect(() => {
-    api.getOrgReadiness().then(setData).finally(() => setLoading(false));
-  }, []);
+  const { data, isLoading: loading } = useQuery<OrgReadiness>({
+    queryKey: ['orgReadiness'],
+    queryFn: () => api.getOrgReadiness(),
+  });
 
   if (loading) return <LoadingCard label="Calculando checklist de tenant..." />;
   if (!data) return <EmptyCard label="No se pudo cargar el checklist." />;
@@ -101,14 +100,13 @@ function OnboardingPanel() {
 }
 
 function CollectionsCommandPanel() {
-  const [data, setData] = React.useState<CollectionCommandCenter | null>(null);
+  const queryClient = useQueryClient();
   const [busy, setBusy] = React.useState<string | null>(null);
 
-  const load = React.useCallback(() => {
-    api.getCollectionCommandCenter().then(setData).catch(() => setData(null));
-  }, []);
-
-  React.useEffect(load, [load]);
+  const { data } = useQuery<CollectionCommandCenter | null>({
+    queryKey: ['collectionCommandCenter'],
+    queryFn: () => api.getCollectionCommandCenter(),
+  });
 
   const act = async (id: string, action: 'pause' | 'resume' | 'cancel') => {
     setBusy(id);
@@ -116,7 +114,7 @@ function CollectionsCommandPanel() {
       if (action === 'pause') await api.pauseCollectionRun(id);
       if (action === 'resume') await api.resumeCollectionRun(id);
       if (action === 'cancel') await api.cancelCollectionRun(id);
-      load();
+      await queryClient.invalidateQueries({ queryKey: ['collectionCommandCenter'] });
     } finally {
       setBusy(null);
     }
@@ -268,17 +266,18 @@ function IntegrationWizardPanel() {
 }
 
 function BankReconciliationPanel() {
-  const [queue, setQueue] = React.useState<BankReviewQueue | null>(null);
+  const queryClient = useQueryClient();
   const [file, setFile] = React.useState<File | null>(null);
   const [bankName, setBankName] = React.useState('');
   const [message, setMessage] = React.useState('');
   const [busy, setBusy] = React.useState(false);
 
-  const load = React.useCallback(() => {
-    api.getBankReviewQueue().then(setQueue).catch(() => setQueue(null));
-  }, []);
+  const { data: queue } = useQuery<BankReviewQueue | null>({
+    queryKey: ['bankReviewQueue'],
+    queryFn: () => api.getBankReviewQueue(),
+  });
 
-  React.useEffect(load, [load]);
+  const reload = () => queryClient.invalidateQueries({ queryKey: ['bankReviewQueue'] });
 
   const upload = async () => {
     if (!file) return;
@@ -287,7 +286,7 @@ function BankReconciliationPanel() {
       const res = await api.importBankStatement(file, bankName || undefined);
       setMessage(`Importadas ${res.imported}, auto-match ${res.autoMatched}, ambiguas ${res.ambiguous}.`);
       setFile(null);
-      load();
+      await reload();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'No se pudo importar.');
     } finally {
@@ -299,7 +298,7 @@ function BankReconciliationPanel() {
     setBusy(true);
     try {
       await api.confirmBankMatch(id, invoiceId ?? undefined);
-      load();
+      await reload();
     } finally {
       setBusy(false);
     }
@@ -309,7 +308,7 @@ function BankReconciliationPanel() {
     setBusy(true);
     try {
       await api.rejectBankMatch(id);
-      load();
+      await reload();
     } finally {
       setBusy(false);
     }
@@ -357,13 +356,13 @@ function BankReconciliationPanel() {
 }
 
 function AiActionsPanel() {
-  const [items, setItems] = React.useState<AiActionItem[] | null>(null);
-  React.useEffect(() => {
-    api.getAiActionsInbox().then((r) => setItems(r.items)).catch(() => setItems([]));
-  }, []);
+  const { data: items, isLoading } = useQuery<AiActionItem[]>({
+    queryKey: ['aiActionsInbox'],
+    queryFn: async () => (await api.getAiActionsInbox()).items,
+  });
 
-  if (items === null) return <LoadingCard label="Cargando decisiones de IA..." />;
-  if (items.length === 0) return <EmptyCard label="Aún no hay decisiones de IA registradas en cobranza." />;
+  if (isLoading) return <LoadingCard label="Cargando decisiones de IA..." />;
+  if (!items || items.length === 0) return <EmptyCard label="Aún no hay decisiones de IA registradas en cobranza." />;
 
   return (
     <div className="space-y-3">
@@ -388,10 +387,10 @@ function AiActionsPanel() {
 }
 
 function HardeningPanel() {
-  const [data, setData] = React.useState<ProductionReadiness | null>(null);
-  React.useEffect(() => {
-    api.getProductionReadiness().then(setData).catch(() => setData(null));
-  }, []);
+  const { data } = useQuery<ProductionReadiness | null>({
+    queryKey: ['productionReadiness'],
+    queryFn: () => api.getProductionReadiness(),
+  });
 
   if (!data) return <LoadingCard label="Revisando hardening de producción..." />;
 
