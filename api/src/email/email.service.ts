@@ -93,43 +93,60 @@ export class EmailService implements OnModuleInit {
       return { sent: false };
     }
 
-    try {
-      const { data, error } = await this.client.emails.send({
-        from: this.fromEmail,
-        to: input.to,
-        replyTo: input.replyTo,
-        subject: input.subject,
-        html: input.html,
-        text: input.text,
-        attachments: attachments?.map((a) => ({
-          filename: a.filename,
-          contentType: a.contentType,
-          content: a.content,
-        })),
-      });
-      if (error) {
-        this.logger.warn(`Resend rechazó el correo: ${error.message}`);
+    // 1 reintento SOLO ante fallo de red/transporte (excepción lanzada por el
+    // SDK — timeout, DNS, 5xx, etc.): ese tipo de falla es transitoria y un
+    // segundo intento suele bastar. Un `error` que Resend SÍ devuelve en su
+    // respuesta (ej. destinatario inválido, dominio no verificado) es un
+    // rechazo de la API, no un problema de red — reintentarlo no cambiaría
+    // el resultado, así que ese caso NO se reintenta.
+    const attempts = 2;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const { data, error } = await this.client.emails.send({
+          from: this.fromEmail,
+          to: input.to,
+          replyTo: input.replyTo,
+          subject: input.subject,
+          html: input.html,
+          text: input.text,
+          attachments: attachments?.map((a) => ({
+            filename: a.filename,
+            contentType: a.contentType,
+            content: a.content,
+          })),
+        });
+        if (error) {
+          this.logger.warn(`Resend rechazó el correo: ${error.message}`);
+          return { sent: false };
+        }
+        // Cost tracking: cuenta un correo por destinatario (fire-and-forget).
+        if (input.organizationId) {
+          const recipients = Array.isArray(input.to) ? input.to.length : 1;
+          void this.usage.record({
+            organizationId: input.organizationId,
+            feature: 'EMAIL_SENT',
+            units: recipients,
+            metadata: { subject: input.subject },
+          });
+        }
+        return { sent: true, id: data?.id };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt < attempts) {
+          this.logger.warn(
+            `Fallo de red enviando correo con Resend (intento ${attempt}/${attempts}): ${message}. Reintentando...`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          continue;
+        }
+        this.logger.warn(
+          `Fallo al enviar correo con Resend tras ${attempts} intentos: ${message}`,
+        );
         return { sent: false };
       }
-      // Cost tracking: cuenta un correo por destinatario (fire-and-forget).
-      if (input.organizationId) {
-        const recipients = Array.isArray(input.to) ? input.to.length : 1;
-        void this.usage.record({
-          organizationId: input.organizationId,
-          feature: 'EMAIL_SENT',
-          units: recipients,
-          metadata: { subject: input.subject },
-        });
-      }
-      return { sent: true, id: data?.id };
-    } catch (err) {
-      this.logger.warn(
-        `Fallo al enviar correo con Resend: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-      return { sent: false };
     }
+    // Inalcanzable: el bucle siempre retorna dentro de sus ramas.
+    return { sent: false };
   }
 
   // ── plantillas ────────────────────────────────────────────

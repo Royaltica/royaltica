@@ -86,4 +86,45 @@ describe('EmailService — adjuntos Resend', () => {
     expect(send).not.toHaveBeenCalled();
     expect(usage.record).not.toHaveBeenCalled();
   });
+
+  it('reintenta 1 vez ante una falla de red transitoria y sí envía en el segundo intento', async () => {
+    send
+      .mockRejectedValueOnce(new Error('ETIMEDOUT'))
+      .mockResolvedValueOnce({ data: { id: 'email-2' }, error: null });
+
+    const result = await service.send({
+      to: 'admin@example.com',
+      subject: 'Resumen',
+      html: '<p>ok</p>',
+    });
+
+    expect(result).toEqual({ sent: true, id: 'email-2' });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('NO reintenta un rechazo de la API (destinatario inválido, etc.) — reintentar no cambiaría el resultado', async () => {
+    send.mockResolvedValueOnce({ data: null, error: { message: 'Invalid recipient' } });
+
+    const result = await service.send({
+      to: 'no-es-un-correo',
+      subject: 'Resumen',
+      html: '<p>ok</p>',
+    });
+
+    expect(result).toEqual({ sent: false });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('si ambos intentos fallan por red, devuelve sent:false sin lanzar', async () => {
+    send.mockRejectedValue(new Error('ECONNRESET'));
+
+    const result = await service.send({
+      to: 'admin@example.com',
+      subject: 'Resumen',
+      html: '<p>ok</p>',
+    });
+
+    expect(result).toEqual({ sent: false });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
 });
