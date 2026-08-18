@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -12,7 +13,7 @@ import {
   type Paginated,
 } from '../common/dto/pagination.dto';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { CreateCustomerDto } from './dto/create-customer.dto';
+import { CreateCustomerDto, RFC_REGEX } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { QueryCustomersDto } from './dto/query-customers.dto';
 import { toCsv } from '../common/csv.util';
@@ -27,6 +28,18 @@ export class CustomersService {
   async create(admin: AuthenticatedUser, dto: CreateCustomerDto) {
     const organizationId = this.requireOrg(admin);
     const rfc = dto.rfc.toUpperCase();
+
+    // El formato estricto de RFC solo aplica a organizaciones mexicanas
+    // (currency MXN) — fuera de México el cliente se identifica con su
+    // propio tax ID/Business Number, que no sigue este formato.
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { currency: true },
+    });
+    const isMexican = (org?.currency ?? 'MXN') === 'MXN';
+    if (isMexican && !RFC_REGEX.test(rfc)) {
+      throw new BadRequestException('RFC con formato inválido.');
+    }
 
     return this.prisma.withOrg(organizationId, async (tx) => {
       const exists = await tx.customer.findFirst({

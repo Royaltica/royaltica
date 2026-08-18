@@ -77,6 +77,8 @@ export class AdminService {
         name: dto.name,
         rfc,
         legalName: dto.legalName,
+        locale: dto.locale,
+        currency: dto.currency,
         plan: dto.plan ?? 'FREE',
         users: {
           create: {

@@ -100,6 +100,87 @@ describe('ReceivablesService', () => {
     expect(result.total).toBe(116);
   });
 
+  it('rechaza un cfdiUuid con formato inválido para una organización mexicana (currency MXN)', async () => {
+    prisma.organization.findUnique.mockResolvedValue({ rfc: 'RDE240101AA1', currency: 'MXN' });
+
+    await expect(
+      service.create(user, {
+        customerId: 'c-1',
+        cfdiUuid: 'no-es-un-uuid-valido',
+        subtotal: 100,
+        iva: 16,
+        total: 116,
+        date: '2026-07-01',
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.invoice.create).not.toHaveBeenCalled();
+  });
+
+  describe('organización no mexicana (ej. Canadá, currency CAD)', () => {
+    beforeEach(() => {
+      prisma.organization.findUnique.mockResolvedValue({
+        rfc: 'CA-BN-000000001',
+        currency: 'CAD',
+      });
+    });
+
+    it('genera un cfdiUuid sintético si no viene en el DTO (Canadá no tiene CFDI)', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(null);
+      prisma.customer.findFirst.mockResolvedValue({ id: 'c-1', rfc: 'CA-BN-123456789' });
+      prisma.invoice.create.mockImplementation(({ data }) => ({
+        id: 'inv-1',
+        status: InvoiceStatus.PENDING,
+        ...data,
+      }));
+
+      await service.create(user, {
+        customerId: 'c-1',
+        // sin cfdiUuid
+        subtotal: 100,
+        iva: 13,
+        total: 113,
+        date: '2026-07-01',
+      });
+
+      const createCall = prisma.invoice.create.mock.calls[0][0];
+      expect(createCall.data.cfdiUuid).toMatch(/^EXT-org-1-/);
+      expect(createCall.data.currency).toBe('CAD');
+    });
+
+    it('acepta un identificador fiscal no-RFC (Business Number) en rfcEmisor/rfcReceptor sin rechazarlo', async () => {
+      prisma.invoice.findUnique.mockResolvedValue(null);
+      prisma.customer.findFirst.mockResolvedValue({ id: 'c-1', rfc: 'CA-BN-123456789' });
+      prisma.invoice.create.mockImplementation(({ data }) => ({
+        id: 'inv-1',
+        status: InvoiceStatus.PENDING,
+        ...data,
+      }));
+
+      const result = await service.create(user, {
+        customerId: 'c-1',
+        cfdiUuid: 'factura-externa-001',
+        rfcEmisor: 'CA-BN-000000001',
+        rfcReceptor: 'CA-BN-123456789',
+        subtotal: 100,
+        iva: 13,
+        total: 113,
+        date: '2026-07-01',
+      });
+
+      expect(result).toBeDefined();
+      expect(prisma.invoice.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            cfdiUuid: 'factura-externa-001',
+            rfcEmisor: 'CA-BN-000000001',
+            rfcReceptor: 'CA-BN-123456789',
+            currency: 'CAD',
+          }),
+        }),
+      );
+    });
+  });
+
   it('rechaza una transición inválida de estado', async () => {
     prisma.invoice.findFirst.mockResolvedValue({
       id: 'inv-1',

@@ -4,15 +4,20 @@ import {
   IsOptional,
   IsString,
   IsUUID,
-  Matches,
   MaxLength,
   Min,
 } from 'class-validator';
 
-/** RFC de persona moral (12) o física (13). */
-const RFC_REGEX = /^[A-ZÑ&]{3,4}\d{6}[A-Z\d]{3}$/i;
-/** UUID de CFDI: 8-4-4-4-12 hexadecimal. */
-const CFDI_UUID_REGEX =
+/**
+ * Formato mexicano de UUID de CFDI y de RFC. Ambos se validan en
+ * ReceivablesService, no aquí — SOLO para organizaciones mexicanas
+ * (currency MXN). Canadá y otros países fuera de México no tienen
+ * CFDI/SAT: `cfdiUuid` ahí es simplemente la llave única del documento
+ * (el backend genera una sintética si el cliente no manda una), y
+ * rfcEmisor/rfcReceptor llevan el identificador fiscal que corresponda
+ * (ej. Business Number canadiense), sin el formato RFC.
+ */
+export const CFDI_UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -24,18 +29,24 @@ export class CreateReceivableDto {
   @IsUUID()
   customerId!: string;
 
+  /**
+   * Llave única del documento. Para México: UUID de CFDI (formato validado
+   * en el servicio). Para otros países: opcional — si se omite, el backend
+   * genera una llave sintética única, igual que hace el seed de datos.
+   */
+  @IsOptional()
   @IsString()
-  @Matches(CFDI_UUID_REGEX, { message: 'UUID de CFDI con formato inválido.' })
-  cfdiUuid!: string;
+  @MaxLength(100)
+  cfdiUuid?: string;
 
   @IsOptional()
   @IsString()
-  @Matches(RFC_REGEX, { message: 'RFC emisor con formato inválido.' })
+  @MaxLength(30)
   rfcEmisor?: string;
 
   @IsOptional()
   @IsString()
-  @Matches(RFC_REGEX, { message: 'RFC receptor con formato inválido.' })
+  @MaxLength(30)
   rfcReceptor?: string;
 
   @IsNumber({ maxDecimalPlaces: 2 })

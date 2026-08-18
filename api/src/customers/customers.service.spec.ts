@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { CustomersService } from './customers.service';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { SatService } from '../sat/sat.service';
@@ -23,6 +23,7 @@ describe('CustomersService', () => {
       update: jest.Mock;
     };
     invoice: { count: jest.Mock };
+    organization: { findUnique: jest.Mock };
     withOrg: jest.Mock;
   };
 
@@ -34,6 +35,9 @@ describe('CustomersService', () => {
         update: jest.fn(),
       },
       invoice: { count: jest.fn().mockResolvedValue(0) },
+      organization: {
+        findUnique: jest.fn().mockResolvedValue({ currency: 'MXN' }),
+      },
       withOrg: jest.fn(),
     };
     // withOrg simula la transacción con RLS: en el mock, simplemente corre
@@ -62,6 +66,33 @@ describe('CustomersService', () => {
     });
 
     expect(result.rfc).toBe('XAXX010101000');
+    expect(prisma.customer.create).toHaveBeenCalled();
+  });
+
+  it('rechaza un RFC con formato inválido para una organización mexicana (currency MXN)', async () => {
+    prisma.customer.findFirst.mockResolvedValue(null);
+    await expect(
+      service.create(admin, {
+        name: 'Cliente Malo',
+        rfc: 'no-es-un-rfc',
+        legalName: 'Cliente Malo SA',
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.customer.create).not.toHaveBeenCalled();
+  });
+
+  it('acepta un Business Number canadiense (no-RFC) para una organización con currency CAD', async () => {
+    prisma.organization.findUnique.mockResolvedValue({ currency: 'CAD' });
+    prisma.customer.findFirst.mockResolvedValue(null);
+    prisma.customer.create.mockImplementation(({ data }) => ({ id: 'c-2', ...data }));
+
+    const result = await service.create(admin, {
+      name: 'Northwind Traders',
+      rfc: 'ca-bn-123456789',
+      legalName: 'Northwind Traders Ltd.',
+    });
+
+    expect(result.rfc).toBe('CA-BN-123456789');
     expect(prisma.customer.create).toHaveBeenCalled();
   });
 

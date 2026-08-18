@@ -9,8 +9,17 @@ import {
   MinLength,
 } from 'class-validator';
 
-/** RFC de persona moral (12) o física (13). */
-const RFC_REGEX = /^[A-ZÑ&]{3,4}\d{6}[A-Z\d]{3}$/i;
+/**
+ * RFC de persona moral (12) o física (13) — formato mexicano.
+ * Se exporta para que CustomersService la use SOLO cuando la organización
+ * es mexicana (locale es-MX / currency MXN). El DTO ya no la impone a
+ * nivel de request porque una organización de cobranza fuera de México
+ * (ej. Canadá) identifica a sus clientes con su propio "tax ID" / Business
+ * Number, que no sigue este formato — bloquear aquí impedía crear
+ * clientes canadienses vía la API pública aunque el schema y el resto del
+ * producto ya soportan locale/currency por organización.
+ */
+export const RFC_REGEX = /^[A-ZÑ&]{3,4}\d{6}[A-Z\d]{3}$/i;
 /** Teléfono en E.164 (ej. +5215512345678) para recordatorios por WhatsApp. */
 const E164_REGEX = /^\+[1-9]\d{7,14}$/;
 
@@ -20,8 +29,15 @@ export class CreateCustomerDto {
   @MaxLength(150)
   name!: string;
 
+  /**
+   * Identificador fiscal del cliente: RFC (México) o el equivalente del
+   * país de la organización (ej. Business Number en Canadá). El formato
+   * estricto de RFC se valida en el servicio, no aquí, porque depende del
+   * locale/currency de la organización — ver RFC_REGEX arriba.
+   */
   @IsString()
-  @Matches(RFC_REGEX, { message: 'RFC con formato inválido.' })
+  @MinLength(3)
+  @MaxLength(30)
   rfc!: string;
 
   @IsString()

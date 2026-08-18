@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { InvoiceStatus, type Invoice, type Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { EmailService } from '../email/email.service';
@@ -20,7 +21,11 @@ import { toCsv } from '../common/csv.util';
 import AdmZip from 'adm-zip';
 import { parseCfdiXml, type ParsedCfdi } from '../invoices/cfdi/cfdi-parser';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { CreateReceivableDto } from './dto/create-receivable.dto';
+import {
+  CreateReceivableDto,
+  CFDI_UUID_REGEX,
+} from './dto/create-receivable.dto';
+import { RFC_REGEX } from '../customers/dto/create-customer.dto';
 import { QueryReceivablesDto } from './dto/query-receivables.dto';
 
 /**
@@ -64,8 +69,37 @@ export class ReceivablesService {
   async create(user: AuthenticatedUser, dto: CreateReceivableDto) {
     const organizationId = this.requireOrg(user);
 
+    // El rigor de CFDI/RFC (SAT) solo aplica a organizaciones mexicanas
+    // (currency MXN). Una organización de cobranza fuera de México (ej.
+    // Canadá, currency CAD) no tiene CFDI — exigirle ese formato bloqueaba
+    // por completo poder darla de alta vía la API pública, aunque el
+    // schema y el resto del producto ya soportan locale/currency por
+    // organización desde hace tiempo.
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { rfc: true, currency: true },
+    });
+    const isMexican = (org?.currency ?? 'MXN') === 'MXN';
+
+    let cfdiUuid = dto.cfdiUuid?.trim();
+    if (isMexican) {
+      if (!cfdiUuid || !CFDI_UUID_REGEX.test(cfdiUuid)) {
+        throw new BadRequestException('UUID de CFDI con formato inválido.');
+      }
+      if (dto.rfcEmisor && !RFC_REGEX.test(dto.rfcEmisor)) {
+        throw new BadRequestException('RFC emisor con formato inválido.');
+      }
+      if (dto.rfcReceptor && !RFC_REGEX.test(dto.rfcReceptor)) {
+        throw new BadRequestException('RFC receptor con formato inválido.');
+      }
+    } else if (!cfdiUuid) {
+      // No hay CFDI que ancle la identidad del documento — se genera una
+      // llave única sintética (misma convención que usa el seed de datos).
+      cfdiUuid = `EXT-${organizationId.slice(0, 8)}-${randomUUID()}`;
+    }
+
     const dupe = await this.prisma.invoice.findUnique({
-      where: { cfdiUuid: dto.cfdiUuid },
+      where: { cfdiUuid },
       select: { id: true },
     });
     if (dupe) {
@@ -81,13 +115,11 @@ export class ReceivablesService {
         throw new NotFoundException('Cliente no encontrado.');
       }
 
-      // La empresa EMITE la factura: rfcEmisor es el RFC de la organización y
-      // rfcReceptor el del cliente. Se derivan si no vienen en el DTO, para no
-      // depender de datos del navegador.
-      const org = await tx.organization.findUnique({
-        where: { id: organizationId },
-        select: { rfc: true },
-      });
+      // La empresa EMITE la factura: rfcEmisor es el RFC/tax ID de la
+      // organización y rfcReceptor el del cliente. Se derivan si no vienen
+      // en el DTO, para no depender de datos del navegador. Para
+      // organizaciones no mexicanas esto NO sigue el formato RFC — es el
+      // identificador fiscal que corresponda a su país.
       const rfcEmisor = (dto.rfcEmisor ?? org?.rfc ?? '').toUpperCase();
       const rfcReceptor = (dto.rfcReceptor ?? customer.rfc).toUpperCase();
 
@@ -96,9 +128,10 @@ export class ReceivablesService {
           organizationId,
           direction: 'RECEIVABLE',
           customerId: dto.customerId,
-          cfdiUuid: dto.cfdiUuid,
+          cfdiUuid,
           rfcEmisor,
           rfcReceptor,
+          currency: org?.currency ?? 'MXN',
           subtotal: this.assertMoney(dto.subtotal, 'subtotal'),
           iva: this.assertMoney(dto.iva, 'iva'),
           total: this.assertMoney(dto.total, 'total'),
