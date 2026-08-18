@@ -113,6 +113,12 @@ export const envSchema = z.object({
   SPEI_API_KEY: z.string().optional().default(''),
   SPEI_API_URL: z.string().optional().default(''),
   SPEI_CLABE_ORIGEN: z.string().optional().default(''),
+  // Límites de seguridad para dispersión SPEI real (defensa en profundidad
+  // contra un bug o una cuenta comprometida moviendo dinero de más). Ambos
+  // en MXN. Defaults conservadores — ajustar según el volumen real del
+  // negocio antes de activar SPEI en vivo.
+  SPEI_MAX_AMOUNT_PER_TRANSFER: z.coerce.number().positive().optional().default(500_000),
+  SPEI_MAX_DAILY_TOTAL_PER_ORG: z.coerce.number().positive().optional().default(2_000_000),
 
   // WhatsApp para alertas críticas — opcionales (modo stub hasta tener token).
   // 'meta' (Cloud API) usa WHATSAPP_PHONE_ID; 'twilio' usa WHATSAPP_FROM.

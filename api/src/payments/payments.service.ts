@@ -5,8 +5,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   InvoiceStatus,
+  PaymentRoute,
   PaymentStatus,
   PaymentType,
   type Payment,
@@ -18,11 +20,13 @@ import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { ActivityLogService } from '../activity/activity-log.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { WEBHOOK_EVENTS } from '../webhooks/webhook-events';
+import { SpeiService } from '../spei/spei.service';
 import {
   buildPaginated,
   type Paginated,
 } from '../common/dto/pagination.dto';
 import { toCsv } from '../common/csv.util';
+import type { Env } from '../config/env.validation';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { QueryPaymentsDto } from './dto/query-payments.dto';
@@ -48,6 +52,8 @@ export class PaymentsService {
     private readonly whatsapp: WhatsappService,
     private readonly activity: ActivityLogService,
     private readonly webhooks: WebhooksService,
+    private readonly spei: SpeiService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   async create(user: AuthenticatedUser, dto: CreatePaymentDto) {
@@ -90,6 +96,20 @@ export class PaymentsService {
         throw new ConflictException(
           'Una o más facturas ya están incluidas en otro pago activo.',
         );
+      }
+
+      // Un pago por TRANSFER se dispersa como UNA sola transferencia SPEI a
+      // UNA sola cuenta CLABE: si las facturas fueran de proveedores
+      // distintos no habría a dónde mandar el dinero de forma inequívoca.
+      // CHECK/CREDIT no tienen esta restricción (no generan una dispersión
+      // electrónica única).
+      if (dto.route === PaymentRoute.TRANSFER) {
+        const supplierIds = new Set(invoices.map((i) => i.supplierId));
+        if (supplierIds.size > 1) {
+          throw new ConflictException(
+            'Un pago por transferencia (SPEI) solo puede incluir facturas del mismo proveedor.',
+          );
+        }
       }
 
       const totalAmount = invoices.reduce((sum, i) => sum + Number(i.total), 0);
@@ -183,7 +203,23 @@ export class PaymentsService {
     const payment = await this.prisma.withOrg(organizationId, (tx) =>
       tx.payment.findFirst({
         where: { id, organizationId },
-        include: { invoices: { select: { id: true, paymentType: true } } },
+        include: {
+          invoices: {
+            select: {
+              id: true,
+              paymentType: true,
+              supplierId: true,
+              supplier: {
+                select: {
+                  id: true,
+                  name: true,
+                  rfc: true,
+                  clabeInterbancaria: true,
+                },
+              },
+            },
+          },
+        },
       }),
     );
     if (!payment) throw new NotFoundException('Pago no encontrado.');
@@ -194,8 +230,21 @@ export class PaymentsService {
       );
     }
 
+    // ── Dispersión SPEI real ──────────────────────────────────
+    // Al pasar a PROCESSING un pago por TRANSFER, esto es lo que de verdad
+    // mueve el dinero. Antes este método solo cambiaba un status en la BD
+    // sin llamar nunca a SpeiService — con credenciales configuradas eso
+    // significaba que "PROCESSING" no reflejaba la realidad. Si SPEI no
+    // está configurado, SpeiService cae a modo stub (igual que siempre) y
+    // el flujo sigue funcionando en desarrollo/demo sin romperse.
+    let speiClaveRastreo: string | undefined;
+    if (target === PaymentStatus.PROCESSING && payment.route === PaymentRoute.TRANSFER) {
+      speiClaveRastreo = await this.disperseSpei(organizationId, payment);
+    }
+
     const data: Prisma.PaymentUpdateInput = { status: target };
     if (transactionRef) data.transactionRef = transactionRef;
+    else if (speiClaveRastreo) data.transactionRef = speiClaveRastreo;
     if (target === PaymentStatus.COMPLETED) data.processedAt = new Date();
 
     // Al completar el pago: las facturas pasan a PAID y, si son PPD, queda
@@ -299,6 +348,100 @@ export class PaymentsService {
   }
 
   // ── helpers ───────────────────────────────────────────────
+
+  /**
+   * Dispara la transferencia SPEI real hacia el proveedor del pago y
+   * devuelve la claveRastreo para guardarla en `transactionRef`. Lanza si
+   * falta la CLABE del proveedor, si se exceden los límites de seguridad,
+   * o si el proveedor SPEI (Conekta/STP) rechaza la orden — en todos esos
+   * casos NO se permite avanzar a PROCESSING, porque el dinero de verdad
+   * no se movió.
+   */
+  private async disperseSpei(
+    organizationId: string,
+    payment: Payment & {
+      invoices: {
+        id: string;
+        supplierId: string | null;
+        supplier: {
+          id: string;
+          name: string;
+          rfc: string;
+          clabeInterbancaria: string | null;
+        } | null;
+      }[];
+    },
+  ): Promise<string> {
+    const supplier = payment.invoices[0]?.supplier;
+    if (!supplier) {
+      throw new BadRequestException(
+        'No se puede dispersar por SPEI: el pago no tiene proveedor asociado.',
+      );
+    }
+    if (!supplier.clabeInterbancaria) {
+      throw new BadRequestException(
+        `${supplier.name} no tiene CLABE interbancaria registrada. Agrégala en su expediente antes de dispersar por SPEI.`,
+      );
+    }
+
+    const amount = Number(payment.totalAmount);
+
+    const maxPerTransfer = this.config.get('SPEI_MAX_AMOUNT_PER_TRANSFER', {
+      infer: true,
+    });
+    if (amount > maxPerTransfer) {
+      throw new BadRequestException(
+        `El monto ($${amount.toLocaleString('es-MX')}) excede el límite por transferencia SPEI ` +
+          `($${maxPerTransfer.toLocaleString('es-MX')}). Divide el pago o ajusta SPEI_MAX_AMOUNT_PER_TRANSFER.`,
+      );
+    }
+
+    const maxDailyTotal = this.config.get('SPEI_MAX_DAILY_TOTAL_PER_ORG', {
+      infer: true,
+    });
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const alreadyDispersedToday = await this.prisma.withOrg(
+      organizationId,
+      (tx) =>
+        tx.payment.aggregate({
+          where: {
+            organizationId,
+            route: PaymentRoute.TRANSFER,
+            status: { in: [PaymentStatus.PROCESSING, PaymentStatus.COMPLETED] },
+            createdAt: { gte: todayStart },
+          },
+          _sum: { totalAmount: true },
+        }),
+    );
+    const dispersedToday = Number(alreadyDispersedToday._sum.totalAmount ?? 0);
+    if (dispersedToday + amount > maxDailyTotal) {
+      throw new BadRequestException(
+        `Este pago excede el límite diario de dispersión SPEI de la organización ` +
+          `($${maxDailyTotal.toLocaleString('es-MX')}; ya dispersado hoy: $${dispersedToday.toLocaleString('es-MX')}). ` +
+          'Intenta mañana o ajusta SPEI_MAX_DAILY_TOTAL_PER_ORG.',
+      );
+    }
+
+    const result = await this.spei.order({
+      clabeDestino: supplier.clabeInterbancaria,
+      nombreBeneficiario: supplier.name,
+      rfcBeneficiario: supplier.rfc,
+      monto: amount,
+      concepto: `Royaltica pago ${payment.id.slice(0, 8)}`,
+      // Banxico exige una referencia numérica corta; derivamos una de 6
+      // dígitos determinística a partir del timestamp actual.
+      referenciaNumerica: Number(Date.now().toString().slice(-6)),
+    });
+
+    if (!result.success || !result.claveRastreo) {
+      throw new BadRequestException(
+        `La transferencia SPEI fue rechazada: ${result.error ?? 'error desconocido'}.`,
+      );
+    }
+
+    return result.claveRastreo;
+  }
 
   private detailInclude() {
     return {

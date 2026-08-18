@@ -33,6 +33,7 @@ import { EmailModule } from './email/email.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { PaymentsModule } from './payments/payments.module';
+import { SpeiModule } from './spei/spei.module';
 import { FactorajeModule } from './factoraje/factoraje.module';
 import { PortalModule } from './portal/portal.module';
 import { CustomerPortalModule } from './customer-portal/customer-portal.module';
@@ -113,6 +114,7 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     InvoicesModule,
     FiscalModule,
     PaymentsModule,
+    SpeiModule,
     FactorajeModule,
     PortalModule,
     CustomerPortalModule,
