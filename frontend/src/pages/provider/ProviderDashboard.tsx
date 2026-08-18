@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ShieldCheck, CheckCircle2, AlertCircle, Zap, LogOut, ChevronRight, User, Search, Clock,
@@ -34,22 +35,22 @@ export function ProviderDashboard({ user, supplier, onLogout, onBackToRole }: { 
   }, []);
 
   // Solicitudes de factoraje (anticipo) reales del proveedor (Portal del Proveedor).
-  const [factorajeReqs, setFactorajeReqs] = useState<FactorajeItem[]>([]);
-  const loadFactoraje = React.useCallback(() => {
-    return api.getProviderFactoraje().then(setFactorajeReqs).catch(() => { /* sin sesión real: lista vacía */ });
-  }, []);
-  useEffect(() => { void loadFactoraje(); }, [loadFactoraje]);
+  const queryClient = useQueryClient();
+  const { data: factorajeReqs = [] } = useQuery<FactorajeItem[]>({
+    queryKey: ['providerFactoraje'],
+    queryFn: () => api.getProviderFactoraje(),
+  });
   const [factorajeMsg, setFactorajeMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const handleRequestFactoraje = React.useCallback(async (invoiceId: string, amount?: number) => {
     setFactorajeMsg(null);
     try {
       await api.requestProviderFactoraje(invoiceId, amount);
-      await loadFactoraje();
+      await queryClient.invalidateQueries({ queryKey: ['providerFactoraje'] });
       setFactorajeMsg({ ok: true, text: 'Solicitud de anticipo enviada. El corporativo la revisará.' });
     } catch (e) {
       setFactorajeMsg({ ok: false, text: e instanceof Error ? e.message : 'No se pudo solicitar el anticipo.' });
     }
-  }, [loadFactoraje]);
+  }, [queryClient]);
   const paid = invoices.filter(i => i.status === 'paid');
   const pending = invoices.filter(i => i.status === 'pending');
   const inAudit = invoices.filter(i => i.status === 'audited' || i.status === 'approved');
@@ -149,11 +150,14 @@ export function ProviderDashboard({ user, supplier, onLogout, onBackToRole }: { 
     { type: 'IDENTIFICACION', name: 'Identificación del Representante' },
     { type: 'PODER_NOTARIAL', name: 'Poder Notarial' },
   ] as const;
-  const [kycDocs, setKycDocs] = useState<import('../../services/apiClient.ts').ProviderDocument[]>([]);
-  const loadKyc = React.useCallback(() => {
-    api.getProviderDocuments().then(setKycDocs).catch(() => { /* sin sesión: lista vacía */ });
-  }, []);
-  useEffect(() => { void loadKyc(); }, [loadKyc]);
+  const { data: kycDocs = [] } = useQuery<import('../../services/apiClient.ts').ProviderDocument[]>({
+    queryKey: ['providerDocuments'],
+    queryFn: () => api.getProviderDocuments(),
+  });
+  const loadKyc = React.useCallback(
+    () => queryClient.invalidateQueries({ queryKey: ['providerDocuments'] }),
+    [queryClient],
+  );
   const [confirmDeleteDocId, setConfirmDeleteDocId] = useState<string | null>(null);
   const [kycBusy, setKycBusy] = useState<string | null>(null);
   const [kycMsg, setKycMsg] = useState<{ ok: boolean; text: string } | null>(null);
