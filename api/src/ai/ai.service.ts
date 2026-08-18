@@ -98,6 +98,35 @@ Esto es análisis operativo y financiero de SUS datos, y SÍ entra en tu rol en 
 - Solo consultas información; si piden crear/aprobar/pagar/borrar/enviar un recordatorio, explica que esas acciones se hacen desde la interfaz.
 - Solo tienes acceso a los datos de la organización del usuario actual; nunca menciones ni intentes acceder a otras organizaciones.`;
 
+/**
+ * Timeout máximo por llamada a Vertex AI (una ronda de sendMessage /
+ * sendMessageStream). Sin esto, una llamada colgada deja el request HTTP
+ * (o la conexión SSE) abierta indefinidamente, consumiendo un worker del
+ * servidor sin límite. 45s es holgado para el modelo flash con tool-calling
+ * de por medio, pero corta cualquier cuelgue real.
+ */
+const VERTEX_CALL_TIMEOUT_MS = 45_000;
+
+/** Rechaza con un error si `promise` no resuelve dentro de `ms`. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`Timeout de ${ms}ms esperando ${label}.`)),
+      ms,
+    );
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 /** Forma de un turno tal como lo espera el SDK de Vertex AI. */
 interface GeminiContent {
   role: 'user' | 'model';
@@ -185,7 +214,9 @@ export class AiService implements OnModuleInit {
     const location = this.config.get('VERTEX_LOCATION', { infer: true });
     const keyFile = this.config.get('VERTEX_KEY_FILE', { infer: true });
 
-    const { VertexAI } = await import('@google-cloud/vertexai');
+    const { VertexAI, HarmCategory, HarmBlockThreshold } = await import(
+      '@google-cloud/vertexai'
+    );
     const client = new VertexAI({
       project,
       location,
@@ -198,6 +229,29 @@ export class AiService implements OnModuleInit {
       // Temperatura baja: respuestas más deterministas y apegadas a los datos,
       // menos "creatividad" (menos alucinación). topP acota igual el muestreo.
       generationConfig: { temperature: 0.2, topP: 0.8 },
+      // Guardrail explícito: no confiar en el default de Google (puede
+      // cambiar entre versiones del modelo/SDK). Este es un asistente de
+      // datos financieros de negocio — no hay razón legítima para que
+      // produzca contenido de odio, sexual, peligroso o de acoso, así que
+      // se bloquea desde el umbral medio en las 4 categorías soportadas.
+      safetySettings: [
+        {
+          category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+          threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+          threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+          threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        },
+        {
+          category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+          threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        },
+      ],
     });
     this.logger.log(
       `Asistente IA inicializado vía Vertex AI (proyecto: ${project}, modelo: ${this.modelName}).`,
@@ -226,7 +280,11 @@ export class AiService implements OnModuleInit {
 
     try {
       const chat = this.model.startChat({ history });
-      let result = await chat.sendMessage(dto.message);
+      let result = await withTimeout(
+        chat.sendMessage(dto.message),
+        VERTEX_CALL_TIMEOUT_MS,
+        'Vertex AI',
+      );
       const toolsUsed: string[] = [];
       let inputTokens = 0;
       let outputTokens = 0;
@@ -251,7 +309,11 @@ export class AiService implements OnModuleInit {
             functionResponse: { name: call.name, response: data },
           });
         }
-        result = await chat.sendMessage(responseParts);
+        result = await withTimeout(
+          chat.sendMessage(responseParts),
+          VERTEX_CALL_TIMEOUT_MS,
+          'Vertex AI',
+        );
         accumulate(result.response.usageMetadata);
       }
 
@@ -343,7 +405,11 @@ export class AiService implements OnModuleInit {
       let lastResponse: import('@google-cloud/vertexai').GenerateContentResponse | null = null;
 
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-        const streamResult = await chat.sendMessageStream(pending);
+        const streamResult = await withTimeout(
+          chat.sendMessageStream(pending),
+          VERTEX_CALL_TIMEOUT_MS,
+          'Vertex AI (stream)',
+        );
 
         for await (const chunk of streamResult.stream) {
           const text = (chunk.candidates?.[0]?.content?.parts ?? [])
@@ -352,7 +418,11 @@ export class AiService implements OnModuleInit {
           if (text) yield { type: 'delta', text };
         }
 
-        const aggregated = await streamResult.response;
+        const aggregated = await withTimeout(
+          streamResult.response,
+          VERTEX_CALL_TIMEOUT_MS,
+          'Vertex AI (respuesta agregada)',
+        );
         lastResponse = aggregated;
         accumulate(aggregated.usageMetadata);
 
