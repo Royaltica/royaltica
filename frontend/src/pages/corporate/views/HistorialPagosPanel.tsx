@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronRight, X, Download, AlertTriangle, ChevronLeft } from 'lucide-react';
-import { api, type Paginated, type PaymentDetail, type PaymentRow } from '../../../services/apiClient.ts';
+import { api, type PaymentRow } from '../../../services/apiClient.ts';
 import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -9,47 +10,42 @@ import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
 // Historial real de pagos (GET /payments): lista paginada con filtros por
 // rango de fechas y ruta, detalle expandible con las facturas (CFDI) de cada
 // pago y exportación CSV. Un "pago" agrupa 1..N facturas (pago global).
+//
+// Migrado a TanStack Query: la lista usa useQuery con un queryKey que
+// incluye los filtros (refetch automático al cambiar página/ruta/fechas,
+// con cache por combinación), y el detalle expandible es OTRO useQuery por
+// fila (enabled solo cuando esa fila está abierta) — reemplaza el dict
+// manual `details`/`detailLoading` de antes: TanStack ya cachea cada
+// pago consultado, así que reabrir una fila ya vista no vuelve a pedir nada.
 export function HistorialPagosPanel() {
   const [page, setPage] = React.useState(1);
   const [dateFrom, setDateFrom] = React.useState('');
   const [dateTo, setDateTo] = React.useState('');
   const [route, setRoute] = React.useState<'' | 'TRANSFER' | 'CREDIT'>('');
-  const [result, setResult] = React.useState<Paginated<PaymentRow> | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
   const [expanded, setExpanded] = React.useState<string | null>(null);
-  const [details, setDetails] = React.useState<Record<string, PaymentDetail>>({});
-  const [detailLoading, setDetailLoading] = React.useState<string | null>(null);
   const [exporting, setExporting] = React.useState(false);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    api
-      .getPayments({
+  const { data: result, isLoading: loading, error: queryError } = useQuery({
+    queryKey: ['payments', { page, route, dateFrom, dateTo }],
+    queryFn: () =>
+      api.getPayments({
         page,
         limit: 10,
         route: route || undefined,
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
-      })
-      .then(res => { if (!cancelled) setResult(res); })
-      .catch(err => { if (!cancelled) setError(err.message ?? 'No se pudo cargar el historial de pagos.'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [page, route, dateFrom, dateTo]);
+      }),
+  });
+  const error = queryError instanceof Error ? queryError.message : queryError ? 'No se pudo cargar el historial de pagos.' : null;
+
+  const { data: detail, isLoading: detailLoading } = useQuery({
+    queryKey: ['payment', expanded],
+    queryFn: () => api.getPayment(expanded as string),
+    enabled: expanded !== null,
+  });
 
   const toggleDetail = (id: string) => {
-    if (expanded === id) { setExpanded(null); return; }
-    setExpanded(id);
-    if (!details[id]) {
-      setDetailLoading(id);
-      api.getPayment(id)
-        .then(d => setDetails(prev => ({ ...prev, [id]: d })))
-        .catch(() => undefined)
-        .finally(() => setDetailLoading(null));
-    }
+    setExpanded(prev => (prev === id ? null : id));
   };
 
   const handleExport = async () => {
@@ -158,7 +154,9 @@ export function HistorialPagosPanel() {
             {rows.map(p => {
               const isOpen = expanded === p.id;
               const st = PAY_STATUS[p.status];
-              const detail = details[p.id];
+              // `detail` (del useQuery de arriba) solo corresponde a la fila
+              // actualmente expandida — para las demás filas queda undefined.
+              const rowDetail = isOpen ? detail : undefined;
               return (
                 <div key={p.id}>
                   <div className="flex items-center gap-4 px-6 py-4 hover:bg-brand-gold/5 transition-all cursor-pointer group" onClick={() => toggleDetail(p.id)}>
@@ -181,13 +179,13 @@ export function HistorialPagosPanel() {
                     {isOpen && (
                       <motion.div initial={{height:0,opacity:0}} animate={{height:'auto',opacity:1}} exit={{height:0,opacity:0}} className="overflow-hidden bg-brand-bone/40">
                         <div className="ml-10 mr-6 mb-3 divide-y divide-brand-sand/10 rounded-2xl overflow-hidden border border-brand-sand/20">
-                          {detailLoading === p.id && !detail && (
+                          {detailLoading && !rowDetail && (
                             <div className="px-5 py-4 bg-white/60 flex items-center gap-3 text-[10px] text-brand-ink/40">
                               <motion.div animate={{rotate:360}} transition={{repeat:Infinity,duration:1,ease:'linear'}} className="w-3 h-3 border-2 border-brand-ink/20 border-t-brand-gold rounded-full"/>
                               Cargando facturas del pago…
                             </div>
                           )}
-                          {detail?.invoices.map(inv => (
+                          {rowDetail?.invoices.map(inv => (
                             <div key={inv.id} className="flex items-center gap-4 px-5 py-3 bg-white/60 hover:bg-brand-gold/5 transition-all">
                               <div className="w-px h-4 bg-brand-sand/40"/>
                               <div className="flex-1 grid grid-cols-3 gap-4">
@@ -200,10 +198,10 @@ export function HistorialPagosPanel() {
                               </div>
                             </div>
                           ))}
-                          {detail && (
+                          {rowDetail && (
                             <div className="px-5 py-2 bg-brand-bone/60 text-[9px] text-brand-ink/40 flex items-center justify-between">
-                              <span>{detail.creator ? `Creado por ${detail.creator.name}` : ''}{detail.notes ? ` · ${detail.notes}` : ''}</span>
-                              <span className="font-bold">{detail.invoices.length} CFDI · {CURRENCY_FORMATTER.format(detail.totalAmount)}</span>
+                              <span>{rowDetail.creator ? `Creado por ${rowDetail.creator.name}` : ''}{rowDetail.notes ? ` · ${rowDetail.notes}` : ''}</span>
+                              <span className="font-bold">{rowDetail.invoices.length} CFDI · {CURRENCY_FORMATTER.format(rowDetail.totalAmount)}</span>
                             </div>
                           )}
                         </div>

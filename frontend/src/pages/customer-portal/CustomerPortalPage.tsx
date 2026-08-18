@@ -1,8 +1,9 @@
 import React from 'react';
 import { useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion } from 'motion/react';
 import { AlertTriangle, CheckCircle2, Clock, FileText, Loader2, ShieldCheck } from 'lucide-react';
-import { api, type CustomerPortalData, type CustomerPortalInvoice } from '../../services/apiClient.ts';
+import { api, type CustomerPortalInvoice } from '../../services/apiClient.ts';
 import { getCurrencyFormatter, getDateFormatter } from '../../utils/locale.ts';
 
 /**
@@ -112,88 +113,93 @@ const InvoiceRow: React.FC<InvoiceRowProps> = ({
 
 export function CustomerPortalPage() {
   const { token } = useParams<{ token: string }>();
-  const [data, setData] = React.useState<CustomerPortalData | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [notice, setNotice] = React.useState<string | null>(null);
+  const [actionError, setActionError] = React.useState<string | null>(null);
   const [markingId, setMarkingId] = React.useState<string | null>(null);
 
   const locale = 'en-CA'; // Tradespace opera en Canadá; sin branding propio aún cargado por org aquí.
 
-  const load = React.useCallback(async () => {
-    if (!token) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await api.getCustomerPortalData(token);
-      setData(result);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'No pudimos cargar tu información. El enlace puede haber vencido.',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: ['customerPortalData', token],
+    queryFn: () => api.getCustomerPortalData(token as string),
+    enabled: !!token,
+    retry: false,
+  });
 
-  React.useEffect(() => {
-    void load();
-  }, [load]);
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ['customerPortalData', token] });
 
-  const handleMarkPaid = async (invoiceId: string) => {
+  const markPaidMutation = useMutation({
+    mutationFn: (invoiceId: string) => api.markInvoicePaid(token as string, invoiceId),
+    onMutate: (invoiceId) => setMarkingId(invoiceId),
+    onSuccess: () => void invalidate(),
+    onError: (err) =>
+      setActionError(err instanceof Error ? err.message : 'No se pudo registrar tu confirmación.'),
+    onSettled: () => setMarkingId(null),
+  });
+
+  const promiseMutation = useMutation({
+    mutationFn: ({
+      invoiceId,
+      promisedDate,
+      note,
+    }: {
+      invoiceId: string;
+      promisedDate: string;
+      note: string;
+    }) => api.promiseToPay(token as string, invoiceId, { promisedDate, note }),
+    onMutate: ({ invoiceId }) => setMarkingId(invoiceId),
+    onSuccess: () => setNotice('Gracias. Registramos tu promesa de pago para revisión.'),
+    onError: (err) =>
+      setActionError(err instanceof Error ? err.message : 'No se pudo registrar la promesa de pago.'),
+    onSettled: () => setMarkingId(null),
+  });
+
+  const disputeMutation = useMutation({
+    mutationFn: ({ invoiceId, reason }: { invoiceId: string; reason: string }) =>
+      api.disputePortalInvoice(token as string, invoiceId, { reason }),
+    onMutate: ({ invoiceId }) => setMarkingId(invoiceId),
+    onSuccess: () => setNotice('Recibimos tu disputa. El equipo la revisará.'),
+    onError: (err) =>
+      setActionError(err instanceof Error ? err.message : 'No se pudo registrar la disputa.'),
+    onSettled: () => setMarkingId(null),
+  });
+
+  const handleMarkPaid = (invoiceId: string) => {
     if (!token) return;
-    setMarkingId(invoiceId);
-    try {
-      await api.markInvoicePaid(token, invoiceId);
-      setData((prev) =>
-        prev
-          ? {
-              ...prev,
-              invoices: prev.invoices.map((inv) =>
-                inv.id === invoiceId ? { ...inv, alreadyClaimedPaid: true } : inv,
-              ),
-            }
-          : prev,
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo registrar tu confirmación.');
-    } finally {
-      setMarkingId(null);
-    }
+    setActionError(null);
+    markPaidMutation.mutate(invoiceId);
   };
 
-  const handlePromise = async (invoiceId: string) => {
+  const handlePromise = (invoiceId: string) => {
     if (!token) return;
     const promisedDate = window.prompt('Fecha prometida de pago (YYYY-MM-DD):')?.trim();
     if (!promisedDate) return;
     const note = window.prompt('Nota opcional para el equipo de cobranza:')?.trim() ?? '';
-    setMarkingId(invoiceId);
-    try {
-      await api.promiseToPay(token, invoiceId, { promisedDate, note });
-      setNotice('Gracias. Registramos tu promesa de pago para revisión.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo registrar la promesa de pago.');
-    } finally {
-      setMarkingId(null);
-    }
+    setActionError(null);
+    promiseMutation.mutate({ invoiceId, promisedDate, note });
   };
 
-  const handleDispute = async (invoiceId: string) => {
+  const handleDispute = (invoiceId: string) => {
     if (!token) return;
     const reason = window.prompt('Cuéntanos brevemente el motivo de la disputa:')?.trim();
     if (!reason) return;
-    setMarkingId(invoiceId);
-    try {
-      await api.disputePortalInvoice(token, invoiceId, { reason });
-      setNotice('Recibimos tu disputa. El equipo la revisará.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo registrar la disputa.');
-    } finally {
-      setMarkingId(null);
-    }
+    setActionError(null);
+    disputeMutation.mutate({ invoiceId, reason });
   };
+
+  const error =
+    actionError ??
+    (queryError instanceof Error
+      ? queryError.message
+      : queryError
+        ? 'No pudimos cargar tu información. El enlace puede haber vencido.'
+        : null);
 
   if (!token) {
     return (
@@ -214,10 +220,16 @@ export function CustomerPortalPage() {
     );
   }
 
-  if (error || !data) {
+  if (queryError || !data) {
     return (
       <PortalShell>
-        <ErrorState message={error ?? 'No encontramos información para este enlace.'} />
+        <ErrorState
+          message={
+            queryError instanceof Error
+              ? queryError.message
+              : 'No encontramos información para este enlace.'
+          }
+        />
       </PortalShell>
     );
   }
