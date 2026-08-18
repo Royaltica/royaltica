@@ -6,6 +6,7 @@ import {
   DocumentType,
   DocumentStatus,
   InvoiceStatus,
+  InvoiceDirection,
   PaymentRoute,
   PaymentType,
   ForensicStatus,
@@ -116,6 +117,40 @@ const FORENSIC_STATUSES: ForensicStatus[] = [
   ForensicStatus.BLOCKED,
 ];
 
+// ─── Cuentas por Cobrar (CxC) — organización canadiense de ejemplo ───────
+// Royáltica también sirve a organizaciones tipo Tradespace (cobranza/AR
+// fuera de México): Customer en vez de Supplier, Invoice con
+// direction=RECEIVABLE, moneda CAD. Canadá no tiene CFDI/SAT, así que
+// cfdiUuid/rfcEmisor/rfcReceptor (requeridos a nivel de columna en Invoice)
+// llevan valores sintéticos — es lo mismo que hace el backend hoy para
+// datos no-mexicanos, documentado en docs/plan-100-funcional.md.
+const CUSTOMER_SEED = [
+  {
+    name: 'Northwind Traders',
+    rfc: 'CA-BN-123456789',
+    legalName: 'Northwind Traders Ltd.',
+    email: 'ap@northwindtraders.ca',
+    category: 'Retail',
+    creditLimitDays: 30,
+  },
+  {
+    name: 'Maple Ridge Logistics',
+    rfc: 'CA-BN-987654321',
+    legalName: 'Maple Ridge Logistics Inc.',
+    email: 'accounts@mapleridge.ca',
+    category: 'Logística',
+    creditLimitDays: 45,
+  },
+  {
+    name: 'Harbourfront Construction',
+    rfc: 'CA-BN-555112233',
+    legalName: 'Harbourfront Construction Group Inc.',
+    email: 'billing@harbourfrontcg.ca',
+    category: 'Construcción',
+    creditLimitDays: 60,
+  },
+];
+
 async function main(): Promise<void> {
   console.log('🌱 Limpiando datos previos...');
   // Orden respetando FKs
@@ -126,6 +161,9 @@ async function main(): Promise<void> {
   await prisma.payment.deleteMany();
   await prisma.invoice.deleteMany();
   await prisma.supplierDocument.deleteMany();
+  // CustomerPortalAccess tiene onDelete: Cascade desde Customer, así que se
+  // limpia solo al borrar los customers — no hace falta un deleteMany aparte.
+  await prisma.customer.deleteMany();
   await prisma.user.deleteMany();
   await prisma.supplier.deleteMany();
   await prisma.organization.deleteMany();
@@ -284,11 +322,112 @@ async function main(): Promise<void> {
     });
   }
 
+  // ─── Organización CxC (Canadá) ─────────────────────────────
+  console.log('🍁 Creando organización canadiense (CxC)...');
+  const orgCA = await prisma.organization.create({
+    data: {
+      name: 'Tradespace Demo',
+      rfc: 'CA-BN-000000001',
+      legalName: 'Tradespace Demo Inc.',
+      locale: 'en-CA',
+      currency: 'CAD',
+      plan: Plan.ENTERPRISE,
+      settings: { costRatio: 0.6, opexRatio: 0.18, taxRatio: 0.26 },
+      isActive: true,
+    },
+  });
+
+  await prisma.user.create({
+    data: {
+      firebaseUid: 'seed-ca-admin-uid',
+      organizationId: orgCA.id,
+      role: UserRole.CORPORATE_ADMIN,
+      email: 'director@tradespacedemo.ca',
+      name: 'AR Director',
+      isActive: true,
+      status: UserStatus.ACTIVE,
+      permissions: [],
+    },
+  });
+
+  console.log('🧑‍💼 Creando clientes (CxC)...');
+  const customers = [];
+  for (const c of CUSTOMER_SEED) {
+    const customer = await prisma.customer.create({
+      data: {
+        organizationId: orgCA.id,
+        name: c.name,
+        rfc: c.rfc,
+        legalName: c.legalName,
+        email: c.email,
+        category: c.category,
+        creditLimitDays: c.creditLimitDays,
+        isActive: true,
+      },
+    });
+    customers.push(customer);
+  }
+
+  console.log('🧾 Creando facturas por cobrar (CAD)...');
+  // Estatus variados para poder probar aging/riesgo/DSO con datos reales:
+  // algunas pagadas, algunas por vencer, algunas ya vencidas por >30 días.
+  const receivableStatuses: InvoiceStatus[] = [
+    InvoiceStatus.PAID,
+    InvoiceStatus.PENDING,
+    InvoiceStatus.PENDING,
+    InvoiceStatus.APPROVED,
+    InvoiceStatus.PENDING,
+  ];
+  for (let i = 0; i < 15; i++) {
+    const customer = customers[i % customers.length];
+    const status = receivableStatuses[i % receivableStatuses.length];
+    const subtotal = 8_000 + i * 950;
+    const tax = Math.round(subtotal * 0.13); // HST aprox. (Ontario)
+    const total = subtotal + tax;
+    const isPaid = status === InvoiceStatus.PAID;
+    // Mezcla de vencimientos: algunas en el futuro (al corriente), algunas
+    // ya vencidas por distintos rangos de días (para poblar cubetas de aging).
+    const dueInDays = [20, 10, -5, -35, -65][i % 5];
+
+    await prisma.invoice.create({
+      data: {
+        organizationId: orgCA.id,
+        direction: InvoiceDirection.RECEIVABLE,
+        customerId: customer.id,
+        folio: `AR-${3000 + i}`,
+        // Canadá no tiene CFDI/SAT: UUID sintético con el mismo formato que
+        // exige la columna (única globalmente), y RFC emisor/receptor con el
+        // "Business Number" en vez del RFC mexicano — ver
+        // docs/plan-100-funcional.md, sección Canadá, sobre por qué esto
+        // hoy solo es posible desde el seed (Prisma) y no vía la API
+        // pública (CreateCustomerDto/CreateReceivableDto exigen formato
+        // RFC/CFDI mexicano).
+        cfdiUuid: `SEED-CA-${String(i).padStart(4, '0')}-${customer.rfc}`,
+        rfcEmisor: orgCA.rfc,
+        rfcReceptor: customer.rfc,
+        subtotal,
+        iva: tax,
+        total,
+        currency: 'CAD',
+        date: daysFromNow(-(30 - dueInDays)),
+        dueDate: daysFromNow(dueInDays),
+        status,
+        poNumber: `PO-CA-${4000 + i}`,
+        description: `Servicios facturados a ${customer.name}`,
+        paidDate: isPaid ? daysFromNow(dueInDays - 3) : null,
+        forensicStatus: ForensicStatus.VALIDATED,
+        signatures: isPaid ? 2 : 0,
+      },
+    });
+  }
+
   console.log('✅ Seed completado:');
-  console.log(`   - 1 organización (${org.name})`);
-  console.log('   - 3 usuarios (admin, analista, proveedor)');
-  console.log(`   - ${suppliers.length} proveedores con expedientes KYC mixtos`);
-  console.log('   - 20 facturas con estatus y forensicStatus variados');
+  console.log(`   - 2 organizaciones: CxP México (${org.name}) y CxC Canadá (${orgCA.name})`);
+  console.log('   - 3 usuarios CxP (admin, analista, proveedor) + 1 admin CxC');
+  console.log(`   - ${suppliers.length} proveedores con expedientes KYC mixtos (CxP)`);
+  console.log('   - 20 facturas por pagar con estatus y forensicStatus variados (CxP, MXN)');
+  console.log(`   - ${customers.length} clientes CxC (Canadá)`);
+  console.log('   - 15 facturas por cobrar con aging variado (CxC, CAD)');
   console.log('   - 5 notificaciones');
 }
 
