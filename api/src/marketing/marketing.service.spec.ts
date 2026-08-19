@@ -5,6 +5,16 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
+// El render real de la plantilla React (@react-email/render) hace un
+// dynamic import interno que requiere --experimental-vm-modules bajo el VM
+// sandbox de Jest (no aplica al runtime real de Node en producción — se
+// verificó por separado con tsx). Se mockea aquí porque un test unitario de
+// MarketingService no debe depender del motor de renderizado de plantillas;
+// eso lo cubre el render manual/inspección directa de la plantilla.
+jest.mock('../email/templates/render', () => ({
+  renderEmail: jest.fn().mockResolvedValue({ html: '<p>mock</p>', text: 'mock' }),
+}));
+
 /**
  * Prueba del flujo real que pidió José: "si un externo se quiere registrar
  * (pide una demo / contacta), que le llegue correo a él Y a nosotros".

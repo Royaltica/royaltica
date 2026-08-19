@@ -5,6 +5,9 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { postToSlack } from '../common/slack-notifier';
+import { renderEmail } from '../email/templates/render';
+import { DemoConfirmationEmail } from '../email/templates/DemoConfirmationEmail';
+import { ContactConfirmationEmail } from '../email/templates/ContactConfirmationEmail';
 import type { ScheduleDemoDto } from './dto/schedule-demo.dto';
 import type { ContactDto } from './dto/contact.dto';
 
@@ -78,15 +81,9 @@ export class MarketingService {
         this.logger.error(`Fallo enviando correo interno de demo: ${err}`),
       );
 
-    // Confirmación al usuario
-    await this.email
-      .send({
-        to: dto.email,
-        subject: `Recibimos tu solicitud de demo · ${this.brandName}`,
-        html: this.demoConfirmationHtml(dto),
-        text: this.demoConfirmationText(dto),
-      })
-      .catch(() => undefined);
+    // Confirmación al usuario (plantilla React reutilizable — ver
+    // ../email/templates/DemoConfirmationEmail.tsx).
+    await this.sendDemoConfirmation(dto);
 
     // Notificación in-app a superadmins
     await this.notifySuperadmins(
@@ -163,14 +160,7 @@ export class MarketingService {
         this.logger.error(`Fallo enviando correo interno de contacto: ${err}`),
       );
 
-    await this.email
-      .send({
-        to: dto.email,
-        subject: `Recibimos tu mensaje · ${this.brandName}`,
-        html: this.contactConfirmationHtml(dto),
-        text: this.contactConfirmationText(dto),
-      })
-      .catch(() => undefined);
+    await this.sendContactConfirmation(dto);
 
     await this.notifySuperadmins(
       'Nuevo mensaje de contacto',
@@ -211,6 +201,59 @@ export class MarketingService {
       `[LEAD CONTACT] ${dto.email} — id=${lead.id}`,
     );
     return { ok: true };
+  }
+
+  /**
+   * Renderiza y envía la confirmación de demo con la plantilla React
+   * (DemoConfirmationEmail). Nunca lanza: un fallo de render o de envío no
+   * debe tumbar el flujo de captura del lead (mismo criterio que el resto
+   * de correos de este servicio).
+   */
+  private async sendDemoConfirmation(dto: ScheduleDemoDto): Promise<void> {
+    try {
+      const { html, text } = await renderEmail(
+        DemoConfirmationEmail({
+          name: dto.name,
+          company: dto.company,
+          email: dto.email,
+          preferredDate: dto.preferredDate,
+          preferredTime: dto.preferredTime,
+        }),
+      );
+      await this.email.send({
+        to: dto.email,
+        subject: `Recibimos tu solicitud de demo · ${this.brandName}`,
+        html,
+        text,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Fallo renderizando/enviando confirmación de demo: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  /** Renderiza y envía la confirmación de contacto con la plantilla React. */
+  private async sendContactConfirmation(dto: ContactDto): Promise<void> {
+    try {
+      const { html, text } = await renderEmail(
+        ContactConfirmationEmail({ name: dto.name, message: dto.message }),
+      );
+      await this.email.send({
+        to: dto.email,
+        subject: `Recibimos tu mensaje · ${this.brandName}`,
+        html,
+        text,
+      });
+    } catch (err) {
+      this.logger.error(
+        `Fallo renderizando/enviando confirmación de contacto: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   private async notifySuperadmins(
@@ -288,45 +331,6 @@ export class MarketingService {
       .join('\n');
   }
 
-  private demoConfirmationHtml(d: ScheduleDemoDto): string {
-    return `<!doctype html><meta charset="utf-8"/>
-<div style="font-family:system-ui,-apple-system,sans-serif;line-height:1.6;color:#111;max-width:560px;margin:0 auto;padding:32px 24px">
-  <div style="text-align:center;margin-bottom:24px">
-    <div style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#C9A961">Royáltica</div>
-    <h1 style="margin:12px 0 0;font-family:Georgia,serif;font-size:28px;font-weight:400">Hola ${escapeHtml(firstName(d.name))} 👋</h1>
-  </div>
-  <p>Gracias por tu interés en <strong>Royáltica</strong>. Recibimos tu solicitud de demo y nuestro equipo te contactará dentro de las próximas <strong>24 horas hábiles</strong> para coordinar la sesión${
-    d.preferredDate ? ` (tomamos en cuenta tu preferencia del <strong>${escapeHtml(d.preferredDate)}${d.preferredTime ? ' ' + escapeHtml(d.preferredTime) : ''}</strong>)` : ''
-  }.</p>
-  <p>En la demo verás:</p>
-  <ul style="padding-left:20px">
-    <li>Cómo Royáltica orquesta el flujo de aprobación de facturas y REP.</li>
-    <li>Automatización de DIOT y validación 69-B contra el SAT.</li>
-    <li>Portal de proveedores y auditoría forense con IA.</li>
-  </ul>
-  <p>Si necesitas urgencia, puedes responder directo a este correo.</p>
-  <p style="margin-top:32px">Un abrazo,<br/>El equipo de Royáltica</p>
-  <hr style="border:none;border-top:1px solid #E8E2D5;margin:32px 0"/>
-  <p style="font-size:11px;color:#999;text-align:center">
-    Este correo se envió a ${escapeHtml(d.email)} porque solicitaste una demo en royaltica.com.<br/>
-    Si no fuiste tú, ignora este mensaje.
-  </p>
-</div>`;
-  }
-
-  private demoConfirmationText(d: ScheduleDemoDto): string {
-    return `Hola ${firstName(d.name)},
-
-Gracias por tu interés en Royáltica. Recibimos tu solicitud de demo y te contactaremos en las próximas 24h hábiles para coordinar la sesión.
-
-En la demo verás cómo orquestamos el flujo de aprobación de facturas y REP, la automatización de DIOT y la validación 69-B, el portal de proveedores y la auditoría forense con IA.
-
-Si necesitas urgencia, responde directo a este correo.
-
-— El equipo de Royáltica
-`;
-  }
-
   private contactInternalHtml(d: ContactDto): string {
     return `<!doctype html><meta charset="utf-8"/>
 <div style="font-family:system-ui,-apple-system,sans-serif;line-height:1.5;color:#111;max-width:600px;margin:0 auto;padding:24px">
@@ -365,33 +369,6 @@ Si necesitas urgencia, responde directo a este correo.
       .join('\n');
   }
 
-  private contactConfirmationHtml(d: ContactDto): string {
-    return `<!doctype html><meta charset="utf-8"/>
-<div style="font-family:system-ui,-apple-system,sans-serif;line-height:1.6;color:#111;max-width:560px;margin:0 auto;padding:32px 24px">
-  <div style="text-align:center;margin-bottom:24px">
-    <div style="text-transform:uppercase;letter-spacing:3px;font-size:11px;color:#C9A961">Royáltica</div>
-    <h1 style="margin:12px 0 0;font-family:Georgia,serif;font-size:26px;font-weight:400">Recibimos tu mensaje</h1>
-  </div>
-  <p>Hola ${escapeHtml(firstName(d.name))}, gracias por escribirnos. Un miembro del equipo te responderá pronto al mismo correo desde el que enviaste tu consulta.</p>
-  <div style="margin:24px 0;padding:16px;background:#F8F5EF;border-radius:8px;font-size:13px;color:#555">
-    <strong style="display:block;text-transform:uppercase;letter-spacing:1px;font-size:10px;color:#999;margin-bottom:8px">Tu mensaje</strong>
-    <div style="white-space:pre-wrap">${escapeHtml(d.message)}</div>
-  </div>
-  <p style="margin-top:24px">— El equipo de Royáltica</p>
-</div>`;
-  }
-
-  private contactConfirmationText(d: ContactDto): string {
-    return `Hola ${firstName(d.name)},
-
-Recibimos tu mensaje. Un miembro del equipo te responderá pronto.
-
-Tu mensaje:
-${d.message}
-
-— El equipo de Royáltica
-`;
-  }
 }
 
 function row(label: string, value: string): string {
@@ -399,10 +376,6 @@ function row(label: string, value: string): string {
     <td style="padding:8px 12px 8px 0;color:#666;font-size:12px;text-transform:uppercase;letter-spacing:1px;white-space:nowrap;vertical-align:top">${escapeHtml(label)}</td>
     <td style="padding:8px 0;font-size:14px;color:#111">${value}</td>
   </tr>`;
-}
-
-function firstName(full: string): string {
-  return full.trim().split(/\s+/)[0] ?? full;
 }
 
 function escapeHtml(s: string): string {
