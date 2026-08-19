@@ -7,7 +7,7 @@ import {
 import { auth } from '../../../lib/firebase.ts';
 import { MOCK_SUPPLIERS, type Invoice } from '../../../types.ts';
 import { api, isRealId } from '../../../services/apiClient.ts';
-import { auditInvoice, batchAuditInvoices, type ForensicAuditResult } from '../../../services/geminiService.ts';
+import { runRealAudit, type ForensicAuditResult } from '../../../services/auditAdapter.ts';
 import { AuthorizerService, ClarificationService, SupplierMessageService } from '../../../services/mockServices.ts';
 import { CURRENCY_FORMATTER, getPriorityInfo, isInvoiceFullyValidated } from '../../../utils/format.ts';
 import type { DocumentFile } from './SupplierDirectoryView.tsx';
@@ -80,28 +80,33 @@ export function AuditsView({
 
     const stats = { validated: 0, discrepancy: 0, blocked: 0 };
 
-    await batchAuditInvoices(
-      pendingForBatch,
-      invoices,
-      MOCK_SUPPLIERS,
-      (completed, total, current, result) => {
-        setBatchProgress({ completed, total });
-        if (result.status === 'VALIDATED') stats.validated++;
-        else if (result.status === 'DISCREPANCY') stats.discrepancy++;
-        else stats.blocked++;
+    // Auditoría REAL en el backend, una factura a la vez (mismo patrón
+    // secuencial que antes tenía batchAuditInvoices, para no saturar al
+    // backend/SAT con llamadas en paralelo). Cada auditoría corre y
+    // persiste en el backend vía runRealAudit → POST /invoices/:id/audit.
+    for (let i = 0; i < pendingForBatch.length; i++) {
+      const current = pendingForBatch[i];
+      const result = await runRealAudit(current);
+      setBatchProgress({ completed: i + 1, total: pendingForBatch.length });
+      if (result.status === 'VALIDATED') stats.validated++;
+      else if (result.status === 'DISCREPANCY') stats.discrepancy++;
+      else stats.blocked++;
 
-        onUpdateInvoice(current.id, {
-          status: result.status === 'VALIDATED' ? 'audited' : current.status,
-          auditScore: result.score,
-          auditAnalysis: result.analysis,
-          forensicStatus: result.status,
-          forensicSolution: result.solution,
-          signatures: result.status === 'VALIDATED' ? 1 : 0,
-          satStatus: result.satResult?.estado as any || 'Pendiente',
-          satVerifiedAt: new Date().toISOString(),
-        });
+      onUpdateInvoice(current.id, {
+        status: result.status === 'VALIDATED' ? 'audited' : current.status,
+        auditScore: result.score,
+        auditAnalysis: result.analysis,
+        forensicStatus: result.status,
+        forensicSolution: result.solution,
+        signatures: result.status === 'VALIDATED' ? 1 : 0,
+        satStatus: result.satResult?.estado as any || 'Pendiente',
+        satVerifiedAt: new Date().toISOString(),
+      });
+      // Pausa breve entre facturas para no golpear al backend/SAT de golpe.
+      if (i < pendingForBatch.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
       }
-    );
+    }
 
     setBatchResults({ ...stats });
     setIsBatchAuditing(false);

@@ -8,8 +8,11 @@ import {
 import type { User as FirebaseUser } from 'firebase/auth';
 import { MOCK_INVOICES, MOCK_SUPPLIERS, type Invoice } from '../../types.ts';
 import { api, isRealId } from '../../services/apiClient.ts';
-import { auditInvoice, type ForensicAuditResult, type ChatMessage, type OperationsContext } from '../../services/geminiService.ts';
+import { runRealAudit, type ForensicAuditResult } from '../../services/auditAdapter.ts';
 import { AuthorizerService } from '../../services/mockServices.ts';
+
+/** Mensaje del chat con el asistente de IA (backend /ai/chat). */
+type ChatMessage = { role: 'user' | 'assistant'; content: string };
 import { DEFAULT_BUDGET, isInvoiceFullyValidated, getAIRecommendation } from '../../utils/format.ts';
 import { NotificationBell } from '../../components/NotificationBell.tsx';
 import { SidebarLink } from '../../components/SidebarLink.tsx';
@@ -118,42 +121,6 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
       /* el feedback nunca debe romper la experiencia del chat */
     }
   }, [chatFeedback, globalChatMessages]);
-
-  // Build operations context
-  const buildGlobalOpsContext = React.useCallback((): OperationsContext => {
-    const pending = invoices.filter(i => i.status !== 'paid' && i.status !== 'rejected');
-    const paid = invoices.filter(i => i.status === 'paid');
-    const today = new Date();
-    const overdueCount = invoices.filter(i => {
-      if (i.status === 'paid' || i.status === 'rejected') return false;
-      return Math.floor((today.getTime() - new Date(i.date).getTime()) / (1000 * 60 * 60 * 24)) > 30;
-    }).length;
-    const fintechTotal = invoices.filter(i => i.paymentRoute === 'fintech').reduce((s, i) => s + i.amount, 0);
-    const cashTotal = invoices.filter(i => i.paymentRoute === 'cash').reduce((s, i) => s + i.amount, 0);
-    const fullyValidated = invoices.filter(i => i.forensicStatus === 'VALIDATED' && (i.signatures || 0) >= 2).length;
-    const partiallyValidated = invoices.filter(i => i.forensicStatus === 'VALIDATED' && (i.signatures || 0) < 2).length;
-    const pendingSignatures = invoices.filter(i => i.forensicStatus === 'VALIDATED').reduce((s, i) => s + Math.max(0, 2 - (i.signatures || 0)), 0);
-    const factorajeRequests = invoices.filter(i => i.paymentRoute === 'fintech' && i.status === 'paid').map(i => ({
-      provider: i.provider, amount: i.amount, status: 'aprobada', rate: 2.1,
-    }));
-    return {
-      invoices: invoices.map(i => ({ id: i.id, provider: i.provider, amount: i.amount, date: i.date, status: i.status, description: i.description, auditScore: i.auditScore, paymentRoute: i.paymentRoute, forensicStatus: i.forensicStatus, signatures: i.signatures, poNumber: i.poNumber, paymentType: i.paymentType })),
-      suppliers: MOCK_SUPPLIERS.map(s => ({ name: s.name, rfc: s.rfc, category: s.category, isApproved: s.isApproved, seniorityYears: s.seniorityYears })),
-      totalBudget,
-      pendingAmount: pending.reduce((s, i) => s + i.amount, 0),
-      paidAmount: paid.reduce((s, i) => s + i.amount, 0),
-      cashTotal, overdueCount, fintechTotal,
-      auditStats: {
-        validated: invoices.filter(i => i.forensicStatus === 'VALIDATED').length,
-        discrepancy: invoices.filter(i => i.forensicStatus === 'DISCREPANCY').length,
-        blocked: invoices.filter(i => i.forensicStatus === 'BLOCKED').length,
-        pending: invoices.filter(i => !i.forensicStatus && i.status !== 'paid').length,
-      },
-      validationStats: { fullyValidated, partiallyValidated, pendingSignatures },
-      factorajeRequests,
-      treasuryAvailable: totalBudget * 0.6,
-    };
-  }, [invoices, totalBudget]);
 
   const handleGlobalChatSend = React.useCallback(async () => {
     if (!globalChatInput.trim() || globalChatLoading) return;
@@ -281,18 +248,6 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
       setAuditResult(null);
     }
   };
-
-  // Persiste la auditoría forense en el backend (PENDING → AUDITED + score).
-  // Fire-and-forget: la UI conserva su flujo/animación local; esto solo hace
-  // que la validación quede guardada en Postgres y sobreviva a recargas.
-  // Si la factura es un mock (sin UUID real) o el backend rechaza la
-  // transición, no se rompe nada — la experiencia local sigue igual.
-  const persistAudit = React.useCallback((id: string) => {
-    if (!isRealId(id)) return;
-    api
-      .auditInvoice(id)
-      .catch((err) => console.warn('No se pudo persistir la auditoría:', err.message));
-  }, []);
 
   // Persiste un cambio de estatus (hoy: el rechazo de una factura) en el
   // backend. Mismo patrón fire-and-forget + guarda de UUID: la UI no se
@@ -458,12 +413,10 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
                   for (const inv of toProcess) {
                     setSelectedInvoice(inv);
                     setIsAuditing(true);
-                    const supplier = MOCK_SUPPLIERS.find(s => s.id === inv.providerId || s.name === inv.provider);
-                    const [res] = await Promise.all([
-                      auditInvoice(inv, { poNumber: inv.poNumber }, invoices, supplier),
+                    const [result] = await Promise.all([
+                      runRealAudit(inv),
                       new Promise(resolve => setTimeout(resolve, 2500))
                     ]);
-                    const result = res as ForensicAuditResult;
                     setAuditResult(result);
                     setIsAuditing(false);
                     setInvoices(prev => prev.map(i => i.id === inv.id ? {
@@ -479,7 +432,8 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
                       satVerifiedAt: new Date().toISOString(),
                       satCancelable: result.satResult?.esCancelable || undefined,
                     } : i));
-                    persistAudit(inv.id);
+                    // Nota: ya no hace falta persistAudit(inv.id) aquí — runRealAudit()
+                    // arriba YA corrió y persistió la auditoría real en el backend.
                     // Brief pause between invoices so user sees each result
                     if (toProcess.indexOf(inv) < toProcess.length - 1) {
                       await new Promise(resolve => setTimeout(resolve, 800));
@@ -510,16 +464,14 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
                 auditResult={auditResult}
                 startAudit={async (inv) => {
                    setIsAuditing(true);
-                   const supplier = MOCK_SUPPLIERS.find(s => s.id === inv.providerId || s.name === inv.provider);
                    // Run audit with minimum 2.5s delay so animation is visible
-                   const [res] = await Promise.all([
-                     auditInvoice(inv, { poNumber: inv.poNumber }, invoices, supplier),
+                   const [result] = await Promise.all([
+                     runRealAudit(inv),
                      new Promise(resolve => setTimeout(resolve, 2500))
                    ]);
-                   setAuditResult(res as any);
+                   setAuditResult(result);
                    setIsAuditing(false);
 
-                   const result = res as ForensicAuditResult;
                    setInvoices(prev => prev.map(i => i.id === inv.id ? {
                      ...i,
                      status: result.status === 'VALIDATED' ? 'audited' : i.status,
@@ -532,7 +484,7 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
                      satVerifiedAt: new Date().toISOString(),
                      satCancelable: result.satResult?.esCancelable || undefined,
                    } : i));
-                   persistAudit(inv.id);
+                   // runRealAudit() ya persistió la auditoría real en el backend.
                  }}
                 routePayment={routePayment}
                 onUpdateInvoice={(id, updates) => {
@@ -545,12 +497,10 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
                   // Re-audit the invoice with animation, then approve
                   setSelectedInvoice(inv);
                   setIsAuditing(true);
-                  const supplier = MOCK_SUPPLIERS.find(s => s.id === inv.providerId || s.name === inv.provider);
-                  const [res] = await Promise.all([
-                    auditInvoice(inv, { poNumber: inv.poNumber }, invoices, supplier),
+                  const [result] = await Promise.all([
+                    runRealAudit(inv),
                     new Promise(resolve => setTimeout(resolve, 2500))
                   ]);
-                  const result = res as ForensicAuditResult;
                   setAuditResult(result);
                   setIsAuditing(false);
                   // Approve with exception regardless of re-audit result
@@ -566,7 +516,7 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
                     satVerifiedAt: new Date().toISOString(),
                     changeLog: [...(i.changeLog || []), { timestamp: new Date().toISOString(), user: 'Auditor', action: 'Aprobada con excepción', from: i.forensicStatus, to: 'VALIDATED', reason: 'Aprobación manual con respaldo' }]
                   } : i));
-                  persistAudit(inv.id);
+                  // runRealAudit() ya persistió la auditoría real en el backend.
                 }}
               />
           )}

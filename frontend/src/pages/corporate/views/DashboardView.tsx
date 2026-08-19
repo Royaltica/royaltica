@@ -12,12 +12,13 @@ import {
 } from 'recharts';
 import { MOCK_SUPPLIERS, type Invoice } from '../../../types.ts';
 import { api } from '../../../services/apiClient.ts';
-import { generateReport, type OperationsContext, type ReportType } from '../../../services/geminiService.ts';
 import { SupplierMessageService } from '../../../services/mockServices.ts';
 import { CURRENCY_FORMATTER, getPriorityInfo } from '../../../utils/format.ts';
 import { CreativeCard } from '../../../components/cards/CreativeCard.tsx';
 import { DemoModeNotice } from '../../../components/DemoModeNotice.tsx';
 import { FintechPaymentModal } from './FinancingView.tsx';
+
+type ReportType = 'executive' | 'anticorruption' | 'fiscal' | 'provider';
 
 export function DashboardView({
   invoices,
@@ -44,50 +45,38 @@ export function DashboardView({
   }, []);
 
   // ─── Report State ───
+  // Los reportes se generan con el asistente de IA del backend (/ai/chat):
+  // corre con Vertex AI del lado del servidor (la API key nunca llega al
+  // navegador) y sus herramientas leen datos EN VIVO acotados a la
+  // organización — más confiable que agregar datos ya cargados en el
+  // cliente (que además podían venir mezclados con MOCK_SUPPLIERS).
   const [showReportModal, setShowReportModal] = React.useState(false);
   const [reportType, setReportType] = React.useState<ReportType>('executive');
   const [reportContent, setReportContent] = React.useState<string | null>(null);
   const [reportLoading, setReportLoading] = React.useState(false);
 
-  // Build operations context for reports
-  const buildContext = React.useCallback((): OperationsContext => {
-    const pending = invoices.filter(i => i.status !== 'paid' && i.status !== 'rejected');
-    const paid = invoices.filter(i => i.status === 'paid');
-    const today = new Date();
-    const overdueCount = invoices.filter(i => {
-      if (i.status === 'paid' || i.status === 'rejected') return false;
-      return Math.floor((today.getTime() - new Date(i.date).getTime()) / (1000 * 60 * 60 * 24)) > 30;
-    }).length;
-    const fintechTotal = invoices.filter(i => i.paymentRoute === 'fintech').reduce((s, i) => s + i.amount, 0);
-    const cashTotal = invoices.filter(i => i.paymentRoute === 'cash').reduce((s, i) => s + i.amount, 0);
-    const fullyValidated = invoices.filter(i => i.forensicStatus === 'VALIDATED' && (i.signatures || 0) >= 2).length;
-    const partiallyValidated = invoices.filter(i => i.forensicStatus === 'VALIDATED' && (i.signatures || 0) < 2).length;
-    const pendingSignatures = invoices.filter(i => i.forensicStatus === 'VALIDATED').reduce((s, i) => s + Math.max(0, 2 - (i.signatures || 0)), 0);
-    const factorajeRequests = invoices.filter(i => i.paymentRoute === 'fintech' && i.status === 'paid').map(i => ({
-      provider: i.provider, amount: i.amount, status: 'aprobada', rate: 2.1,
-    }));
-    return {
-      invoices: invoices.map(i => ({ id: i.id, provider: i.provider, amount: i.amount, date: i.date, status: i.status, description: i.description, auditScore: i.auditScore, paymentRoute: i.paymentRoute, forensicStatus: i.forensicStatus, signatures: i.signatures, poNumber: i.poNumber, paymentType: i.paymentType })),
-      suppliers: MOCK_SUPPLIERS.map(s => ({ name: s.name, rfc: s.rfc, category: s.category, isApproved: s.isApproved, seniorityYears: s.seniorityYears })),
-      totalBudget, pendingAmount: pending.reduce((s, i) => s + i.amount, 0), paidAmount: paid.reduce((s, i) => s + i.amount, 0),
-      cashTotal, overdueCount, fintechTotal,
-      auditStats: { validated: invoices.filter(i => i.forensicStatus === 'VALIDATED').length, discrepancy: invoices.filter(i => i.forensicStatus === 'DISCREPANCY').length, blocked: invoices.filter(i => i.forensicStatus === 'BLOCKED').length, pending: invoices.filter(i => !i.forensicStatus && i.status !== 'paid').length },
-      validationStats: { fullyValidated, partiallyValidated, pendingSignatures },
-      factorajeRequests, treasuryAvailable: totalBudget * 0.6,
-    };
-  }, [invoices, totalBudget]);
+  const REPORT_PROMPTS: Record<ReportType, string> = {
+    executive:
+      'Genera un REPORTE EJECUTIVO DE TESORERÍA profesional para una junta directiva: resumen de cartera (pendiente/pagado), estado del presupuesto y tesorería disponible, alertas activas (facturas vencidas o bloqueadas), y recomendaciones priorizadas. Estructura: 1) Resumen Ejecutivo, 2) Estado de Cartera, 3) Alertas Activas, 4) Recomendaciones. Máximo 300 palabras, con negritas y viñetas.',
+    anticorruption:
+      'Genera un INFORME DE ALERTA ANTI-CORRUPCIÓN para supervisión gerencial: facturas vencidas (>30 días sin pago), proveedores afectados, el monto total comprometido, y acciones recomendadas. Tono formal de auditoría interna. Estructura: 1) Hallazgos, 2) Proveedores en riesgo, 3) Monto total comprometido, 4) Acciones recomendadas. Máximo 250 palabras.',
+    fiscal:
+      'Genera un REPORTE DE CUMPLIMIENTO FISCAL: estado de la auditoría por IA (validadas/discrepancias/bloqueadas), riesgos fiscales (proveedores en lista 69-B, CFDI no verificados ante el SAT), y recomendaciones. Estructura: 1) Estado de auditoría, 2) Riesgos fiscales, 3) Cumplimiento DIOT, 4) Recomendaciones. Máximo 250 palabras.',
+    provider:
+      'Identifica al proveedor con mayor monto pendiente actualmente y genera un ANÁLISIS de ese proveedor: perfil, historial de facturación, patrones detectados y nivel de riesgo. Estructura: 1) Perfil del proveedor, 2) Historial de facturación, 3) Patrones detectados, 4) Nivel de riesgo. Máximo 200 palabras.',
+  };
 
   const handleGenerateReport = React.useCallback(async () => {
     setReportLoading(true);
     setReportContent(null);
     try {
-      const content = await generateReport(reportType, buildContext());
-      setReportContent(content);
+      const { reply } = await api.aiChat(REPORT_PROMPTS[reportType]);
+      setReportContent(reply);
     } catch {
       setReportContent('Error al generar el reporte. Intenta de nuevo.');
     }
     setReportLoading(false);
-  }, [reportType, buildContext]);
+  }, [reportType]);
 
   // Filter invoices based on timeframe (ref date 2024-04-27)
   const filteredInvoices = React.useMemo(() => {
