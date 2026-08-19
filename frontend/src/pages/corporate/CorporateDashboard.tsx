@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, BarChart3, Building2, FileText, DollarSign, ShieldCheck, Activity,
@@ -10,9 +11,6 @@ import { MOCK_INVOICES, MOCK_SUPPLIERS, type Invoice } from '../../types.ts';
 import { api, isRealId } from '../../services/apiClient.ts';
 import { runRealAudit, type ForensicAuditResult } from '../../services/auditAdapter.ts';
 import { AuthorizerService } from '../../services/mockServices.ts';
-
-/** Mensaje del chat con el asistente de IA (backend /ai/chat). */
-type ChatMessage = { role: 'user' | 'assistant'; content: string };
 import { DEFAULT_BUDGET, isInvoiceFullyValidated, getAIRecommendation } from '../../utils/format.ts';
 import { NotificationBell } from '../../components/NotificationBell.tsx';
 import { SidebarLink } from '../../components/SidebarLink.tsx';
@@ -29,12 +27,56 @@ import { HistorialView } from './views/HistorialView.tsx';
 import { GrowthOpsView } from './views/GrowthOpsView.tsx';
 import { useOrgBranding } from '../../hooks/useOrgBranding.ts';
 
+/** Mensaje del chat con el asistente de IA (backend /ai/chat). */
+type ChatMessage = { role: 'user' | 'assistant'; content: string };
+
+type CorporateTab = 'dashboard' | 'suppliers' | 'audits' | 'pending_invoices' | 'receivables' | 'growth' | 'financing' | 'settings' | 'fiscal_audit' | 'contabilidad' | 'historial';
+const CORPORATE_TABS: CorporateTab[] = ['dashboard', 'suppliers', 'audits', 'pending_invoices', 'receivables', 'growth', 'financing', 'settings', 'fiscal_audit', 'contabilidad', 'historial'];
+/** Área de permisos (JWT) que gobierna cada pestaña — ver `canSee` abajo. */
+const TAB_AREA: Record<CorporateTab, string> = {
+  dashboard: 'dashboard',
+  suppliers: 'proveedores',
+  pending_invoices: 'finanzas',
+  audits: 'finanzas',
+  receivables: 'cxc',
+  growth: 'cxc',
+  fiscal_audit: 'estados',
+  contabilidad: 'estados',
+  historial: 'estados',
+  financing: 'factoraje',
+  settings: 'configuracion',
+};
+
 export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, permissions = [], role = '' }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, sessionStartedAt?: Date, permissions?: string[], role?: string }) {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'suppliers' | 'audits' | 'pending_invoices' | 'receivables' | 'growth' | 'financing' | 'settings' | 'fiscal_audit' | 'contabilidad' | 'historial'>('dashboard');
+  // La pestaña activa vive en la URL (react-router), no en useState: permite
+  // recargar, compartir el link, y usar atrás/adelante del navegador para
+  // moverse entre secciones del portal corporativo.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const pathTab = location.pathname.slice(1) as CorporateTab;
+  const activeTab: CorporateTab = CORPORATE_TABS.includes(pathTab) ? pathTab : 'dashboard';
+  const setActiveTab = React.useCallback(
+    (tab: CorporateTab) => navigate(`/${tab}`),
+    [navigate],
+  );
   // Filtro de pestañas por permisos del JWT. Admin ve todo; el operativo solo
   // las áreas que se le asignaron al invitarlo (comodín '*' = acceso total).
   const isFullAccess = role === 'CORPORATE_ADMIN' || role === 'SUPERADMIN' || permissions.includes('*');
   const canSee = (area: string) => isFullAccess || permissions.includes(area);
+
+  // Si la URL no corresponde a ninguna pestaña conocida (o el usuario no
+  // tiene permiso para verla), redirige a /dashboard en vez de mostrar una
+  // pantalla en blanco o dejar una pestaña oculta accesible solo por URL.
+  useEffect(() => {
+    if (!CORPORATE_TABS.includes(pathTab)) {
+      navigate('/dashboard', { replace: true });
+      return;
+    }
+    if (!canSee(TAB_AREA[pathTab]) && pathTab !== 'dashboard') {
+      navigate('/dashboard', { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathTab]);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => window.innerWidth < 900);
   // White label (Tradespace): nombre/logo/colores propios del tenant, con
   // fallback al look por defecto de Royáltica.

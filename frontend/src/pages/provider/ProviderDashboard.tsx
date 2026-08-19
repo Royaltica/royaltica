@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -17,8 +18,24 @@ import { ProviderPaymentsReal } from '../../features/provider/ProviderPaymentsRe
 import { ProviderFactorajeView } from '../../features/provider/ProviderFactorajeView.tsx';
 import { InvoiceDetailModal } from '../corporate/views/PendingInvoicesView.tsx';
 
+type ProviderTab = 'dashboard' | 'invoices' | 'payments' | 'factoraje' | 'profile' | 'settings';
+const PROVIDER_TABS: ProviderTab[] = ['dashboard', 'invoices', 'payments', 'factoraje', 'profile', 'settings'];
+
 export function ProviderDashboard({ user, supplier, onLogout, onBackToRole }: { user: FirebaseUser, supplier: Supplier, onLogout: () => void, onBackToRole: () => void }) {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'invoices' | 'payments' | 'factoraje' | 'profile' | 'settings'>('dashboard');
+  // La pestaña activa vive en la URL (react-router): permite recargar,
+  // compartir el link, y usar atrás/adelante del navegador.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const pathTab = location.pathname.slice(1) as ProviderTab;
+  const activeTab: ProviderTab = PROVIDER_TABS.includes(pathTab) ? pathTab : 'dashboard';
+  const setActiveTab = React.useCallback(
+    (tab: ProviderTab) => navigate(`/${tab}`),
+    [navigate],
+  );
+  useEffect(() => {
+    if (!PROVIDER_TABS.includes(pathTab)) navigate('/dashboard', { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathTab]);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => window.innerWidth < 900);
 
   // Facturas del proveedor: reales del backend (Portal del Proveedor) si hay

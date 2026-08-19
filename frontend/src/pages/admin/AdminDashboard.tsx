@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, LogOut, ChevronRight, FileText, X, Plus, ChevronLeft, Activity, Loader2, DollarSign, Crown, Users, Server, Gauge, Handshake, HeartPulse } from 'lucide-react';
 import type { User as FirebaseUser } from 'firebase/auth';
@@ -80,8 +81,24 @@ const fmtCostMxn = (n: number): string =>
   n === 0 ? '$0.00' : n < 1 ? `$${n.toFixed(4)}` : `$${n.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 
+type AdminTab = 'overview' | 'clients' | 'health' | 'activity' | 'leads';
+const ADMIN_TABS: AdminTab[] = ['overview', 'clients', 'health', 'activity', 'leads'];
+
 export function AdminDashboard({ user, onLogout, onBackToRole }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void }) {
-  const [adminTab, setAdminTab] = useState<'overview' | 'clients' | 'health' | 'activity' | 'leads'>('overview');
+  // La pestaña activa vive en la URL (react-router): permite recargar,
+  // compartir el link, y usar atrás/adelante del navegador.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const pathTab = location.pathname.slice(1) as AdminTab;
+  const adminTab: AdminTab = ADMIN_TABS.includes(pathTab) ? pathTab : 'overview';
+  const setAdminTab = React.useCallback(
+    (tab: AdminTab) => navigate(`/${tab}`),
+    [navigate],
+  );
+  useEffect(() => {
+    if (!ADMIN_TABS.includes(pathTab)) navigate('/overview', { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathTab]);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState<AdminTenant | null>(null);
 
