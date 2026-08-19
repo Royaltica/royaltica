@@ -11,6 +11,7 @@ import type { Request } from 'express';
 import type Stripe from 'stripe';
 import { Public } from '../auth/decorators/public.decorator';
 import { StripeService } from './stripe.service';
+import { BillingService } from '../billing/billing.service';
 
 /**
  * Endpoint público para recibir webhooks de Stripe.
@@ -24,7 +25,10 @@ import { StripeService } from './stripe.service';
 export class StripeWebhookController {
   private readonly logger = new Logger(StripeWebhookController.name);
 
-  constructor(private readonly stripe: StripeService) {}
+  constructor(
+    private readonly stripe: StripeService,
+    private readonly billing: BillingService,
+  ) {}
 
   @Public()
   @Post()
@@ -49,73 +53,51 @@ export class StripeWebhookController {
 
     this.logger.log(`Stripe event: ${event.type} [${event.id}]`);
 
-    switch (event.type) {
-      case 'checkout.session.completed':
-        await this.onCheckoutCompleted(event.data.object as Stripe.Checkout.Session);
-        break;
+    try {
+      switch (event.type) {
+        case 'checkout.session.completed':
+          await this.billing.applyCheckoutCompleted(
+            event.data.object as Stripe.Checkout.Session,
+          );
+          break;
 
-      case 'customer.subscription.updated':
-        await this.onSubscriptionUpdated(event.data.object as Stripe.Subscription);
-        break;
+        case 'customer.subscription.created':
+        case 'customer.subscription.updated':
+          await this.billing.applySubscriptionChange(
+            event.data.object as Stripe.Subscription,
+          );
+          break;
 
-      case 'customer.subscription.deleted':
-        await this.onSubscriptionDeleted(event.data.object as Stripe.Subscription);
-        break;
+        case 'customer.subscription.deleted':
+          await this.billing.applySubscriptionDeleted(
+            event.data.object as Stripe.Subscription,
+          );
+          break;
 
-      case 'invoice.payment_succeeded':
-        await this.onInvoicePaid(event.data.object as Stripe.Invoice);
-        break;
+        case 'invoice.payment_succeeded':
+          this.logger.log(`Factura pagada [${event.id}].`);
+          break;
 
-      case 'invoice.payment_failed':
-        await this.onInvoicePaymentFailed(event.data.object as Stripe.Invoice);
-        break;
+        case 'invoice.payment_failed':
+          await this.billing.applyInvoicePaymentFailed(
+            event.data.object as Stripe.Invoice,
+          );
+          break;
 
-      default:
-        this.logger.debug(`Evento no manejado: ${event.type}`);
+        default:
+          this.logger.debug(`Evento no manejado: ${event.type}`);
+      }
+    } catch (err) {
+      // Nunca se responde error a Stripe por un fallo de nuestro lado al
+      // procesar el evento (Stripe reintentaría indefinidamente el mismo
+      // webhook) — se registra para investigar y se confirma la recepción.
+      this.logger.error(
+        `Error procesando webhook ${event.type} [${event.id}]: ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
     }
 
     return { received: true };
-  }
-
-  // ─── Event Handlers ─────────────────────────────────────
-  // TODO: Conectar con OrganizationService para actualizar plan/status.
-
-  private async onCheckoutCompleted(
-    session: Stripe.Checkout.Session,
-  ): Promise<void> {
-    this.logger.log(
-      `Checkout completado: customer=${session.customer}, subscription=${session.subscription}`,
-    );
-    // Aquí se vincularía el stripeCustomerId y subscriptionId a la Organization.
-  }
-
-  private async onSubscriptionUpdated(
-    subscription: Stripe.Subscription,
-  ): Promise<void> {
-    this.logger.log(
-      `Suscripción actualizada: ${subscription.id} → status=${subscription.status}`,
-    );
-  }
-
-  private async onSubscriptionDeleted(
-    subscription: Stripe.Subscription,
-  ): Promise<void> {
-    this.logger.log(`Suscripción cancelada: ${subscription.id}`);
-    // Downgrade a plan free o desactivar features premium.
-  }
-
-  private async onInvoicePaid(invoice: Stripe.Invoice): Promise<void> {
-    this.logger.log(
-      `Factura pagada: ${invoice.id}, amount=${invoice.amount_paid}`,
-    );
-  }
-
-  private async onInvoicePaymentFailed(
-    invoice: Stripe.Invoice,
-  ): Promise<void> {
-    this.logger.warn(
-      `Pago fallido: invoice=${invoice.id}, customer=${invoice.customer}`,
-    );
-    // Notificar al admin de la organización.
   }
 }

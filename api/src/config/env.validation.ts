@@ -141,6 +141,11 @@ export const envSchema = z.object({
   STRIPE_SECRET_KEY: z.string().optional().default(''),
   STRIPE_WEBHOOK_SECRET: z.string().optional().default(''),
   STRIPE_PUBLISHABLE_KEY: z.string().optional().default(''),
+  // Price IDs de Stripe (Dashboard → Product catalog) que mapean a cada
+  // Plan interno. Sin definir, /billing/checkout-session solo puede crear
+  // sesiones para el plan cuyo price ID sí esté configurado.
+  STRIPE_PRICE_PRO: z.string().optional().default(''),
+  STRIPE_PRICE_ENTERPRISE: z.string().optional().default(''),
 
   // ── PostHog server-side analytics ──
   // Si POSTHOG_API_KEY está vacío, el SDK queda en modo no-op.

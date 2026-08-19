@@ -161,6 +161,19 @@ model Organization {
   updatedAt         DateTime  @updatedAt
   deletedAt         DateTime?
 
+  // ── Stripe (suscripción/facturación) ──
+  // Todos opcionales/nulos hasta que la organización pase por checkout al
+  // menos una vez. `subscriptionStatus` refleja el último evento de webhook
+  // recibido de Stripe (active/trialing/past_due/canceled/…) — NO se deriva
+  // de `plan` porque un `past_due` debe seguir mostrando el plan pagado
+  // (grace period) sin que el resto del código lo confunda con downgrade.
+  /// Id del customer de Stripe vinculado a esta organización (cus_...).
+  stripeCustomerId     String? @unique
+  /// Id de la suscripción activa/más reciente en Stripe (sub_...).
+  stripeSubscriptionId String?
+  /// Último `status` de Stripe recibido por webhook (ver Stripe.Subscription.status).
+  subscriptionStatus   String?
+
   users                  User[]
   suppliers              Supplier[]
   customers              Customer[]

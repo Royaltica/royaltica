@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { StripeService } from './stripe.service';
-import { StripeWebhookController } from './stripe-webhook.controller';
 
+// StripeWebhookController vive en BillingModule (necesita BillingService
+// para persistir lo que Stripe reporta) — este módulo solo expone el
+// wrapper del SDK de Stripe para quien lo necesite (hoy, BillingModule).
 @Module({
-  controllers: [StripeWebhookController],
   providers: [StripeService],
   exports: [StripeService],
 })

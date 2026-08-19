@@ -50,6 +50,7 @@ import { MarketingModule } from './marketing/marketing.module';
 import { SearchModule } from './search/search.module';
 import { PostHogModule } from './common/posthog/posthog.module';
 import { StripeModule } from './stripe/stripe.module';
+import { BillingModule } from './billing/billing.module';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 
 @Module({
@@ -128,6 +129,7 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     SearchModule,
     PostHogModule,
     StripeModule,
+    BillingModule,
   ],
   providers: [
     // Orden de guards globales: rate-limit → autenticación JWT.
