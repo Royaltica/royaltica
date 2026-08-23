@@ -53,7 +53,12 @@ export const envSchema = z.object({
   // Si VERTEX_PROJECT_ID está configurado, se usa Vertex AI en vez de GEMINI_API_KEY.
   VERTEX_PROJECT_ID: z.string().optional().default(''),
   VERTEX_LOCATION: z.string().optional().default('us-central1'),
+  // Ruta a un archivo JSON en disco (útil en desarrollo local).
   VERTEX_KEY_FILE: z.string().optional().default(''),
+  // Contenido completo del JSON de la cuenta de servicio, como string
+  // (recomendado en Railway u otras plataformas sin filesystem persistente
+  // fácil de montar). Si ambas están presentes, VERTEX_KEY_JSON gana.
+  VERTEX_KEY_JSON: z.string().optional().default(''),
 
   // Verificación CFDI ante el SAT.
   // 'mock' (default): valida formato sin llamar al SAT real.

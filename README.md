@@ -287,7 +287,7 @@ Validadas por Zod en `api/src/config/env.validation.ts` — si falta una obligat
 | `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | Firebase Admin (login real). Sin esto, las rutas de auth vía Firebase devuelven 503 |
 | `ALLOW_DEV_LOGIN` | `true` permite `POST /auth/dev-login` aunque `NODE_ENV=production` (ver [Login en desarrollo](#login-en-desarrollo)). **Apagar en cuanto haya login real** |
 | `GCS_BUCKET_NAME`, `GCS_KEY_FILE` | Google Cloud Storage (documentos KYC). Sin esto, los archivos se registran en modo stub (`local://`) |
-| `VERTEX_PROJECT_ID`, `VERTEX_LOCATION`, `VERTEX_KEY_FILE` | Vertex AI (asistente de IA + auditoría forense). Si falta `VERTEX_PROJECT_ID`, el chat de IA devuelve 503 y la auditoría usa solo heurísticas |
+| `VERTEX_PROJECT_ID`, `VERTEX_LOCATION`, `VERTEX_KEY_FILE`/`VERTEX_KEY_JSON` | Vertex AI (asistente de IA + auditoría forense). Si falta `VERTEX_PROJECT_ID`, el chat de IA devuelve 503 y la auditoría usa solo heurísticas. `VERTEX_KEY_FILE` es una ruta en disco (dev local); `VERTEX_KEY_JSON` es el contenido completo del JSON de la cuenta de servicio como string (recomendado en Railway) — si ambas están, gana `VERTEX_KEY_JSON` |
 | `GEMINI_API_KEY` | Alternativa legada a Vertex (API key directa de Gemini) |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Envío de correo real (invitaciones, alertas). Sin `RESEND_API_KEY`, los correos se registran sin enviarse |
 | `FACTORAJE_API_URL`, `FACTORAJE_API_KEY` | Proveedor externo de factoraje. Sin esto, las dispersiones se simulan en modo stub |

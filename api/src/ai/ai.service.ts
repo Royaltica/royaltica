@@ -13,6 +13,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { AiToolsService } from './ai-tools.service';
 import { AI_TOOL_DECLARATIONS } from './ai-tool.definitions';
 import { extractText, extractFunctionCalls } from '../gemini/vertex-response.util';
+import { buildVertexAuthOptions } from '../gemini/vertex-auth.util';
 import type { ChatDto } from './dto/chat.dto';
 import type { FeedbackDto } from './dto/feedback.dto';
 
@@ -213,6 +214,7 @@ export class AiService implements OnModuleInit {
     }
     const location = this.config.get('VERTEX_LOCATION', { infer: true });
     const keyFile = this.config.get('VERTEX_KEY_FILE', { infer: true });
+    const keyJson = this.config.get('VERTEX_KEY_JSON', { infer: true });
 
     const { VertexAI, HarmCategory, HarmBlockThreshold } = await import(
       '@google-cloud/vertexai'
@@ -220,7 +222,7 @@ export class AiService implements OnModuleInit {
     const client = new VertexAI({
       project,
       location,
-      googleAuthOptions: keyFile ? { keyFilename: keyFile } : undefined,
+      googleAuthOptions: buildVertexAuthOptions(keyJson, keyFile),
     });
     this.model = client.getGenerativeModel({
       model: this.modelName,

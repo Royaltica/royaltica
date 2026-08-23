@@ -5,6 +5,7 @@ import type { FunctionDeclaration } from '@google-cloud/vertexai';
 import type { Env } from '../config/env.validation';
 import { UsageService } from '../usage/usage.service';
 import { extractText, extractFunctionCalls } from './vertex-response.util';
+import { buildVertexAuthOptions } from './vertex-auth.util';
 
 /** Contexto opcional para registrar el costo (tokens) del llamado a Gemini. */
 export interface GeminiUsageContext {
@@ -47,12 +48,13 @@ export class GeminiService implements OnModuleInit {
     }
     const location = this.config.get('VERTEX_LOCATION', { infer: true });
     const keyFile = this.config.get('VERTEX_KEY_FILE', { infer: true });
+    const keyJson = this.config.get('VERTEX_KEY_JSON', { infer: true });
 
     const { VertexAI } = await import('@google-cloud/vertexai');
     const client = new VertexAI({
       project,
       location,
-      googleAuthOptions: keyFile ? { keyFilename: keyFile } : undefined,
+      googleAuthOptions: buildVertexAuthOptions(keyJson, keyFile),
     });
     this.model = client.getGenerativeModel({ model: this.modelName });
     this.logger.log(
