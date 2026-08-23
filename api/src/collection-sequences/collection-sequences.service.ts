@@ -11,6 +11,7 @@ import {
   type CollectionSequenceStep,
 } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { localHour, isBlackoutDate } from '../common/timezone.util';
 import { ActivityLogService } from '../activity/activity-log.service';
 import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
@@ -499,14 +500,23 @@ export class CollectionSequencesService {
     }
 
     // ── Guard rails de la política ──
-    if (this.isBlackout(now, policy.blackoutDates, policy.timezone)) {
+    // Opt-out explícito del cliente: tiene prioridad sobre cualquier otra
+    // regla y aplica a TODOS los canales (email, WhatsApp, SMS, llamada).
+    if (invoice.customer.doNotContact) {
+      await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_STEP_SKIPPED', {
+        reason: 'customer-do-not-contact',
+      });
+      return { outcome: 'skipped', reason: 'customer-do-not-contact' };
+    }
+
+    if (isBlackoutDate(now, policy.blackoutDates, policy.timezone)) {
       await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_STEP_SKIPPED', {
         reason: 'blackout-date',
       });
       return { outcome: 'skipped', reason: 'blackout-date' };
     }
 
-    const hour = this.localHour(now, policy.timezone);
+    const hour = localHour(now, policy.timezone);
     if (hour < policy.allowedContactStartHour || hour >= policy.allowedContactEndHour) {
       await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_STEP_SKIPPED', {
         reason: 'outside-contact-window',
@@ -695,36 +705,8 @@ export class CollectionSequencesService {
       .replace(/\{\{\s*daysOverdue\s*\}\}/g, String(ctx.daysOverdue));
   }
 
-  /** Hora local (0-23) de `date` en la zona horaria IANA indicada. */
-  private localHour(date: Date, timezone: string): number {
-    try {
-      const parts = new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone,
-        hour: 'numeric',
-        hour12: false,
-      }).formatToParts(date);
-      const hourPart = parts.find((p) => p.type === 'hour')?.value ?? '0';
-      // Algunos runtimes devuelven "24" para la medianoche.
-      return Number(hourPart) % 24;
-    } catch {
-      // Zona horaria inválida: no bloquea el envío, usa la hora UTC.
-      return date.getUTCHours();
-    }
-  }
-
-  /** Clave YYYY-MM-DD de `date` en la zona horaria indicada (para comparar blackout dates). */
-  private dateKey(date: Date, timezone: string): string {
-    try {
-      return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(date);
-    } catch {
-      return date.toISOString().slice(0, 10);
-    }
-  }
-
-  private isBlackout(date: Date, blackoutDates: Date[], timezone: string): boolean {
-    const key = this.dateKey(date, timezone);
-    return blackoutDates.some((d) => this.dateKey(d, timezone) === key);
-  }
+  // localHour/dateKey/isBlackout viven ahora en ../common/timezone.util
+  // (compartidos con CallGuardrailsService, ver src/calls).
 
   private async logStep(
     invoice: { id: string; organizationId: string },

@@ -282,6 +282,13 @@ model Customer {
   // WhatsApp. Null = no se le puede contactar por ese canal.
   phone           String?
   category        String?
+  // Opt-out explícito de contacto de cobranza (email, WhatsApp, SMS o
+  // llamada): si es true, ningún canal automatizado debe contactar a este
+  // cliente, sin importar la política/secuencia. Requisito de cumplimiento
+  // (CONDUSEF/REDECO) para el guardrail de "lista de exclusión".
+  doNotContact       Boolean   @default(false)
+  doNotContactReason String?
+  doNotContactAt     DateTime?
   // Días de crédito otorgados (informativo; el vencimiento real vive en la
   // factura). Null = contado / sin crédito definido.
   creditLimitDays Int?
