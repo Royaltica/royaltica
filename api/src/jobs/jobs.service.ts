@@ -190,6 +190,66 @@ export class JobsService {
     return this.collectionSequences.runEngineScan();
   }
 
+  // ── Resumen diario de notificaciones por WhatsApp (ROY-25) ──
+  // A diferencia de `fanOut(critical=true)` (que dispara WhatsApp al
+  // instante para un solo evento de alta prioridad), este job conecta
+  // TODAS las notificaciones in-app de un usuario (facturas vencidas, REP
+  // pendiente, documentos por vencer, cobranza escalada, etc.) con un
+  // único mensaje resumen por WhatsApp, una vez al día — solo a quien hizo
+  // opt-in con su teléfono. Si no hubo notificaciones nuevas en las
+  // últimas 24h, no manda nada (nunca spamea un día "tranquilo").
+  @Cron(CronExpression.EVERY_DAY_AT_6PM, { name: 'whatsapp-notifications-digest' })
+  async whatsappNotificationsDigest(): Promise<{ sent: number; skipped: number }> {
+    if (!this.enabled) return { sent: 0, skipped: 0 };
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const users = await this.prisma.user.findMany({
+      where: { isActive: true, whatsappOptIn: true, whatsappPhone: { not: null } },
+      select: { id: true, whatsappPhone: true, organizationId: true },
+    });
+
+    let sent = 0;
+    let skipped = 0;
+    for (const user of users) {
+      if (!user.whatsappPhone) {
+        skipped += 1;
+        continue;
+      }
+      const { total, byType } = await this.notifications.summarySince(user.id, since);
+      if (total === 0) {
+        skipped += 1;
+        continue;
+      }
+
+      const top = byType
+        .slice(0, 3)
+        .map((g) => `${g.count} ${this.humanizeNotificationType(g.type)}`)
+        .join(', ');
+      const text =
+        `Royáltica · Tienes ${total} notificación(es) nueva(s) hoy: ${top}.` +
+        ' Revisa el detalle en tu panel.';
+
+      const res = await this.whatsapp.sendMessage(user.whatsappPhone, text);
+      if (res.sent) {
+        sent += 1;
+        if (user.organizationId) {
+          void this.usage.record({
+            organizationId: user.organizationId,
+            feature: 'JOB_RUN',
+            units: 1,
+            metadata: { job: 'whatsapp-notifications-digest', total },
+          });
+        }
+      } else {
+        skipped += 1;
+      }
+    }
+
+    this.logger.log(
+      `whatsapp-notifications-digest: ${sent} resumen(es) enviado(s), ${skipped} omitido(s).`,
+    );
+    return { sent, skipped };
+  }
+
   // ── Resumen semanal de cobranza al director (lunes 8am) ───
   @Cron('0 8 * * 1', { name: 'weekly-collection-digest' })
   async weeklyCollectionDigest(): Promise<{ sent: number }> {
@@ -288,6 +348,12 @@ export class JobsService {
   }
 
   // ── helpers ───────────────────────────────────────────────
+
+  /** "INVOICE_OVERDUE" -> "Invoice overdue" (legible en el resumen de WhatsApp). */
+  private humanizeNotificationType(type: string): string {
+    const lower = type.toLowerCase().replace(/_/g, ' ');
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  }
 
   private activeOrganizations() {
     return this.prisma.organization.findMany({

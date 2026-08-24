@@ -186,6 +186,29 @@ export class NotificationsService {
     return { unread };
   }
 
+  /**
+   * Resumen de notificaciones creadas para un usuario desde `since` —
+   * agrupado por `type` con un conteo. Uso interno del digest de WhatsApp
+   * (ROY-25): no filtra por leídas/no leídas, cuenta todo lo creado en la
+   * ventana para que el resumen refleje "qué pasó hoy", no un backlog que
+   * crece para siempre si el usuario nunca abre la campana.
+   */
+  async summarySince(
+    userId: string,
+    since: Date,
+  ): Promise<{ total: number; byType: { type: string; count: number }[] }> {
+    const grouped = await this.prisma.notification.groupBy({
+      by: ['type'],
+      where: { userId, createdAt: { gte: since } },
+      _count: { _all: true },
+    });
+    const byType = grouped
+      .map((g) => ({ type: g.type, count: g._count._all }))
+      .sort((a, b) => b.count - a.count);
+    const total = byType.reduce((sum, g) => sum + g.count, 0);
+    return { total, byType };
+  }
+
   async markRead(user: AuthenticatedUser, id: string) {
     await this.getOwned(user, id);
     return this.prisma.notification.update({

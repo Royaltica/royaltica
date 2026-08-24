@@ -154,3 +154,105 @@ describe('JobsService — weeklyCollectionDigest', () => {
     );
   });
 });
+
+describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
+  let service: JobsService;
+  let prisma: { user: { findMany: jest.Mock } };
+  let notifications: { summarySince: jest.Mock };
+  let whatsapp: { sendMessage: jest.Mock };
+  let usage: { record: jest.Mock };
+
+  beforeEach(() => {
+    prisma = {
+      user: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'u-1',
+            whatsappPhone: '+5215512345678',
+            organizationId: 'org-1',
+          },
+        ]),
+      },
+    };
+    notifications = {
+      summarySince: jest.fn().mockResolvedValue({
+        total: 3,
+        byType: [
+          { type: 'INVOICE_OVERDUE', count: 2 },
+          { type: 'REP_PENDING', count: 1 },
+        ],
+      }),
+    };
+    whatsapp = { sendMessage: jest.fn().mockResolvedValue({ sent: true, mode: 'meta' }) };
+    usage = { record: jest.fn().mockResolvedValue(undefined) };
+
+    service = new JobsService(
+      prisma as unknown as PrismaService,
+      {} as SettingsService,
+      notifications as unknown as NotificationsService,
+      {} as EmailService,
+      whatsapp as unknown as WhatsappService,
+      usage as unknown as UsageService,
+      {} as ReceivablesService,
+      {} as DashboardService,
+      {} as ReportsService,
+      {} as CollectionSequencesService,
+      { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
+    );
+  });
+
+  it('solo consulta usuarios con whatsappOptIn y teléfono registrado', async () => {
+    await service.whatsappNotificationsDigest();
+
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          whatsappOptIn: true,
+          whatsappPhone: { not: null },
+        }),
+      }),
+    );
+  });
+
+  it('manda UN resumen por WhatsApp con el total y los tipos más frecuentes', async () => {
+    const result = await service.whatsappNotificationsDigest();
+
+    expect(whatsapp.sendMessage).toHaveBeenCalledTimes(1);
+    expect(whatsapp.sendMessage).toHaveBeenCalledWith(
+      '+5215512345678',
+      expect.stringContaining('3 notificación(es)'),
+    );
+    expect(result).toEqual({ sent: 1, skipped: 0 });
+  });
+
+  it('si no hubo notificaciones nuevas en 24h, NO manda WhatsApp (nada de spam)', async () => {
+    notifications.summarySince.mockResolvedValue({ total: 0, byType: [] });
+
+    const result = await service.whatsappNotificationsDigest();
+
+    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
+    expect(result).toEqual({ sent: 0, skipped: 1 });
+  });
+
+  it('respeta el kill-switch JOBS_ENABLED', async () => {
+    service = new JobsService(
+      prisma as unknown as PrismaService,
+      {} as SettingsService,
+      notifications as unknown as NotificationsService,
+      {} as EmailService,
+      whatsapp as unknown as WhatsappService,
+      usage as unknown as UsageService,
+      {} as ReceivablesService,
+      {} as DashboardService,
+      {} as ReportsService,
+      {} as CollectionSequencesService,
+      { get: jest.fn().mockReturnValue('false') } as unknown as ConfigService<Env, true>,
+    );
+
+    await expect(service.whatsappNotificationsDigest()).resolves.toEqual({
+      sent: 0,
+      skipped: 0,
+    });
+    expect(prisma.user.findMany).not.toHaveBeenCalled();
+  });
+});
