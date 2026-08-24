@@ -22,7 +22,8 @@
     "prisma:deploy": "DATABASE_URL=\"$DATABASE_ADMIN_URL\" prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "seed": "ts-node prisma/seed.ts",
-    "reindex:search": "ts-node scripts/reindex-search.ts"
+    "reindex:search": "ts-node scripts/reindex-search.ts",
+    "simulate:collection-messages": "ts-node scripts/simulate-collection-messages.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

@@ -12,6 +12,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { localHour, isBlackoutDate } from '../common/timezone.util';
+import { renderMessageTemplate } from '../common/message-template.util';
 import { ActivityLogService } from '../activity/activity-log.service';
 import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
@@ -620,7 +621,7 @@ export class CollectionSequencesService {
       return { outcome: 'escalated', stepOrder: nextStep.stepOrder };
     }
 
-    const body = this.renderTemplate(nextStep.messageTemplate, {
+    const body = renderMessageTemplate(nextStep.messageTemplate, {
       customerName,
       amount,
       dueDate: dueDateStr,
@@ -694,16 +695,8 @@ export class CollectionSequencesService {
     return invoice.folio ?? invoice.cfdiUuid.slice(0, 8);
   }
 
-  private renderTemplate(
-    template: string,
-    ctx: { customerName: string; amount: string; dueDate: string; daysOverdue: number },
-  ): string {
-    return template
-      .replace(/\{\{\s*customerName\s*\}\}/g, ctx.customerName)
-      .replace(/\{\{\s*amount\s*\}\}/g, ctx.amount)
-      .replace(/\{\{\s*dueDate\s*\}\}/g, ctx.dueDate)
-      .replace(/\{\{\s*daysOverdue\s*\}\}/g, String(ctx.daysOverdue));
-  }
+  // renderTemplate vive ahora en ../common/message-template.util
+  // (compartido con el script de simulación de mensajes, ver scripts/).
 
   // localHour/dateKey/isBlackout viven ahora en ../common/timezone.util
   // (compartidos con CallGuardrailsService, ver src/calls).
