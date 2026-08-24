@@ -15,6 +15,7 @@ import {
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { QueryNotificationsDto } from './dto/query-notifications.dto';
 import { WhatsappPrefsDto } from './dto/whatsapp-prefs.dto';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
 
 export interface CreateNotificationInput {
   userId: string;
@@ -43,7 +44,10 @@ export class NotificationsService {
   /** Bus en memoria de notificaciones recién creadas, para el stream SSE. */
   private readonly events$ = new Subject<NotificationEvent>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly whatsapp: WhatsappService,
+  ) {}
 
   /** Crea una notificación para un usuario (uso interno entre módulos). */
   async create(input: CreateNotificationInput) {
@@ -207,6 +211,37 @@ export class NotificationsService {
       .sort((a, b) => b.count - a.count);
     const total = byType.reduce((sum, g) => sum + g.count, 0);
     return { total, byType };
+  }
+
+  /**
+   * Manda un mensaje de WhatsApp de prueba al usuario actual, usando su
+   * propio teléfono ya registrado (nunca uno arbitrario que mande el
+   * cliente — evita que este endpoint se use para spamear a terceros).
+   * Requiere opt-in activo. Uso: botón "Enviar mensaje de prueba" en
+   * Configuración, para validar Twilio/Meta sin esperar al cron diario.
+   */
+  async sendWhatsappTest(user: AuthenticatedUser) {
+    const row = await this.prisma.user.findUnique({
+      where: { id: user.id },
+      select: { whatsappPhone: true, whatsappOptIn: true },
+    });
+    if (!row?.whatsappOptIn || !row.whatsappPhone) {
+      throw new BadRequestException(
+        'Activa tus alertas por WhatsApp y registra tu teléfono antes de mandar una prueba.',
+      );
+    }
+    const result = await this.whatsapp.sendMessage(
+      row.whatsappPhone,
+      '🔔 Royáltica: este es un mensaje de prueba. Si lo recibiste, tus alertas por WhatsApp ya están funcionando.',
+    );
+    if (!result.sent) {
+      throw new BadRequestException(
+        result.mode === 'stub'
+          ? 'WhatsApp no está configurado todavía en el servidor (falta el proveedor/token).'
+          : 'No se pudo enviar el mensaje de prueba. Revisa las credenciales del proveedor.',
+      );
+    }
+    return result;
   }
 
   async markRead(user: AuthenticatedUser, id: string) {

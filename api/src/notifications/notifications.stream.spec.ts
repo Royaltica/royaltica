@@ -2,6 +2,7 @@ import { firstValueFrom } from 'rxjs';
 import { filter, take } from 'rxjs/operators';
 import { NotificationsService } from './notifications.service';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
 
 describe('NotificationsService — stream SSE', () => {
   let service: NotificationsService;
@@ -15,7 +16,10 @@ describe('NotificationsService — stream SSE', () => {
         ),
       },
     };
-    service = new NotificationsService(prisma as unknown as PrismaService);
+    service = new NotificationsService(
+      prisma as unknown as PrismaService,
+      {} as WhatsappService,
+    );
   });
 
   it('streamFor emite la notificación creada para ESE usuario', async () => {

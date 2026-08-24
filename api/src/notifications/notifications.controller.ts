@@ -6,6 +6,7 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  Post,
   Put,
   Query,
   Sse,
@@ -63,6 +64,16 @@ export class NotificationsController {
     @Body() dto: WhatsappPrefsDto,
   ) {
     return this.notifications.setWhatsappPrefs(user, dto);
+  }
+
+  /**
+   * Manda un WhatsApp de prueba al teléfono ya registrado del usuario
+   * (requiere opt-in activo). Para validar Twilio/Meta sin esperar el
+   * digest diario de las 18:00.
+   */
+  @Post('whatsapp/test')
+  sendWhatsappTest(@CurrentUser() user: AuthenticatedUser) {
+    return this.notifications.sendWhatsappTest(user);
   }
 
   @Patch('read-all')

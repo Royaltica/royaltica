@@ -249,6 +249,7 @@ export function WhatsappPrefsPanel() {
   const [optIn, setOptIn] = useState(false);
   const [phone, setPhone] = useState('');
   const [busy, setBusy] = useState(false);
+  const [testBusy, setTestBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -265,6 +266,16 @@ export function WhatsappPrefsPanel() {
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'No se pudo guardar.');
     } finally { setBusy(false); }
+  };
+
+  const sendTest = async () => {
+    setTestBusy(true); setErr(null); setMsg(null);
+    try {
+      await api.sendWhatsappTest();
+      setMsg('Mensaje de prueba enviado — revisa tu WhatsApp.');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'No se pudo enviar la prueba.');
+    } finally { setTestBusy(false); }
   };
 
   return (
@@ -285,6 +296,13 @@ export function WhatsappPrefsPanel() {
           {busy ? '...' : optIn ? 'Desactivar' : 'Activar alertas'}
         </button>
         <span className={`text-[9px] font-bold px-2 py-1 rounded-full ${optIn ? 'bg-green-100 text-green-700' : 'bg-brand-sand/40 text-brand-ink/40'}`}>{optIn ? 'ACTIVO' : 'INACTIVO'}</span>
+        {optIn && (
+          <button onClick={sendTest} disabled={testBusy}
+            className="flex items-center gap-2 px-4 py-3 rounded-xl text-[10px] font-bold uppercase tracking-widest border border-brand-sand text-brand-ink/70 hover:bg-brand-sand/20 transition-all disabled:opacity-50">
+            {testBusy ? <Loader2 size={14} className="animate-spin" /> : <Bell size={14} />}
+            {testBusy ? 'Enviando...' : 'Enviar mensaje de prueba'}
+          </button>
+        )}
       </div>
       {msg && <p className="text-[10px] font-bold text-green-700 flex items-center gap-1.5"><CheckCircle2 size={12} /> {msg}</p>}
       {err && <p className="text-[10px] font-bold text-red-600 flex items-center gap-1.5"><AlertTriangle size={12} /> {err}</p>}

@@ -1168,6 +1168,11 @@ export const api = {
     };
   },
 
+  /** Manda un WhatsApp de prueba al teléfono ya registrado (requiere opt-in activo). */
+  async sendWhatsappTest(): Promise<{ sent: boolean; mode: string }> {
+    return request<{ sent: boolean; mode: string }>('POST', '/notifications/whatsapp/test');
+  },
+
   // ── Conectividad ERP ────────────────────────────────────
 
   /** Estado del conector ERP (proveedor, modo stub/live). */
