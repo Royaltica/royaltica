@@ -131,6 +131,12 @@ export const envSchema = z.object({
   WHATSAPP_TOKEN: z.string().optional().default(''),
   WHATSAPP_PHONE_ID: z.string().optional().default(''),
   WHATSAPP_FROM: z.string().optional().default(''),
+  // Número(s) extra (E.164, separados por coma) que reciben una copia de
+  // "Enviar mensaje de prueba" además del usuario que lo dispara — mismo
+  // patrón que LEADS_EMAIL. Uso: que un stakeholder externo (ej. Paolo) vea
+  // en vivo que las alertas por WhatsApp ya funcionan, sin crearle una
+  // cuenta de usuario real en la plataforma.
+  WHATSAPP_TEST_CC: z.string().optional().default(''),
   // Webhook entrante de Meta: token del challenge de verificación (GET) y
   // app secret para validar la firma HMAC de los mensajes entrantes (POST).
   WHATSAPP_VERIFY_TOKEN: z.string().optional().default(''),

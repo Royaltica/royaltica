@@ -16,6 +16,8 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { QueryNotificationsDto } from './dto/query-notifications.dto';
 import { WhatsappPrefsDto } from './dto/whatsapp-prefs.dto';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { ConfigService } from '@nestjs/config';
+import type { Env } from '../config/env.validation';
 
 export interface CreateNotificationInput {
   userId: string;
@@ -47,6 +49,7 @@ export class NotificationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsappService,
+    private readonly config: ConfigService<Env, true>,
   ) {}
 
   /** Crea una notificación para un usuario (uso interno entre módulos). */
@@ -219,6 +222,11 @@ export class NotificationsService {
    * cliente — evita que este endpoint se use para spamear a terceros).
    * Requiere opt-in activo. Uso: botón "Enviar mensaje de prueba" en
    * Configuración, para validar Twilio/Meta sin esperar al cron diario.
+   *
+   * Además manda una copia a los números fijos en WHATSAPP_TEST_CC (mismo
+   * patrón que LEADS_EMAIL) — para que un stakeholder externo sin cuenta en
+   * la plataforma (ej. Paolo) vea en vivo que las alertas ya funcionan, sin
+   * tener que crearle un usuario real.
    */
   async sendWhatsappTest(user: AuthenticatedUser) {
     const row = await this.prisma.user.findUnique({
@@ -230,10 +238,9 @@ export class NotificationsService {
         'Activa tus alertas por WhatsApp y registra tu teléfono antes de mandar una prueba.',
       );
     }
-    const result = await this.whatsapp.sendMessage(
-      row.whatsappPhone,
-      '🔔 Royáltica: este es un mensaje de prueba. Si lo recibiste, tus alertas por WhatsApp ya están funcionando.',
-    );
+    const message =
+      '🔔 Royáltica: este es un mensaje de prueba. Si lo recibiste, tus alertas por WhatsApp ya están funcionando.';
+    const result = await this.whatsapp.sendMessage(row.whatsappPhone, message);
     if (!result.sent) {
       throw new BadRequestException(
         result.mode === 'stub'
@@ -241,7 +248,16 @@ export class NotificationsService {
           : 'No se pudo enviar el mensaje de prueba. Revisa las credenciales del proveedor.',
       );
     }
-    return result;
+
+    const ccNumbers = (this.config.get('WHATSAPP_TEST_CC', { infer: true }) || '')
+      .split(',')
+      .map((n) => n.trim())
+      .filter(Boolean);
+    const ccResults = await Promise.all(
+      ccNumbers.map((phone) => this.whatsapp.sendMessage(phone, message)),
+    );
+
+    return { ...result, ccSent: ccResults.filter((r) => r.sent).length, ccTotal: ccNumbers.length };
   }
 
   async markRead(user: AuthenticatedUser, id: string) {
