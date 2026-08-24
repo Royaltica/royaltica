@@ -102,6 +102,21 @@ describe('MarketingService — registro externo (demo/contacto)', () => {
       );
     });
 
+    it('LEADS_EMAIL con varios correos separados por coma manda a todos (transición de dominio)', async () => {
+      config.get.mockImplementation((key: string) => {
+        if (key === 'LEADS_EMAIL') return 'hola@royaltica.com, jgmalfavaun@gmail.com';
+        return undefined;
+      });
+
+      await service.scheduleDemo(dto as never);
+
+      expect(email.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: ['hola@royaltica.com', 'jgmalfavaun@gmail.com'],
+        }),
+      );
+    });
+
     it('el honeypot bloquea a los bots SIN persistir el lead ni enviar correos', async () => {
       const result = await service.scheduleDemo({
         ...dto,

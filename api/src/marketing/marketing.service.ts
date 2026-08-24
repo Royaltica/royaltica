@@ -35,10 +35,21 @@ export class MarketingService {
     private readonly config: ConfigService<Env, true>,
   ) {}
 
-  private get leadsEmail(): string {
-    return (
-      this.config.get('LEADS_EMAIL', { infer: true }) || 'hello@royaltica.com'
-    );
+  /**
+   * Destinatario(s) internos de las notificaciones de leads (demo/contacto).
+   * `LEADS_EMAIL` acepta uno o varios correos separados por coma — útil para
+   * transiciones de dominio/correo (ej. mandar tanto al buzón nuevo de
+   * GoDaddy como al correo personal que ya se usaba, "para que no se mueva
+   * mucho por lo mientras") sin tener que elegir uno solo.
+   */
+  private get leadsEmail(): string | string[] {
+    const raw =
+      this.config.get('LEADS_EMAIL', { infer: true }) || 'hello@royaltica.com';
+    const addresses = raw
+      .split(',')
+      .map((a) => a.trim())
+      .filter(Boolean);
+    return addresses.length > 1 ? addresses : addresses[0];
   }
 
   private get brandName(): string {
