@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npm run build && mkdir -p dist/_public && cp ../landing/index.html ../landing/gracias.html ../landing/privacidad.html ../landing/404.html ../landing/robots.txt ../landing/sitemap.xml ../landing/og-image.png ../landing/hero-loop.mp4 ../landing/hero-loop-poster.jpg ../landing/marca.png ../landing/nego-cliente.png ../landing/nego-aviso.png ../landing/neural-loop.mp4 ../landing/neural-poster.jpg dist/_public/",
+  "buildCommand": "npm run build && mkdir -p dist/_public && cp ../landing/*.html ../landing/*.png ../landing/*.jpg ../landing/*.mp4 ../landing/*.txt ../landing/*.xml dist/_public/",
   "outputDirectory": "dist",
   "rewrites": [
     {
