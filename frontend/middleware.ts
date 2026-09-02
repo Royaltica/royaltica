@@ -19,6 +19,13 @@ const MARKETING_ROUTES: Record<string, string> = {
   '/robots.txt': '/robots.txt',
   '/sitemap.xml': '/sitemap.xml',
   '/og-image.png': '/og-image.png',
+  '/marca.png': '/marca.png',
+  '/nego-cliente.png': '/nego-cliente.png',
+  '/nego-aviso.png': '/nego-aviso.png',
+  '/hero-loop.mp4': '/hero-loop.mp4',
+  '/hero-loop-poster.jpg': '/hero-loop-poster.jpg',
+  '/neural-loop.mp4': '/neural-loop.mp4',
+  '/neural-poster.jpg': '/neural-poster.jpg',
 };
 
 export default async function middleware(request: Request) {
