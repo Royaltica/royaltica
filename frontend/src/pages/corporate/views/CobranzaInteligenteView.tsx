@@ -27,7 +27,7 @@ import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
  */
 
 type Section =
-  | 'cartera'
+  | 'prioridades'
   | 'alertas'
   | 'recordatorios'
   | 'estrategias'
@@ -35,7 +35,7 @@ type Section =
   | 'equipo';
 
 const sections: { id: Section; label: string }[] = [
-  { id: 'cartera', label: 'Cartera y riesgo' },
+  { id: 'prioridades', label: 'Prioridades' },
   { id: 'alertas', label: 'Alertas' },
   { id: 'recordatorios', label: 'Recordatorios' },
   { id: 'estrategias', label: 'Estrategias' },
@@ -326,7 +326,7 @@ const MOCK = {
 // ─── Vista principal ─────────────────────────────────────────────────
 
 export function CobranzaInteligenteView() {
-  const [section, setSection] = React.useState<Section>('cartera');
+  const [section, setSection] = React.useState<Section>('prioridades');
 
   return (
     <div className="space-y-6 pb-10">
@@ -360,7 +360,7 @@ export function CobranzaInteligenteView() {
 
       <PrototypeNotice />
 
-      {section === 'cartera' && <CarteraPanel />}
+      {section === 'prioridades' && <PrioridadesPanel />}
       {section === 'alertas' && <AlertasPanel />}
       {section === 'recordatorios' && <RecordatoriosPanel />}
       {section === 'estrategias' && <EstrategiasPanel />}
@@ -384,9 +384,10 @@ function PrototypeNotice() {
   );
 }
 
-// ─── 1 · Cartera y riesgo ────────────────────────────────────────────
-// Un solo tablero: a la izquierda el orden de trabajo, a la derecha por qué
-// esa cuenta está ahí, cómo se compone su score y qué pasaría si se negocia.
+// ─── 1 · Prioridades ─────────────────────────────────────────────────
+// Orden sugerido de trabajo. El desglose del score de cada cuenta y el
+// simulador viven en la pestaña de Recordatorios, junto al historial del
+// cliente; aquí solo se muestra el score ya compuesto.
 
 type CarteraItem = (typeof MOCK.cartera)[number];
 
@@ -398,26 +399,25 @@ const URGENCIA_STYLES = {
 
 /**
  * Score compuesto a partir de sus factores ponderados.
- * Se calcula en vez de guardarse para que el número grande y su desglose
+ * Se calcula en vez de guardarse para que el número mostrado y su desglose
  * nunca puedan contradecirse — es lo que sostiene el "no es una caja negra".
  */
 function scoreOf(factores: readonly { peso: number; valor: number }[]): number {
   return Math.round(factores.reduce((sum, f) => sum + (f.peso * f.valor) / 100, 0));
 }
 
-function CarteraPanel() {
-  const [selected, setSelected] = React.useState(MOCK.cartera[0].folio);
-  const activo = MOCK.cartera.find((c) => c.folio === selected) ?? MOCK.cartera[0];
+/** Datos de riesgo de una cuenta, por nombre de cliente. */
+function cuentaDe(cliente: string): CarteraItem | undefined {
+  return MOCK.cartera.find((c) => c.cliente === cliente);
+}
 
+function PrioridadesPanel() {
   const total = MOCK.cartera.reduce((sum, c) => sum + c.monto, 0);
   const requierenHumano = MOCK.cartera.filter((c) => c.urgencia === 'alta').length;
-  const riesgoProm = Math.round(
-    MOCK.cartera.reduce((sum, c) => sum + scoreOf(c.factores), 0) / MOCK.cartera.length,
-  );
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <MiniStat
           label="En la lista de hoy"
           value={String(MOCK.cartera.length)}
@@ -429,11 +429,6 @@ function CarteraPanel() {
           sub="suma de las cuentas listadas"
         />
         <MiniStat
-          label="Riesgo promedio"
-          value={String(riesgoProm)}
-          sub="score compuesto de la lista"
-        />
-        <MiniStat
           label="Requieren humano"
           value={String(requierenHumano)}
           sub="el agente no las toca solo"
@@ -441,64 +436,273 @@ function CarteraPanel() {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
-        {/* Orden de trabajo */}
-        <div className="lg:col-span-2 editorial-card !p-0 overflow-hidden">
-          <div className="px-6 py-4 border-b border-brand-sand flex items-center gap-2">
-            <Sparkles size={14} className="text-brand-gold" />
-            <span className="label-caps !opacity-60">Orden sugerido de trabajo</span>
-          </div>
-          <div>
-            {MOCK.cartera.map((c, i) => {
-              const activa = c.folio === selected;
-              return (
-                <button
+      <div className="editorial-card !p-0 overflow-hidden">
+        <div className="px-6 py-4 border-b border-brand-sand flex items-center gap-2">
+          <Sparkles size={14} className="text-brand-gold" />
+          <span className="label-caps !opacity-60">Orden sugerido de trabajo</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left min-w-[820px]">
+            <thead>
+              <tr className="border-b border-brand-sand">
+                {['Cliente', 'Monto', 'Vencido', 'Riesgo', 'Por qué está aquí', 'Acción'].map((h) => (
+                  <th
+                    key={h}
+                    className="px-5 py-3 text-[9px] uppercase tracking-widest font-bold text-brand-ink/40"
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {MOCK.cartera.map((c) => (
+                <tr
                   key={c.folio}
-                  onClick={() => setSelected(c.folio)}
-                  aria-current={activa}
-                  className={`w-full text-left px-5 py-4 border-b border-brand-sand/60 last:border-0 transition-colors ${
-                    activa ? 'bg-brand-gold/10' : 'hover:bg-brand-bone/60'
-                  }`}
+                  className="border-b border-brand-sand/60 last:border-0 hover:bg-brand-bone/50 transition-colors"
                 >
-                  <div className="flex items-start gap-3">
-                    <span className="w-4 shrink-0 text-[10px] font-bold tabular-nums text-brand-ink/25 mt-1">
-                      {i + 1}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-bold text-brand-ink truncate">{c.cliente}</div>
-                      <div className="text-[10px] text-brand-ink/45 mt-1 tabular-nums">
-                        {CURRENCY_FORMATTER.format(c.monto)} · {c.diasVencido} días
-                      </div>
-                      <div className="text-[9px] font-mono text-brand-ink/30 mt-0.5">{c.folio}</div>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+                  <td className="px-5 py-4">
+                    <div className="text-sm font-bold text-brand-ink">{c.cliente}</div>
+                    <div className="text-[10px] text-brand-ink/40 font-mono mt-0.5">{c.folio}</div>
+                  </td>
+                  <td className="px-5 py-4 text-sm tabular-nums text-brand-ink">
+                    {CURRENCY_FORMATTER.format(c.monto)}
+                  </td>
+                  <td className="px-5 py-4">
+                    <span className="text-sm tabular-nums text-brand-ink">{c.diasVencido}</span>
+                    <span className="text-[10px] text-brand-ink/40 ml-1">días</span>
+                  </td>
+                  <td className="px-5 py-4">
+                    <div className="flex items-center gap-1.5">
                       <TrendIcon tendencia={c.tendencia} />
                       <RiskChip score={scoreOf(c.factores)} />
                     </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-          <div className="px-5 py-3 bg-brand-bone/60 border-t border-brand-sand">
-            <p className="text-[10px] text-brand-ink/40 leading-relaxed">
-              El orden combina monto, días vencidos y score de riesgo. Selecciona una cuenta para
-              ver su desglose.
-            </p>
-          </div>
-        </div>
-
-        {/* Detalle de la cuenta seleccionada */}
-        <div className="lg:col-span-3 space-y-5">
-          <CuentaDetalle cuenta={activo} />
-          <SimuladorCuenta cuenta={activo} />
+                  </td>
+                  <td className="px-5 py-4 max-w-[280px]">
+                    <p className="text-[11px] text-brand-ink/60 leading-relaxed">{c.razon}</p>
+                  </td>
+                  <td className="px-5 py-4">
+                    <span className={`audit-badge ${URGENCIA_STYLES[c.urgencia]}`}>{c.accion}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
   );
 }
 
-function CuentaDetalle({ cuenta }: { cuenta: CarteraItem }) {
+// ─── 2 · Alertas ─────────────────────────────────────────────────────
+
+const SEVERIDAD = {
+  critica: { chip: 'bg-red-100 text-red-700', label: 'Crítica', border: 'border-red-200' },
+  alta: { chip: 'bg-amber-100 text-amber-700', label: 'Alta', border: 'border-amber-200' },
+  media: { chip: 'bg-brand-gold/20 text-brand-ink/70', label: 'Media', border: 'border-brand-sand' },
+} as const;
+
+function AlertasPanel() {
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-brand-ink/50 max-w-2xl">
+        Estas alertas se disparan por patrones, no por vencimientos. La idea es avisar
+        <em> antes</em> de que el problema sea evidente en el aging.
+      </p>
+      {MOCK.alertas.map((a) => {
+        const s = SEVERIDAD[a.severidad];
+        return (
+          <div key={a.titulo} className={`bg-white border ${s.border} rounded-2xl p-5 flex gap-4`}>
+            <AlertTriangle size={16} className="text-brand-ink/40 shrink-0 mt-0.5" />
+            <div className="flex-1 space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`audit-badge ${s.chip}`}>{s.label}</span>
+                <span className="text-[10px] text-brand-ink/40">{a.cuando}</span>
+              </div>
+              <h4 className="text-sm font-bold text-brand-ink">{a.titulo}</h4>
+              <p className="text-xs text-brand-ink/60 leading-relaxed max-w-3xl">{a.detalle}</p>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── 3 · Recordatorios enviados ──────────────────────────────────────
+
+const RESULTADO_STYLES = {
+  pago: { chip: 'bg-green-100 text-green-700', label: 'Pagó' },
+  respondio: { chip: 'bg-brand-gold/20 text-brand-ink/70', label: 'Respondió' },
+  sin_respuesta: { chip: 'bg-brand-sand/40 text-brand-ink/40', label: 'Sin respuesta' },
+} as const;
+
+const CANAL_ICON = {
+  WhatsApp: MessageSquare,
+  Correo: Mail,
+  Llamada: Phone,
+} as const;
+
+function RecordatoriosPanel() {
+  const [selected, setSelected] = React.useState(MOCK.recordatorios[0].cliente);
+  const activo = MOCK.recordatorios.find((r) => r.cliente === selected) ?? MOCK.recordatorios[0];
+  // El riesgo de la cuenta vive en MOCK.cartera y se enlaza por nombre de
+  // cliente. Puede no existir (un cliente contactado sin factura priorizada),
+  // por eso las tarjetas de riesgo y simulación se renderizan condicionadas.
+  const cuenta = cuentaDe(activo.cliente);
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
+      {/* Lista de clientes */}
+      <div className="lg:col-span-2 editorial-card !p-0 overflow-hidden">
+        <div className="px-6 py-4 border-b border-brand-sand">
+          <span className="label-caps !opacity-60">Clientes contactados</span>
+        </div>
+        <div>
+          {MOCK.recordatorios.map((r) => {
+            const cuentaFila = cuentaDe(r.cliente);
+            return (
+            <button
+              key={r.cliente}
+              onClick={() => setSelected(r.cliente)}
+              aria-current={selected === r.cliente}
+              className={`w-full text-left px-6 py-4 border-b border-brand-sand/60 last:border-0 transition-colors ${
+                selected === r.cliente ? 'bg-brand-gold/10' : 'hover:bg-brand-bone/60'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-brand-ink truncate">{r.cliente}</div>
+                  <div className="text-[10px] text-brand-ink/40 mt-0.5">
+                    {r.enviados} mensajes · último {r.ultimo}
+                  </div>
+                  <div className="text-[10px] text-brand-ink/40 mt-1">
+                    Respuesta{' '}
+                    <span className="font-bold text-brand-ink/70 tabular-nums">{r.tasa}%</span>
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  {cuentaFila ? (
+                    <RiskChip score={scoreOf(cuentaFila.factores)} />
+                  ) : (
+                    <span className="text-[10px] text-brand-ink/30">—</span>
+                  )}
+                  <div className="text-[9px] uppercase tracking-widest text-brand-ink/35 mt-1.5">
+                    riesgo
+                  </div>
+                </div>
+              </div>
+            </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Detalle del cliente */}
+      <div className="lg:col-span-3 space-y-5">
+        {cuenta && <CuentaDetalle cuenta={cuenta} encargado={activo.encargado} />}
+
+        {/* Lo que mejor le funciona */}
+        <div className="editorial-card space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <span className="label-caps !opacity-60">Lo que mejor funciona</span>
+              <p className="text-xs text-brand-ink/50 mt-1.5 max-w-md leading-relaxed">
+                Combinación con mayor tasa de respuesta registrada en esta cuenta.
+              </p>
+            </div>
+            <span className="audit-badge bg-brand-bone text-brand-ink/50 shrink-0">
+              {activo.encargado}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <BestFit label="Canal" value={activo.mejor.canal} />
+            <BestFit label="Tono" value={activo.mejor.tono} />
+            <BestFit label="Horario" value={activo.mejor.hora} />
+            <BestFit label="Respuesta" value={`${activo.tasa}%`} accent />
+          </div>
+
+          <div className="pt-3 border-t border-brand-sand space-y-2">
+            <div>
+              <span className="text-[9px] uppercase tracking-widest text-brand-ink/35">
+                Estrategia que funciona
+              </span>
+              <p className="text-sm text-brand-ink mt-1">{activo.mejor.estrategia}</p>
+            </div>
+            <p className="text-[11px] text-brand-ink/50 leading-relaxed">{activo.nota}</p>
+          </div>
+        </div>
+
+        {/* Historial de mensajes */}
+        <div className="editorial-card !p-0 overflow-hidden">
+          <div className="px-6 py-4 border-b border-brand-sand flex items-center gap-2">
+            <MessageSquare size={13} className="text-brand-gold" />
+            <span className="label-caps !opacity-60">Mensajes enviados</span>
+          </div>
+
+          <div className="divide-y divide-brand-sand/60">
+            {activo.mensajes.map((m, i) => {
+              const Icon = CANAL_ICON[m.canal as keyof typeof CANAL_ICON] ?? MessageSquare;
+              const res = RESULTADO_STYLES[m.resultado];
+              return (
+                <div key={i} className="px-6 py-4 hover:bg-brand-bone/40 transition-colors">
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <Icon size={13} className="text-brand-ink/40 shrink-0" />
+                    <span className="text-xs font-bold text-brand-ink">{m.tipo}</span>
+                    <span className={`audit-badge ${res.chip}`}>{res.label}</span>
+                    <span className="text-[10px] text-brand-ink/40 ml-auto tabular-nums">
+                      {m.fecha}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-[10px]">
+                    <MsgMeta label="Canal" value={m.canal} />
+                    <MsgMeta label="Tono" value={m.tono} />
+                    <MsgMeta label="Nivel" value={`${m.nivel} de 4`} />
+                    <MsgMeta label="Vencida al enviar" value={`${m.vencidoAlEnviar} días`} />
+                    <MsgMeta label="Espera al siguiente" value={m.espera} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {cuenta && <SimuladorCuenta cuenta={cuenta} />}
+      </div>
+    </div>
+  );
+}
+
+function BestFit({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div
+      className={`px-3 py-3 rounded-xl border ${
+        accent ? 'bg-brand-gold/10 border-brand-gold/40' : 'bg-brand-bone border-brand-sand'
+      }`}
+    >
+      <div className="text-[9px] uppercase tracking-widest text-brand-ink/35">{label}</div>
+      <div className="text-sm font-bold text-brand-ink mt-1">{value}</div>
+    </div>
+  );
+}
+
+function MsgMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="text-brand-ink/45">
+      {label}: <span className="text-brand-ink/75 font-bold">{value}</span>
+    </span>
+  );
+}
+
+function CuentaDetalle({
+  cuenta,
+  encargado,
+}: {
+  cuenta: CarteraItem;
+  encargado: string;
+}) {
   const score = scoreOf(cuenta.factores);
 
   return (
@@ -507,7 +711,11 @@ function CuentaDetalle({ cuenta }: { cuenta: CarteraItem }) {
         <div className="min-w-0">
           <span className="label-caps !opacity-60">Cuenta seleccionada</span>
           <h3 className="text-2xl font-serif text-brand-ink mt-1.5">{cuenta.cliente}</h3>
-          <span className="text-[10px] font-mono text-brand-ink/40">{cuenta.folio}</span>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-[10px] font-mono text-brand-ink/40">{cuenta.folio}</span>
+            <span className="text-[10px] text-brand-ink/30">·</span>
+            <span className="text-[10px] text-brand-ink/40">{encargado}</span>
+          </div>
         </div>
         <span className={`audit-badge shrink-0 ${URGENCIA_STYLES[cuenta.urgencia]}`}>
           {cuenta.accion}
@@ -727,188 +935,6 @@ function SimuladorCuenta({ cuenta }: { cuenta: CarteraItem }) {
         ni compromete un descuento con el cliente.
       </p>
     </div>
-  );
-}
-
-// ─── 2 · Alertas ─────────────────────────────────────────────────────
-
-const SEVERIDAD = {
-  critica: { chip: 'bg-red-100 text-red-700', label: 'Crítica', border: 'border-red-200' },
-  alta: { chip: 'bg-amber-100 text-amber-700', label: 'Alta', border: 'border-amber-200' },
-  media: { chip: 'bg-brand-gold/20 text-brand-ink/70', label: 'Media', border: 'border-brand-sand' },
-} as const;
-
-function AlertasPanel() {
-  return (
-    <div className="space-y-4">
-      <p className="text-xs text-brand-ink/50 max-w-2xl">
-        Estas alertas se disparan por patrones, no por vencimientos. La idea es avisar
-        <em> antes</em> de que el problema sea evidente en el aging.
-      </p>
-      {MOCK.alertas.map((a) => {
-        const s = SEVERIDAD[a.severidad];
-        return (
-          <div key={a.titulo} className={`bg-white border ${s.border} rounded-2xl p-5 flex gap-4`}>
-            <AlertTriangle size={16} className="text-brand-ink/40 shrink-0 mt-0.5" />
-            <div className="flex-1 space-y-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={`audit-badge ${s.chip}`}>{s.label}</span>
-                <span className="text-[10px] text-brand-ink/40">{a.cuando}</span>
-              </div>
-              <h4 className="text-sm font-bold text-brand-ink">{a.titulo}</h4>
-              <p className="text-xs text-brand-ink/60 leading-relaxed max-w-3xl">{a.detalle}</p>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// ─── 3 · Recordatorios enviados ──────────────────────────────────────
-
-const RESULTADO_STYLES = {
-  pago: { chip: 'bg-green-100 text-green-700', label: 'Pagó' },
-  respondio: { chip: 'bg-brand-gold/20 text-brand-ink/70', label: 'Respondió' },
-  sin_respuesta: { chip: 'bg-brand-sand/40 text-brand-ink/40', label: 'Sin respuesta' },
-} as const;
-
-const CANAL_ICON = {
-  WhatsApp: MessageSquare,
-  Correo: Mail,
-  Llamada: Phone,
-} as const;
-
-function RecordatoriosPanel() {
-  const [selected, setSelected] = React.useState(MOCK.recordatorios[0].cliente);
-  const activo = MOCK.recordatorios.find((r) => r.cliente === selected) ?? MOCK.recordatorios[0];
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
-      {/* Lista de clientes */}
-      <div className="lg:col-span-2 editorial-card !p-0 overflow-hidden">
-        <div className="px-6 py-4 border-b border-brand-sand">
-          <span className="label-caps !opacity-60">Clientes contactados</span>
-        </div>
-        <div>
-          {MOCK.recordatorios.map((r) => (
-            <button
-              key={r.cliente}
-              onClick={() => setSelected(r.cliente)}
-              className={`w-full text-left px-6 py-4 border-b border-brand-sand/60 last:border-0 transition-colors ${
-                selected === r.cliente ? 'bg-brand-gold/10' : 'hover:bg-brand-bone/60'
-              }`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-sm font-bold text-brand-ink truncate">{r.cliente}</div>
-                  <div className="text-[10px] text-brand-ink/40 mt-0.5">
-                    {r.enviados} mensajes · último {r.ultimo}
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="text-sm font-bold text-brand-ink tabular-nums leading-none">
-                    {r.tasa}%
-                  </div>
-                  <div className="text-[9px] uppercase tracking-widest text-brand-ink/35 mt-1">
-                    resp.
-                  </div>
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Detalle del cliente */}
-      <div className="lg:col-span-3 space-y-5">
-        {/* Lo que mejor le funciona */}
-        <div className="editorial-card space-y-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <span className="label-caps !opacity-60">Lo que mejor funciona con</span>
-              <h3 className="text-2xl font-serif text-brand-ink mt-1.5">{activo.cliente}</h3>
-            </div>
-            <span className="audit-badge bg-brand-bone text-brand-ink/50 shrink-0">
-              {activo.encargado}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <BestFit label="Canal" value={activo.mejor.canal} />
-            <BestFit label="Tono" value={activo.mejor.tono} />
-            <BestFit label="Horario" value={activo.mejor.hora} />
-            <BestFit label="Respuesta" value={`${activo.tasa}%`} accent />
-          </div>
-
-          <div className="pt-3 border-t border-brand-sand space-y-2">
-            <div>
-              <span className="text-[9px] uppercase tracking-widest text-brand-ink/35">
-                Estrategia que funciona
-              </span>
-              <p className="text-sm text-brand-ink mt-1">{activo.mejor.estrategia}</p>
-            </div>
-            <p className="text-[11px] text-brand-ink/50 leading-relaxed">{activo.nota}</p>
-          </div>
-        </div>
-
-        {/* Historial de mensajes */}
-        <div className="editorial-card !p-0 overflow-hidden">
-          <div className="px-6 py-4 border-b border-brand-sand flex items-center gap-2">
-            <MessageSquare size={13} className="text-brand-gold" />
-            <span className="label-caps !opacity-60">Mensajes enviados</span>
-          </div>
-
-          <div className="divide-y divide-brand-sand/60">
-            {activo.mensajes.map((m, i) => {
-              const Icon = CANAL_ICON[m.canal as keyof typeof CANAL_ICON] ?? MessageSquare;
-              const res = RESULTADO_STYLES[m.resultado];
-              return (
-                <div key={i} className="px-6 py-4 hover:bg-brand-bone/40 transition-colors">
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <Icon size={13} className="text-brand-ink/40 shrink-0" />
-                    <span className="text-xs font-bold text-brand-ink">{m.tipo}</span>
-                    <span className={`audit-badge ${res.chip}`}>{res.label}</span>
-                    <span className="text-[10px] text-brand-ink/40 ml-auto tabular-nums">
-                      {m.fecha}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-[10px]">
-                    <MsgMeta label="Canal" value={m.canal} />
-                    <MsgMeta label="Tono" value={m.tono} />
-                    <MsgMeta label="Nivel" value={`${m.nivel} de 4`} />
-                    <MsgMeta label="Vencida al enviar" value={`${m.vencidoAlEnviar} días`} />
-                    <MsgMeta label="Espera al siguiente" value={m.espera} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function BestFit({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div
-      className={`px-3 py-3 rounded-xl border ${
-        accent ? 'bg-brand-gold/10 border-brand-gold/40' : 'bg-brand-bone border-brand-sand'
-      }`}
-    >
-      <div className="text-[9px] uppercase tracking-widest text-brand-ink/35">{label}</div>
-      <div className="text-sm font-bold text-brand-ink mt-1">{value}</div>
-    </div>
-  );
-}
-
-function MsgMeta({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="text-brand-ink/45">
-      {label}: <span className="text-brand-ink/75 font-bold">{value}</span>
-    </span>
   );
 }
 
