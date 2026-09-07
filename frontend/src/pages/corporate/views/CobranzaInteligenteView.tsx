@@ -2,7 +2,6 @@ import React from 'react';
 import {
   AlertTriangle,
   ArrowRight,
-  Brain,
   CalendarClock,
   Info,
   Mail,
@@ -12,7 +11,6 @@ import {
   Sparkles,
   TrendingDown,
   TrendingUp,
-  Users,
 } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
 
@@ -29,121 +27,104 @@ import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
  */
 
 type Section =
-  | 'prioridades'
-  | 'riesgo'
+  | 'cartera'
   | 'alertas'
   | 'recordatorios'
   | 'estrategias'
   | 'perfiles'
-  | 'equipo'
-  | 'simulador';
+  | 'equipo';
 
 const sections: { id: Section; label: string }[] = [
-  { id: 'prioridades', label: 'Prioridades' },
-  { id: 'riesgo', label: 'Riesgo' },
+  { id: 'cartera', label: 'Cartera y riesgo' },
   { id: 'alertas', label: 'Alertas' },
   { id: 'recordatorios', label: 'Recordatorios' },
   { id: 'estrategias', label: 'Estrategias' },
   { id: 'perfiles', label: 'Perfiles' },
   { id: 'equipo', label: 'Equipo' },
-  { id: 'simulador', label: 'Simulador' },
 ];
 
 // ─── Datos de ejemplo ────────────────────────────────────────────────
 // Reemplazar por llamadas reales al API cuando exista el Módulo 2.
 
 const MOCK = {
-  prioridades: [
+  // Una sola lista: la prioridad de trabajo y el riesgo de cada cuenta son la
+  // misma cosa vista desde dos ángulos, así que viven en el mismo registro.
+  // `score` NO se guarda: se calcula de los factores (ver `scoreOf`), para que
+  // el número que se muestra siempre cuadre con su desglose.
+  cartera: [
     {
       cliente: 'Distribuidora del Norte',
       folio: 'F-2841',
       monto: 284_500,
       diasVencido: 42,
-      riesgo: 78,
+      tendencia: 'sube' as const,
       razon: 'Monto alto + puntualidad histórica cayó de 92% a 61% en 3 meses',
       accion: 'Llamada del encargado',
       urgencia: 'alta' as const,
+      factores: [
+        { nombre: 'Puntualidad histórica', peso: 40, valor: 66 },
+        { nombre: 'Concentración en cartera', peso: 30, valor: 88 },
+        { nombre: 'Tendencia reciente', peso: 30, valor: 84 },
+      ],
     },
     {
       cliente: 'Materiales Peninsulares',
       folio: 'F-2903',
       monto: 156_200,
       diasVencido: 28,
-      riesgo: 54,
+      tendencia: 'estable' as const,
       razon: 'Buen historial, primer atraso relevante en 2 años',
       accion: 'Recordatorio tono suave',
       urgencia: 'media' as const,
+      factores: [
+        { nombre: 'Puntualidad histórica', peso: 40, valor: 37 },
+        { nombre: 'Concentración en cartera', peso: 30, valor: 61 },
+        { nombre: 'Tendencia reciente', peso: 30, valor: 70 },
+      ],
     },
     {
       cliente: 'Grupo Ferretero Bajío',
       folio: 'F-2877',
       monto: 98_400,
       diasVencido: 35,
-      riesgo: 71,
+      tendencia: 'sube' as const,
       razon: 'Tercer atraso consecutivo, no respondió los últimos 2 mensajes',
       accion: 'Escalar a humano',
       urgencia: 'alta' as const,
+      factores: [
+        { nombre: 'Puntualidad histórica', peso: 40, valor: 77 },
+        { nombre: 'Concentración en cartera', peso: 30, valor: 42 },
+        { nombre: 'Tendencia reciente', peso: 30, valor: 92 },
+      ],
     },
     {
       cliente: 'Logística Andrade',
       folio: 'F-2915',
       monto: 62_800,
       diasVencido: 12,
-      riesgo: 22,
+      tendencia: 'baja' as const,
       razon: 'Paga tarde pero siempre paga — su patrón normal son 15 días',
       accion: 'Esperar (no contactar)',
       urgencia: 'baja' as const,
+      factores: [
+        { nombre: 'Puntualidad histórica', peso: 40, valor: 18 },
+        { nombre: 'Concentración en cartera', peso: 30, valor: 24 },
+        { nombre: 'Tendencia reciente', peso: 30, valor: 26 },
+      ],
     },
     {
       cliente: 'Constructora Vanguardia',
       folio: 'F-2860',
       monto: 412_000,
       diasVencido: 19,
-      riesgo: 45,
+      tendencia: 'estable' as const,
       razon: 'Monto muy alto — vigilar aunque el atraso aún es moderado',
       accion: 'Recordatorio estándar',
       urgencia: 'media' as const,
-    },
-  ],
-  riesgo: [
-    {
-      cliente: 'Distribuidora del Norte',
-      score: 78,
-      tendencia: 'sube' as const,
       factores: [
-        { nombre: 'Puntualidad histórica', peso: 40, valor: 61 },
-        { nombre: 'Concentración en cartera', peso: 30, valor: 88 },
-        { nombre: 'Tendencia reciente', peso: 30, valor: 84 },
-      ],
-    },
-    {
-      cliente: 'Grupo Ferretero Bajío',
-      score: 71,
-      tendencia: 'sube' as const,
-      factores: [
-        { nombre: 'Puntualidad histórica', peso: 40, valor: 58 },
-        { nombre: 'Concentración en cartera', peso: 30, valor: 42 },
-        { nombre: 'Tendencia reciente', peso: 30, valor: 92 },
-      ],
-    },
-    {
-      cliente: 'Materiales Peninsulares',
-      score: 54,
-      tendencia: 'estable' as const,
-      factores: [
-        { nombre: 'Puntualidad histórica', peso: 40, valor: 38 },
-        { nombre: 'Concentración en cartera', peso: 30, valor: 61 },
-        { nombre: 'Tendencia reciente', peso: 30, valor: 70 },
-      ],
-    },
-    {
-      cliente: 'Logística Andrade',
-      score: 22,
-      tendencia: 'baja' as const,
-      factores: [
-        { nombre: 'Puntualidad histórica', peso: 40, valor: 18 },
-        { nombre: 'Concentración en cartera', peso: 30, valor: 24 },
-        { nombre: 'Tendencia reciente', peso: 30, valor: 26 },
+        { nombre: 'Puntualidad histórica', peso: 40, valor: 20 },
+        { nombre: 'Concentración en cartera', peso: 30, valor: 96 },
+        { nombre: 'Tendencia reciente', peso: 30, valor: 28 },
       ],
     },
   ],
@@ -345,7 +326,7 @@ const MOCK = {
 // ─── Vista principal ─────────────────────────────────────────────────
 
 export function CobranzaInteligenteView() {
-  const [section, setSection] = React.useState<Section>('prioridades');
+  const [section, setSection] = React.useState<Section>('cartera');
 
   return (
     <div className="space-y-6 pb-10">
@@ -379,14 +360,12 @@ export function CobranzaInteligenteView() {
 
       <PrototypeNotice />
 
-      {section === 'prioridades' && <PrioridadesPanel />}
-      {section === 'riesgo' && <RiesgoPanel />}
+      {section === 'cartera' && <CarteraPanel />}
       {section === 'alertas' && <AlertasPanel />}
       {section === 'recordatorios' && <RecordatoriosPanel />}
       {section === 'estrategias' && <EstrategiasPanel />}
       {section === 'perfiles' && <PerfilesPanel />}
       {section === 'equipo' && <EquipoPanel />}
-      {section === 'simulador' && <SimuladorPanel />}
     </div>
   );
 }
@@ -405,7 +384,11 @@ function PrototypeNotice() {
   );
 }
 
-// ─── 1 · Prioridades ─────────────────────────────────────────────────
+// ─── 1 · Cartera y riesgo ────────────────────────────────────────────
+// Un solo tablero: a la izquierda el orden de trabajo, a la derecha por qué
+// esa cuenta está ahí, cómo se compone su score y qué pasaría si se negocia.
+
+type CarteraItem = (typeof MOCK.cartera)[number];
 
 const URGENCIA_STYLES = {
   alta: 'bg-red-100 text-red-700',
@@ -413,116 +396,154 @@ const URGENCIA_STYLES = {
   baja: 'bg-brand-sand/40 text-brand-ink/50',
 } as const;
 
-function PrioridadesPanel() {
-  const total = MOCK.prioridades.reduce((sum, p) => sum + p.monto, 0);
+/**
+ * Score compuesto a partir de sus factores ponderados.
+ * Se calcula en vez de guardarse para que el número grande y su desglose
+ * nunca puedan contradecirse — es lo que sostiene el "no es una caja negra".
+ */
+function scoreOf(factores: readonly { peso: number; valor: number }[]): number {
+  return Math.round(factores.reduce((sum, f) => sum + (f.peso * f.valor) / 100, 0));
+}
+
+function CarteraPanel() {
+  const [selected, setSelected] = React.useState(MOCK.cartera[0].folio);
+  const activo = MOCK.cartera.find((c) => c.folio === selected) ?? MOCK.cartera[0];
+
+  const total = MOCK.cartera.reduce((sum, c) => sum + c.monto, 0);
+  const requierenHumano = MOCK.cartera.filter((c) => c.urgencia === 'alta').length;
+  const riesgoProm = Math.round(
+    MOCK.cartera.reduce((sum, c) => sum + scoreOf(c.factores), 0) / MOCK.cartera.length,
+  );
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <MiniStat label="En la lista de hoy" value={String(MOCK.prioridades.length)} sub="cuentas priorizadas" />
-        <MiniStat label="Monto en juego" value={CURRENCY_FORMATTER.format(total)} sub="suma de las cuentas listadas" />
-        <MiniStat label="Requieren humano" value="2" sub="el agente no las toca solo" accent />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <MiniStat
+          label="En la lista de hoy"
+          value={String(MOCK.cartera.length)}
+          sub="cuentas priorizadas"
+        />
+        <MiniStat
+          label="Monto en juego"
+          value={CURRENCY_FORMATTER.format(total)}
+          sub="suma de las cuentas listadas"
+        />
+        <MiniStat
+          label="Riesgo promedio"
+          value={String(riesgoProm)}
+          sub="score compuesto de la lista"
+        />
+        <MiniStat
+          label="Requieren humano"
+          value={String(requierenHumano)}
+          sub="el agente no las toca solo"
+          accent
+        />
       </div>
 
-      <div className="editorial-card !p-0 overflow-hidden">
-        <div className="px-6 py-4 border-b border-brand-sand flex items-center gap-2">
-          <Sparkles size={14} className="text-brand-gold" />
-          <span className="label-caps !opacity-60">Orden sugerido de trabajo</span>
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
+        {/* Orden de trabajo */}
+        <div className="lg:col-span-2 editorial-card !p-0 overflow-hidden">
+          <div className="px-6 py-4 border-b border-brand-sand flex items-center gap-2">
+            <Sparkles size={14} className="text-brand-gold" />
+            <span className="label-caps !opacity-60">Orden sugerido de trabajo</span>
+          </div>
+          <div>
+            {MOCK.cartera.map((c, i) => {
+              const activa = c.folio === selected;
+              return (
+                <button
+                  key={c.folio}
+                  onClick={() => setSelected(c.folio)}
+                  aria-current={activa}
+                  className={`w-full text-left px-5 py-4 border-b border-brand-sand/60 last:border-0 transition-colors ${
+                    activa ? 'bg-brand-gold/10' : 'hover:bg-brand-bone/60'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="w-4 shrink-0 text-[10px] font-bold tabular-nums text-brand-ink/25 mt-1">
+                      {i + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-bold text-brand-ink truncate">{c.cliente}</div>
+                      <div className="text-[10px] text-brand-ink/45 mt-1 tabular-nums">
+                        {CURRENCY_FORMATTER.format(c.monto)} · {c.diasVencido} días
+                      </div>
+                      <div className="text-[9px] font-mono text-brand-ink/30 mt-0.5">{c.folio}</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+                      <TrendIcon tendencia={c.tendencia} />
+                      <RiskChip score={scoreOf(c.factores)} />
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <div className="px-5 py-3 bg-brand-bone/60 border-t border-brand-sand">
+            <p className="text-[10px] text-brand-ink/40 leading-relaxed">
+              El orden combina monto, días vencidos y score de riesgo. Selecciona una cuenta para
+              ver su desglose.
+            </p>
+          </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left min-w-[820px]">
-            <thead>
-              <tr className="border-b border-brand-sand">
-                {['Cliente', 'Monto', 'Vencido', 'Riesgo', 'Por qué está aquí', 'Acción'].map((h) => (
-                  <th key={h} className="px-5 py-3 text-[9px] uppercase tracking-widest font-bold text-brand-ink/40">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {MOCK.prioridades.map((p) => (
-                <tr key={p.folio} className="border-b border-brand-sand/60 last:border-0 hover:bg-brand-bone/50 transition-colors">
-                  <td className="px-5 py-4">
-                    <div className="text-sm font-bold text-brand-ink">{p.cliente}</div>
-                    <div className="text-[10px] text-brand-ink/40 font-mono mt-0.5">{p.folio}</div>
-                  </td>
-                  <td className="px-5 py-4 text-sm tabular-nums text-brand-ink">
-                    {CURRENCY_FORMATTER.format(p.monto)}
-                  </td>
-                  <td className="px-5 py-4">
-                    <span className="text-sm tabular-nums text-brand-ink">{p.diasVencido}</span>
-                    <span className="text-[10px] text-brand-ink/40 ml-1">días</span>
-                  </td>
-                  <td className="px-5 py-4">
-                    <RiskChip score={p.riesgo} />
-                  </td>
-                  <td className="px-5 py-4 max-w-[280px]">
-                    <p className="text-[11px] text-brand-ink/60 leading-relaxed">{p.razon}</p>
-                  </td>
-                  <td className="px-5 py-4">
-                    <span className={`audit-badge ${URGENCIA_STYLES[p.urgencia]}`}>{p.accion}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+        {/* Detalle de la cuenta seleccionada */}
+        <div className="lg:col-span-3 space-y-5">
+          <CuentaDetalle cuenta={activo} />
+          <SimuladorCuenta cuenta={activo} />
         </div>
       </div>
     </div>
   );
 }
 
-// ─── 2 · Riesgo ──────────────────────────────────────────────────────
-
-function RiesgoPanel() {
-  const [selected, setSelected] = React.useState(MOCK.riesgo[0].cliente);
-  const activo = MOCK.riesgo.find((r) => r.cliente === selected) ?? MOCK.riesgo[0];
+function CuentaDetalle({ cuenta }: { cuenta: CarteraItem }) {
+  const score = scoreOf(cuenta.factores);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-      <div className="lg:col-span-2 editorial-card !p-0 overflow-hidden self-start">
-        <div className="px-6 py-4 border-b border-brand-sand">
-          <span className="label-caps !opacity-60">Score por cliente</span>
+    <div className="editorial-card space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <span className="label-caps !opacity-60">Cuenta seleccionada</span>
+          <h3 className="text-2xl font-serif text-brand-ink mt-1.5">{cuenta.cliente}</h3>
+          <span className="text-[10px] font-mono text-brand-ink/40">{cuenta.folio}</span>
         </div>
-        <div>
-          {MOCK.riesgo.map((r) => (
-            <button
-              key={r.cliente}
-              onClick={() => setSelected(r.cliente)}
-              className={`w-full text-left px-6 py-4 border-b border-brand-sand/60 last:border-0 transition-colors ${
-                selected === r.cliente ? 'bg-brand-gold/10' : 'hover:bg-brand-bone/60'
-              }`}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm font-bold text-brand-ink">{r.cliente}</span>
-                <div className="flex items-center gap-2 shrink-0">
-                  <TrendIcon tendencia={r.tendencia} />
-                  <RiskChip score={r.score} />
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
+        <span className={`audit-badge shrink-0 ${URGENCIA_STYLES[cuenta.urgencia]}`}>
+          {cuenta.accion}
+        </span>
       </div>
 
-      <div className="lg:col-span-3 editorial-card space-y-6">
-        <div>
+      <div className="grid grid-cols-3 gap-3">
+        <DetalleStat label="Monto" value={CURRENCY_FORMATTER.format(cuenta.monto)} />
+        <DetalleStat label="Vencido" value={`${cuenta.diasVencido} días`} />
+        <DetalleStat label="Riesgo" value={String(score)} accent />
+      </div>
+
+      <div className="px-4 py-3 bg-brand-bone border border-brand-sand rounded-xl">
+        <span className="text-[9px] uppercase tracking-widest text-brand-ink/35">
+          Por qué está aquí
+        </span>
+        <p className="text-sm text-brand-ink/75 mt-1 leading-relaxed">{cuenta.razon}</p>
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <Scale size={13} className="text-brand-gold" />
           <span className="label-caps !opacity-60">Desglose del score</span>
-          <h3 className="text-2xl font-serif text-brand-ink mt-2">{activo.cliente}</h3>
-          <p className="text-xs text-brand-ink/50 mt-2 leading-relaxed">
-            El score no es una caja negra: es la suma ponderada de estos factores. Cada peso es
-            configurable y cada valor sale de datos verificables de la cuenta.
-          </p>
         </div>
+        <p className="text-xs text-brand-ink/50 leading-relaxed">
+          El score no es una caja negra: es la suma ponderada de estos factores. Cada peso es
+          configurable y cada valor sale de datos verificables de la cuenta.
+        </p>
 
         <div className="space-y-4">
-          {activo.factores.map((f) => (
+          {cuenta.factores.map((f) => (
             <div key={f.nombre}>
-              <div className="flex items-baseline justify-between mb-1.5">
+              <div className="flex items-baseline justify-between mb-1.5 gap-3">
                 <span className="text-[11px] font-bold text-brand-ink/70">{f.nombre}</span>
-                <span className="text-[10px] text-brand-ink/40 font-mono">
-                  peso {f.peso}% · valor {f.valor}
+                <span className="text-[10px] text-brand-ink/40 font-mono shrink-0 tabular-nums">
+                  peso {f.peso}% · valor {f.valor} · aporta {Math.round((f.peso * f.valor) / 100)}
                 </span>
               </div>
               <div className="h-2 bg-brand-sand/50 rounded-full overflow-hidden">
@@ -537,14 +558,179 @@ function RiesgoPanel() {
 
         <div className="pt-4 border-t border-brand-sand flex items-center justify-between">
           <span className="label-caps !opacity-50">Score compuesto</span>
-          <span className="text-4xl font-serif text-brand-ink tabular-nums">{activo.score}</span>
+          <span className="text-4xl font-serif text-brand-ink tabular-nums">{score}</span>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── 3 · Alertas ─────────────────────────────────────────────────────
+function DetalleStat({
+  label,
+  value,
+  accent = false,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+}) {
+  return (
+    <div
+      className={`px-3 py-3 rounded-xl border ${
+        accent ? 'bg-brand-gold/10 border-brand-gold/40' : 'bg-brand-bone border-brand-sand'
+      }`}
+    >
+      <div className="text-[9px] uppercase tracking-widest text-brand-ink/35">{label}</div>
+      <div className="text-sm font-bold text-brand-ink mt-1 tabular-nums">{value}</div>
+    </div>
+  );
+}
+
+/**
+ * Simulador por cuenta: qué pasa con ESTA factura si se negocia el monto o se
+ * ofrece un descuento por pronto pago. La probabilidad base sale del score de
+ * riesgo del cliente, así que el mismo descuento rinde distinto en cada cuenta.
+ */
+function SimuladorCuenta({ cuenta }: { cuenta: CarteraItem }) {
+  const [descuento, setDescuento] = React.useState(3);
+  const [porcentaje, setPorcentaje] = React.useState(100);
+
+  // Al cambiar de cuenta se reinician los controles: un escenario ajustado
+  // para una factura no significa nada aplicado a otra.
+  React.useEffect(() => {
+    setDescuento(3);
+    setPorcentaje(100);
+  }, [cuenta.folio]);
+
+  // Cálculo ILUSTRATIVO. La curva real de aceptación se calibra con el
+  // histórico de la organización cuando el módulo esté conectado al backend.
+  const score = scoreOf(cuenta.factores);
+  const negociado = Math.round(cuenta.monto * (porcentaje / 100));
+  const probBase = Math.max(0.12, (100 - score) / 100);
+  const probCon = Math.min(0.95, probBase + descuento * 0.06 + (100 - porcentaje) * 0.004);
+  const esperadoSin = Math.round(cuenta.monto * probBase);
+  const esperadoCon = Math.round(negociado * probCon * (1 - descuento / 100));
+  const delta = esperadoCon - esperadoSin;
+  const diasSin = Math.round(20 + score * 0.6);
+  const diasCon = Math.max(3, Math.round(diasSin - descuento * 2.2 - (100 - porcentaje) * 0.15));
+
+  return (
+    <div className="editorial-card space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <span className="label-caps !opacity-60">Simulador de esta cuenta</span>
+          <h4 className="text-lg font-serif text-brand-ink mt-1.5">
+            ¿Qué pasa si negocio la factura {cuenta.folio}?
+          </h4>
+        </div>
+        <span className="audit-badge bg-brand-bone text-brand-ink/50 shrink-0">
+          Riesgo {score}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Controles */}
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between gap-3">
+              <label htmlFor="sim-monto" className="label-caps !opacity-50">
+                Monto a negociar
+              </label>
+              <span className="text-[10px] text-brand-ink/40 tabular-nums">{porcentaje}%</span>
+            </div>
+            <input
+              id="sim-monto"
+              type="range"
+              min={25}
+              max={100}
+              step={5}
+              value={porcentaje}
+              onChange={(e) => setPorcentaje(Number(e.target.value))}
+              className="w-full accent-brand-gold"
+            />
+            <div className="text-lg font-serif text-brand-ink tabular-nums">
+              {CURRENCY_FORMATTER.format(negociado)}
+            </div>
+            <p className="text-[10px] text-brand-ink/40 leading-relaxed">
+              De {CURRENCY_FORMATTER.format(cuenta.monto)} facturados. Bajarlo simula aceptar un
+              pago parcial hoy en vez de esperar el total.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between gap-3">
+              <label htmlFor="sim-descuento" className="label-caps !opacity-50">
+                Descuento por pronto pago
+              </label>
+              <span className="text-lg font-serif text-brand-ink tabular-nums">{descuento}%</span>
+            </div>
+            <input
+              id="sim-descuento"
+              type="range"
+              min={0}
+              max={10}
+              value={descuento}
+              onChange={(e) => setDescuento(Number(e.target.value))}
+              className="w-full accent-brand-gold"
+            />
+            <p className="text-[10px] text-brand-ink/40 leading-relaxed">
+              El descuento mueve más la aguja en cuentas de riesgo alto: en una que ya paga bien,
+              regalas margen sin ganar velocidad.
+            </p>
+          </div>
+        </div>
+
+        {/* Resultado — siempre como "hoy → escenario": el valor del simulador
+            está en la comparación, no en el número aislado. */}
+        <div className="bg-brand-bone border border-brand-sand rounded-xl p-5 space-y-5">
+          <div className="flex items-center justify-between gap-3">
+            <span className="label-caps !opacity-50">Resultado proyectado</span>
+            <span className="text-[9px] uppercase tracking-widest text-brand-ink/30">
+              hoy → escenario
+            </span>
+          </div>
+
+          <CompareRow
+            label="Probabilidad de cobro"
+            antes={`${Math.round(probBase * 100)}%`}
+            despues={`${Math.round(probCon * 100)}%`}
+          />
+          <CompareRow
+            label="Valor esperado"
+            antes={CURRENCY_FORMATTER.format(esperadoSin)}
+            despues={CURRENCY_FORMATTER.format(esperadoCon)}
+            destacado
+          />
+          <CompareRow
+            label="Días estimados al cobro"
+            antes={`${diasSin} días`}
+            despues={`${diasCon} días`}
+          />
+
+          <div className="pt-4 border-t border-brand-sand">
+            <div className="text-[9px] uppercase tracking-widest text-brand-ink/35">
+              Diferencia
+            </div>
+            <div
+              className={`text-2xl font-serif tabular-nums mt-1 ${
+                delta >= 0 ? 'text-green-700' : 'text-red-600'
+              }`}
+            >
+              {delta >= 0 ? '+' : '−'} {CURRENCY_FORMATTER.format(Math.abs(delta))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p className="text-[10px] text-brand-ink/40 leading-relaxed">
+        Cifras ilustrativas. Simular no cambia nada real — no envía mensajes, no altera la factura
+        ni compromete un descuento con el cliente.
+      </p>
+    </div>
+  );
+}
+
+// ─── 2 · Alertas ─────────────────────────────────────────────────────
 
 const SEVERIDAD = {
   critica: { chip: 'bg-red-100 text-red-700', label: 'Crítica', border: 'border-red-200' },
@@ -579,7 +765,7 @@ function AlertasPanel() {
   );
 }
 
-// ─── 4 · Recordatorios enviados ──────────────────────────────────────
+// ─── 3 · Recordatorios enviados ──────────────────────────────────────
 
 const RESULTADO_STYLES = {
   pago: { chip: 'bg-green-100 text-green-700', label: 'Pagó' },
@@ -726,7 +912,7 @@ function MsgMeta({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ─── 5 · Estrategias ─────────────────────────────────────────────────
+// ─── 4 · Estrategias ─────────────────────────────────────────────────
 
 function EstrategiasPanel() {
   const e = MOCK.estrategias.efectividad;
@@ -834,7 +1020,7 @@ function StrategyRow({
   );
 }
 
-// ─── 6 · Perfiles ────────────────────────────────────────────────────
+// ─── 5 · Perfiles ────────────────────────────────────────────────────
 
 function PerfilesPanel() {
   return (
@@ -888,98 +1074,6 @@ function PerfilesPanel() {
             </div>
           </div>
         ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── 5 · Simulador ───────────────────────────────────────────────────
-
-function SimuladorPanel() {
-  const [descuento, setDescuento] = React.useState(3);
-  const [segmento, setSegmento] = React.useState('vencidas60');
-
-  // Cálculo ilustrativo — la fórmula real vive en el backend cuando exista.
-  const carteraBase = 4_860_000;
-  const afectada = segmento === 'vencidas60' ? 1_940_000 : segmento === 'vencidas30' ? 3_120_000 : carteraBase;
-  const aceptacionEstimada = Math.min(0.85, 0.18 + descuento * 0.11);
-  const recuperado = Math.round(afectada * aceptacionEstimada);
-  const costo = Math.round(recuperado * (descuento / 100));
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-      <div className="editorial-card space-y-6">
-        <div>
-          <span className="label-caps !opacity-60">Escenario</span>
-          <h3 className="text-xl font-serif text-brand-ink mt-2">¿Y si ofrezco un descuento?</h3>
-          <p className="text-xs text-brand-ink/50 mt-2 leading-relaxed">
-            Simula sin tocar nada real. Sirve para decidir con números en vez de a ojo.
-          </p>
-        </div>
-
-        <div className="space-y-2">
-          <label htmlFor="sim-segmento" className="label-caps !opacity-50 block">
-            Aplicar a
-          </label>
-          <select
-            id="sim-segmento"
-            value={segmento}
-            onChange={(e) => setSegmento(e.target.value)}
-            className="w-full px-4 py-3 bg-white border border-brand-sand rounded-xl text-sm text-brand-ink focus:outline-none focus:border-brand-gold"
-          >
-            <option value="vencidas60">Facturas vencidas +60 días</option>
-            <option value="vencidas30">Facturas vencidas +30 días</option>
-            <option value="todas">Toda la cartera vencida</option>
-          </select>
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <label htmlFor="sim-descuento" className="label-caps !opacity-50">
-              Descuento por pronto pago
-            </label>
-            <span className="text-lg font-serif text-brand-ink tabular-nums">{descuento}%</span>
-          </div>
-          <input
-            id="sim-descuento"
-            type="range"
-            min={1}
-            max={10}
-            value={descuento}
-            onChange={(e) => setDescuento(Number(e.target.value))}
-            className="w-full accent-brand-gold"
-          />
-        </div>
-      </div>
-
-      <div className="editorial-card space-y-5">
-        <span className="label-caps !opacity-60">Resultado proyectado</span>
-
-        <div className="space-y-4">
-          <ResultRow label="Cartera afectada" value={CURRENCY_FORMATTER.format(afectada)} />
-          <ResultRow
-            label="Aceptación estimada"
-            value={`${Math.round(aceptacionEstimada * 100)}%`}
-          />
-          <ResultRow
-            label="Recuperación esperada"
-            value={CURRENCY_FORMATTER.format(recuperado)}
-            strong
-          />
-          <ResultRow label="Costo del descuento" value={`− ${CURRENCY_FORMATTER.format(costo)}`} />
-        </div>
-
-        <div className="pt-4 border-t border-brand-sand flex items-baseline justify-between">
-          <span className="text-[11px] font-bold text-brand-ink/70">Neto vs. no hacer nada</span>
-          <span className="text-2xl font-serif text-brand-ink tabular-nums">
-            {CURRENCY_FORMATTER.format(recuperado - costo)}
-          </span>
-        </div>
-
-        <p className="text-[10px] text-brand-ink/40 leading-relaxed">
-          Cifras ilustrativas. La curva de aceptación real se calibra con el histórico de la
-          organización una vez que el módulo esté conectado.
-        </p>
       </div>
     </div>
   );
@@ -1110,15 +1204,31 @@ function Tag({ icon, text }: { icon: React.ReactNode; text: string }) {
   );
 }
 
-function ResultRow({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
+function CompareRow({
+  label,
+  antes,
+  despues,
+  destacado = false,
+}: {
+  label: string;
+  antes: string;
+  despues: string;
+  destacado?: boolean;
+}) {
   return (
-    <div className="flex items-baseline justify-between">
-      <span className="text-[11px] text-brand-ink/55">{label}</span>
-      <span
-        className={`tabular-nums ${strong ? 'text-lg font-serif text-brand-ink' : 'text-sm text-brand-ink/80'}`}
-      >
-        {value}
-      </span>
+    <div>
+      <div className="text-[9px] uppercase tracking-widest text-brand-ink/35">{label}</div>
+      <div className="flex items-baseline gap-2 mt-1">
+        <span className="text-sm tabular-nums text-brand-ink/40">{antes}</span>
+        <ArrowRight size={12} className="text-brand-ink/25 shrink-0 self-center" />
+        <span
+          className={`tabular-nums ${
+            destacado ? 'text-xl font-serif text-brand-ink' : 'text-sm font-bold text-brand-ink'
+          }`}
+        >
+          {despues}
+        </span>
+      </div>
     </div>
   );
 }
