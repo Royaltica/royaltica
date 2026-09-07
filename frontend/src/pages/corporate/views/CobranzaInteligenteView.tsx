@@ -5,7 +5,9 @@ import {
   Brain,
   CalendarClock,
   Info,
+  Mail,
   MessageSquare,
+  Phone,
   Scale,
   Sparkles,
   TrendingDown,
@@ -26,15 +28,25 @@ import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
  * endpoint correspondiente y el resto del componente se queda igual.
  */
 
-type Section = 'prioridades' | 'riesgo' | 'alertas' | 'aprendizaje' | 'simulador' | 'equipo';
+type Section =
+  | 'prioridades'
+  | 'riesgo'
+  | 'alertas'
+  | 'recordatorios'
+  | 'estrategias'
+  | 'perfiles'
+  | 'equipo'
+  | 'simulador';
 
 const sections: { id: Section; label: string }[] = [
   { id: 'prioridades', label: 'Prioridades' },
   { id: 'riesgo', label: 'Riesgo' },
   { id: 'alertas', label: 'Alertas' },
-  { id: 'aprendizaje', label: 'Aprendizaje' },
-  { id: 'simulador', label: 'Simulador' },
+  { id: 'recordatorios', label: 'Recordatorios' },
+  { id: 'estrategias', label: 'Estrategias' },
+  { id: 'perfiles', label: 'Perfiles' },
   { id: 'equipo', label: 'Equipo' },
+  { id: 'simulador', label: 'Simulador' },
 ];
 
 // ─── Datos de ejemplo ────────────────────────────────────────────────
@@ -165,40 +177,168 @@ const MOCK = {
       cuando: 'Hace 1 día',
     },
   ],
-  aprendizaje: [
+  recordatorios: [
     {
       cliente: 'Distribuidora del Norte',
-      mejor: { canal: 'WhatsApp', tono: 'Estándar', hora: '9–11h' },
+      encargado: 'María Jiménez',
+      enviados: 18,
       tasa: 72,
-      intentos: 18,
+      ultimo: 'hace 2 días',
+      mejor: { canal: 'WhatsApp', tono: 'Estándar', hora: '9–11h', estrategia: 'Recordatorio con liga de pago' },
       nota: 'No responde correo. Por WhatsApp contesta casi siempre en la mañana.',
+      mensajes: [
+        { fecha: '02 sep 2026, 09:14', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Estándar', nivel: 3, vencidoAlEnviar: 40, espera: '3 días', resultado: 'respondio' as const },
+        { fecha: '30 ago 2026, 09:05', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 2, vencidoAlEnviar: 37, espera: '5 días', resultado: 'sin_respuesta' as const },
+        { fecha: '25 ago 2026, 16:40', canal: 'Correo', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 32, espera: '7 días', resultado: 'sin_respuesta' as const },
+        { fecha: '18 ago 2026, 09:10', canal: 'WhatsApp', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 25, espera: '—', resultado: 'respondio' as const },
+      ],
     },
     {
       cliente: 'Materiales Peninsulares',
-      mejor: { canal: 'Correo', tono: 'Suave', hora: '16–18h' },
+      encargado: 'Ana Robles',
+      enviados: 11,
       tasa: 64,
-      intentos: 11,
-      nota: 'Prefiere correo — probablemente lo revisa su área administrativa por la tarde.',
+      ultimo: 'hace 5 días',
+      mejor: { canal: 'Correo', tono: 'Suave', hora: '16–18h', estrategia: 'Plan de pagos en 2 parcialidades' },
+      nota: 'Prefiere correo — lo revisa su área administrativa por la tarde.',
+      mensajes: [
+        { fecha: '29 ago 2026, 16:22', canal: 'Correo', tipo: 'Oferta de plan', tono: 'Suave', nivel: 2, vencidoAlEnviar: 24, espera: '4 días', resultado: 'respondio' as const },
+        { fecha: '25 ago 2026, 17:03', canal: 'Correo', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 20, espera: '6 días', resultado: 'sin_respuesta' as const },
+        { fecha: '19 ago 2026, 10:30', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 14, espera: '—', resultado: 'sin_respuesta' as const },
+      ],
     },
     {
       cliente: 'Grupo Ferretero Bajío',
-      mejor: { canal: 'WhatsApp', tono: 'Firme', hora: '12–14h' },
+      encargado: 'Carlos Mendoza',
+      enviados: 22,
       tasa: 38,
-      intentos: 22,
-      nota: 'Responde poco en general. El tono suave no genera respuesta con esta cuenta.',
+      ultimo: 'hace 1 día',
+      mejor: { canal: 'Llamada', tono: 'Firme', hora: '12–14h', estrategia: 'Escalamiento a llamada del encargado' },
+      nota: 'Responde poco por texto. El tono suave no genera respuesta con esta cuenta.',
+      mensajes: [
+        { fecha: '03 sep 2026, 12:45', canal: 'Llamada', tipo: 'Escalamiento', tono: 'Firme', nivel: 4, vencidoAlEnviar: 34, espera: '2 días', resultado: 'respondio' as const },
+        { fecha: '01 sep 2026, 12:10', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Firme', nivel: 3, vencidoAlEnviar: 32, espera: '4 días', resultado: 'sin_respuesta' as const },
+        { fecha: '28 ago 2026, 09:20', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Estándar', nivel: 2, vencidoAlEnviar: 28, espera: '5 días', resultado: 'sin_respuesta' as const },
+        { fecha: '23 ago 2026, 09:15', canal: 'Correo', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 23, espera: '—', resultado: 'sin_respuesta' as const },
+      ],
     },
     {
       cliente: 'Logística Andrade',
-      mejor: { canal: 'WhatsApp', tono: 'Suave', hora: '9–11h' },
+      encargado: 'Ana Robles',
+      enviados: 9,
       tasa: 91,
-      intentos: 9,
+      ultimo: 'hace 8 días',
+      mejor: { canal: 'WhatsApp', tono: 'Suave', hora: '9–11h', estrategia: 'Recordatorio simple, sin insistir' },
       nota: 'Responde casi siempre. Basta un recordatorio amable.',
+      mensajes: [
+        { fecha: '26 ago 2026, 09:32', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 9, espera: '2 días', resultado: 'pago' as const },
+        { fecha: '19 ago 2026, 09:40', canal: 'WhatsApp', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 2, espera: '—', resultado: 'respondio' as const },
+      ],
+    },
+    {
+      cliente: 'Constructora Vanguardia',
+      encargado: 'María Jiménez',
+      enviados: 6,
+      tasa: 50,
+      ultimo: 'hace 3 días',
+      mejor: { canal: 'Correo', tono: 'Estándar', hora: '8–10h', estrategia: 'Recordatorio con estado de cuenta adjunto' },
+      nota: 'Cuenta grande, requiere formalidad. Responde mejor con documento adjunto.',
+      mensajes: [
+        { fecha: '01 sep 2026, 08:30', canal: 'Correo', tipo: 'Recordatorio', tono: 'Estándar', nivel: 2, vencidoAlEnviar: 17, espera: '6 días', resultado: 'respondio' as const },
+        { fecha: '26 ago 2026, 08:45', canal: 'Correo', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 11, espera: '—', resultado: 'sin_respuesta' as const },
+      ],
+    },
+  ],
+  estrategias: {
+    efectividad: {
+      enviados: 412,
+      respondidos: 247,
+      cobradasTrasContacto: 168,
+      diasAhorrados: 9,
+    },
+    funcionan: [
+      { nombre: 'Recordatorio con liga de pago incluida', exito: 81, usos: 96, nota: 'Resuelve en el momento — el cliente no tiene que buscar los datos.' },
+      { nombre: 'Plan de pagos en parcialidades', exito: 74, usos: 38, nota: 'Convierte un "no puedo" en un acuerdo. Solo con planes pre-aprobados.' },
+      { nombre: 'Aviso 3 días antes del vencimiento', exito: 69, usos: 124, nota: 'Previene el atraso en vez de perseguirlo después.' },
+      { nombre: 'Escalamiento a llamada del encargado', exito: 62, usos: 27, nota: 'Funciona en cuentas grandes que ignoran el texto.' },
+    ],
+    noFuncionan: [
+      { nombre: 'Insistir 3+ veces en la misma semana', exito: 12, usos: 41, nota: 'Baja la tasa de respuesta y deteriora la relación. Roza el hostigamiento.' },
+      { nombre: 'Correo sin asunto personalizado', exito: 19, usos: 63, nota: 'Se pierde en la bandeja. El folio en el asunto sube la apertura.' },
+      { nombre: 'Tono firme en el primer contacto', exito: 23, usos: 34, nota: 'Genera fricción con clientes que solo se distrajeron.' },
+      { nombre: 'Mensajes fuera de horario laboral', exito: 8, usos: 19, nota: 'Sin respuesta, y además fuera de la ventana permitida.' },
+    ],
+  },
+  perfiles: [
+    {
+      nombre: 'El distraído puntual',
+      clientes: 38,
+      descripcion: 'Paga bien, pero se le pasa la fecha. Un recordatorio basta.',
+      tono: 'Suave',
+      horario: '9–11h',
+      canal: 'WhatsApp',
+      estrategia: 'Aviso 3 días antes del vencimiento',
+      exito: 88,
+    },
+    {
+      nombre: 'El que siempre negocia',
+      clientes: 17,
+      descripcion: 'Puede pagar, pero pide plazo o descuento cada vez.',
+      tono: 'Estándar',
+      horario: '16–18h',
+      canal: 'Correo',
+      estrategia: 'Ofrecer plan de parcialidades desde el inicio',
+      exito: 71,
+    },
+    {
+      nombre: 'El silencioso',
+      clientes: 12,
+      descripcion: 'No contesta mensajes, pero reacciona a la llamada.',
+      tono: 'Firme',
+      horario: '12–14h',
+      canal: 'Llamada',
+      estrategia: 'Escalar a llamada tras 2 mensajes sin respuesta',
+      exito: 54,
+    },
+    {
+      nombre: 'El formal corporativo',
+      clientes: 9,
+      descripcion: 'Cuenta grande con área administrativa. Requiere documento.',
+      tono: 'Estándar',
+      horario: '8–10h',
+      canal: 'Correo',
+      estrategia: 'Recordatorio con estado de cuenta adjunto',
+      exito: 66,
     },
   ],
   equipo: [
-    { nombre: 'María Jiménez', cartera: 2_840_000, recuperado: 2_210_000, cuentas: 34, diasProm: 31 },
-    { nombre: 'Carlos Mendoza', cartera: 1_960_000, recuperado: 1_180_000, cuentas: 28, diasProm: 47 },
-    { nombre: 'Ana Robles', cartera: 3_120_000, recuperado: 2_690_000, cuentas: 41, diasProm: 26 },
+    {
+      nombre: 'María Jiménez',
+      cartera: 2_840_000,
+      porCobrar: 630_000,
+      recuperado: 2_210_000,
+      cuentas: 34,
+      pendientes: 7,
+      diasProm: 31,
+    },
+    {
+      nombre: 'Carlos Mendoza',
+      cartera: 1_960_000,
+      porCobrar: 780_000,
+      recuperado: 1_180_000,
+      cuentas: 28,
+      pendientes: 14,
+      diasProm: 47,
+    },
+    {
+      nombre: 'Ana Robles',
+      cartera: 3_120_000,
+      porCobrar: 430_000,
+      recuperado: 2_690_000,
+      cuentas: 41,
+      pendientes: 4,
+      diasProm: 26,
+    },
   ],
 };
 
@@ -242,9 +382,11 @@ export function CobranzaInteligenteView() {
       {section === 'prioridades' && <PrioridadesPanel />}
       {section === 'riesgo' && <RiesgoPanel />}
       {section === 'alertas' && <AlertasPanel />}
-      {section === 'aprendizaje' && <AprendizajePanel />}
-      {section === 'simulador' && <SimuladorPanel />}
+      {section === 'recordatorios' && <RecordatoriosPanel />}
+      {section === 'estrategias' && <EstrategiasPanel />}
+      {section === 'perfiles' && <PerfilesPanel />}
       {section === 'equipo' && <EquipoPanel />}
+      {section === 'simulador' && <SimuladorPanel />}
     </div>
   );
 }
@@ -437,47 +579,313 @@ function AlertasPanel() {
   );
 }
 
-// ─── 4 · Aprendizaje ─────────────────────────────────────────────────
+// ─── 4 · Recordatorios enviados ──────────────────────────────────────
 
-function AprendizajePanel() {
+const RESULTADO_STYLES = {
+  pago: { chip: 'bg-green-100 text-green-700', label: 'Pagó' },
+  respondio: { chip: 'bg-brand-gold/20 text-brand-ink/70', label: 'Respondió' },
+  sin_respuesta: { chip: 'bg-brand-sand/40 text-brand-ink/40', label: 'Sin respuesta' },
+} as const;
+
+const CANAL_ICON = {
+  WhatsApp: MessageSquare,
+  Correo: Mail,
+  Llamada: Phone,
+} as const;
+
+function RecordatoriosPanel() {
+  const [selected, setSelected] = React.useState(MOCK.recordatorios[0].cliente);
+  const activo = MOCK.recordatorios.find((r) => r.cliente === selected) ?? MOCK.recordatorios[0];
+
   return (
-    <div className="space-y-5">
-      <div className="flex items-start gap-3 px-4 py-3 bg-brand-cream border border-brand-sand rounded-xl">
-        <Brain size={15} className="text-brand-gold shrink-0 mt-0.5" />
-        <p className="text-[11px] text-brand-ink/70 leading-relaxed max-w-3xl">
-          El sistema registra cada intento de contacto y su resultado desde el primer mensaje. Con
-          eso aprende qué combinación de canal, tono y horario funciona con cada cliente — sin
-          modelos opacos: es la tasa de respuesta observada, y se puede auditar.
-        </p>
+    <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
+      {/* Lista de clientes */}
+      <div className="lg:col-span-2 editorial-card !p-0 overflow-hidden">
+        <div className="px-6 py-4 border-b border-brand-sand">
+          <span className="label-caps !opacity-60">Clientes contactados</span>
+        </div>
+        <div>
+          {MOCK.recordatorios.map((r) => (
+            <button
+              key={r.cliente}
+              onClick={() => setSelected(r.cliente)}
+              className={`w-full text-left px-6 py-4 border-b border-brand-sand/60 last:border-0 transition-colors ${
+                selected === r.cliente ? 'bg-brand-gold/10' : 'hover:bg-brand-bone/60'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-bold text-brand-ink truncate">{r.cliente}</div>
+                  <div className="text-[10px] text-brand-ink/40 mt-0.5">
+                    {r.enviados} mensajes · último {r.ultimo}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-sm font-bold text-brand-ink tabular-nums leading-none">
+                    {r.tasa}%
+                  </div>
+                  <div className="text-[9px] uppercase tracking-widest text-brand-ink/35 mt-1">
+                    resp.
+                  </div>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
 
+      {/* Detalle del cliente */}
+      <div className="lg:col-span-3 space-y-5">
+        {/* Lo que mejor le funciona */}
+        <div className="editorial-card space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <span className="label-caps !opacity-60">Lo que mejor funciona con</span>
+              <h3 className="text-2xl font-serif text-brand-ink mt-1.5">{activo.cliente}</h3>
+            </div>
+            <span className="audit-badge bg-brand-bone text-brand-ink/50 shrink-0">
+              {activo.encargado}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <BestFit label="Canal" value={activo.mejor.canal} />
+            <BestFit label="Tono" value={activo.mejor.tono} />
+            <BestFit label="Horario" value={activo.mejor.hora} />
+            <BestFit label="Respuesta" value={`${activo.tasa}%`} accent />
+          </div>
+
+          <div className="pt-3 border-t border-brand-sand space-y-2">
+            <div>
+              <span className="text-[9px] uppercase tracking-widest text-brand-ink/35">
+                Estrategia que funciona
+              </span>
+              <p className="text-sm text-brand-ink mt-1">{activo.mejor.estrategia}</p>
+            </div>
+            <p className="text-[11px] text-brand-ink/50 leading-relaxed">{activo.nota}</p>
+          </div>
+        </div>
+
+        {/* Historial de mensajes */}
+        <div className="editorial-card !p-0 overflow-hidden">
+          <div className="px-6 py-4 border-b border-brand-sand flex items-center gap-2">
+            <MessageSquare size={13} className="text-brand-gold" />
+            <span className="label-caps !opacity-60">Mensajes enviados</span>
+          </div>
+
+          <div className="divide-y divide-brand-sand/60">
+            {activo.mensajes.map((m, i) => {
+              const Icon = CANAL_ICON[m.canal as keyof typeof CANAL_ICON] ?? MessageSquare;
+              const res = RESULTADO_STYLES[m.resultado];
+              return (
+                <div key={i} className="px-6 py-4 hover:bg-brand-bone/40 transition-colors">
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <Icon size={13} className="text-brand-ink/40 shrink-0" />
+                    <span className="text-xs font-bold text-brand-ink">{m.tipo}</span>
+                    <span className={`audit-badge ${res.chip}`}>{res.label}</span>
+                    <span className="text-[10px] text-brand-ink/40 ml-auto tabular-nums">
+                      {m.fecha}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-[10px]">
+                    <MsgMeta label="Canal" value={m.canal} />
+                    <MsgMeta label="Tono" value={m.tono} />
+                    <MsgMeta label="Nivel" value={`${m.nivel} de 4`} />
+                    <MsgMeta label="Vencida al enviar" value={`${m.vencidoAlEnviar} días`} />
+                    <MsgMeta label="Espera al siguiente" value={m.espera} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BestFit({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div
+      className={`px-3 py-3 rounded-xl border ${
+        accent ? 'bg-brand-gold/10 border-brand-gold/40' : 'bg-brand-bone border-brand-sand'
+      }`}
+    >
+      <div className="text-[9px] uppercase tracking-widest text-brand-ink/35">{label}</div>
+      <div className="text-sm font-bold text-brand-ink mt-1">{value}</div>
+    </div>
+  );
+}
+
+function MsgMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="text-brand-ink/45">
+      {label}: <span className="text-brand-ink/75 font-bold">{value}</span>
+    </span>
+  );
+}
+
+// ─── 5 · Estrategias ─────────────────────────────────────────────────
+
+function EstrategiasPanel() {
+  const e = MOCK.estrategias.efectividad;
+  const tasaRespuesta = Math.round((e.respondidos / e.enviados) * 100);
+
+  return (
+    <div className="space-y-5">
+      {/* Efectividad del agente */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <MiniStat label="Mensajes enviados" value={String(e.enviados)} sub="en los últimos 90 días" />
+        <MiniStat label="Tasa de respuesta" value={`${tasaRespuesta}%`} sub={`${e.respondidos} respondieron`} />
+        <MiniStat
+          label="Cobradas tras contacto"
+          value={String(e.cobradasTrasContacto)}
+          sub="facturas liquidadas"
+        />
+        <MiniStat
+          label="Días ahorrados"
+          value={`−${e.diasAhorrados}`}
+          sub="vs. línea base de cobro"
+          accent
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+        {/* Lo que funciona */}
+        <div className="editorial-card !p-0 overflow-hidden">
+          <div className="px-6 py-4 border-b border-brand-sand flex items-center gap-2">
+            <TrendingUp size={14} className="text-green-600" />
+            <span className="label-caps !opacity-60">Lo que sí funciona</span>
+          </div>
+          <div className="divide-y divide-brand-sand/60">
+            {MOCK.estrategias.funcionan.map((s) => (
+              <StrategyRow
+                key={s.nombre}
+                nombre={s.nombre}
+                exito={s.exito}
+                usos={s.usos}
+                nota={s.nota}
+                positivo
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Lo que no funciona */}
+        <div className="editorial-card !p-0 overflow-hidden">
+          <div className="px-6 py-4 border-b border-brand-sand flex items-center gap-2">
+            <TrendingDown size={14} className="text-red-500" />
+            <span className="label-caps !opacity-60">Lo que no funciona</span>
+          </div>
+          <div className="divide-y divide-brand-sand/60">
+            {MOCK.estrategias.noFuncionan.map((s) => (
+              <StrategyRow
+                key={s.nombre}
+                nombre={s.nombre}
+                exito={s.exito}
+                usos={s.usos}
+                nota={s.nota}
+                positivo={false}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StrategyRow({
+  nombre,
+  exito,
+  usos,
+  nota,
+  positivo,
+}: {
+  key?: string;
+  nombre: string;
+  exito: number;
+  usos: number;
+  nota: string;
+  positivo: boolean;
+}) {
+  return (
+    <div className="px-6 py-4 space-y-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-sm font-bold text-brand-ink">{nombre}</span>
+        <span
+          className={`text-lg font-serif tabular-nums shrink-0 ${
+            positivo ? 'text-green-700' : 'text-red-600'
+          }`}
+        >
+          {exito}%
+        </span>
+      </div>
+      <div className="h-1.5 bg-brand-sand/50 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full ${positivo ? 'bg-green-600' : 'bg-red-400'}`}
+          style={{ width: `${exito}%` }}
+        />
+      </div>
+      <p className="text-[11px] text-brand-ink/50 leading-relaxed">{nota}</p>
+      <p className="text-[9px] uppercase tracking-widest text-brand-ink/30">{usos} veces usada</p>
+    </div>
+  );
+}
+
+// ─── 6 · Perfiles ────────────────────────────────────────────────────
+
+function PerfilesPanel() {
+  return (
+    <div className="space-y-5">
+      <p className="text-xs text-brand-ink/50 max-w-2xl">
+        Agrupación de clientes por cómo se comportan, no por cuánto deben. Cada perfil trae la
+        combinación que mejor le funciona — es lo que el agente usa como punto de partida con un
+        cliente nuevo, antes de tener historial propio suyo.
+      </p>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {MOCK.aprendizaje.map((a) => (
-          <div key={a.cliente} className="editorial-card !p-6 space-y-4">
+        {MOCK.perfiles.map((p) => (
+          <div key={p.nombre} className="editorial-card !p-6 space-y-4">
             <div className="flex items-start justify-between gap-3">
-              <h4 className="text-sm font-bold text-brand-ink">{a.cliente}</h4>
+              <div>
+                <h4 className="text-lg font-serif text-brand-ink">{p.nombre}</h4>
+                <p className="text-[11px] text-brand-ink/50 mt-1 leading-relaxed">
+                  {p.descripcion}
+                </p>
+              </div>
               <div className="text-right shrink-0">
                 <div className="text-2xl font-serif text-brand-ink tabular-nums leading-none">
-                  {a.tasa}%
+                  {p.clientes}
                 </div>
-                <div className="text-[9px] uppercase tracking-widest text-brand-ink/40 mt-1">
-                  respuesta
+                <div className="text-[9px] uppercase tracking-widest text-brand-ink/35 mt-1">
+                  clientes
                 </div>
               </div>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Tag icon={<MessageSquare size={10} />} text={a.mejor.canal} />
-              <Tag icon={<Scale size={10} />} text={`Tono ${a.mejor.tono}`} />
-              <Tag icon={<CalendarClock size={10} />} text={a.mejor.hora} />
+              <Tag icon={<MessageSquare size={10} />} text={p.canal} />
+              <Tag icon={<Scale size={10} />} text={`Tono ${p.tono}`} />
+              <Tag icon={<CalendarClock size={10} />} text={p.horario} />
             </div>
 
-            <p className="text-[11px] text-brand-ink/55 leading-relaxed border-t border-brand-sand pt-3">
-              {a.nota}
-            </p>
-            <p className="text-[9px] uppercase tracking-widest text-brand-ink/30">
-              basado en {a.intentos} intentos
-            </p>
+            <div className="pt-3 border-t border-brand-sand">
+              <span className="text-[9px] uppercase tracking-widest text-brand-ink/35">
+                Estrategia recomendada
+              </span>
+              <p className="text-sm text-brand-ink mt-1">{p.estrategia}</p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-1.5 bg-brand-sand/50 rounded-full overflow-hidden">
+                <div className="h-full rounded-full bg-brand-gold" style={{ width: `${p.exito}%` }} />
+              </div>
+              <span className="text-xs font-bold text-brand-ink tabular-nums shrink-0">
+                {p.exito}% éxito
+              </span>
+            </div>
           </div>
         ))}
       </div>
@@ -617,16 +1025,44 @@ function EquipoPanel() {
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-brand-sand flex items-center justify-between">
-                <span className="text-[10px] uppercase tracking-widest text-brand-ink/40">
-                  Días promedio
-                </span>
-                <span className="text-lg font-serif text-brand-ink tabular-nums">{p.diasProm}</span>
+              <div className="pt-3 border-t border-brand-sand space-y-2.5">
+                <EquipoStat label="Monto por cobrar" value={CURRENCY_FORMATTER.format(p.porCobrar)} />
+                <EquipoStat
+                  label="Recordatorios pendientes"
+                  value={String(p.pendientes)}
+                  alerta={p.pendientes >= 10}
+                />
+                <EquipoStat label="Días promedio de cobro" value={String(p.diasProm)} />
               </div>
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function EquipoStat({
+  label,
+  value,
+  alerta = false,
+}: {
+  label: string;
+  value: string;
+  alerta?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-[10px] uppercase tracking-widest text-brand-ink/40 leading-tight">
+        {label}
+      </span>
+      <span
+        className={`text-sm font-bold tabular-nums shrink-0 ${
+          alerta ? 'text-red-600' : 'text-brand-ink'
+        }`}
+      >
+        {value}
+      </span>
     </div>
   );
 }
