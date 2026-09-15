@@ -9,6 +9,7 @@ import {
 import {
   AlertTriangle,
   ArrowRight,
+  ChevronDown,
   CalendarClock,
   Info,
   Mail,
@@ -175,6 +176,7 @@ const MOCK = {
       cliente: 'Distribuidora del Norte',
       folio: 'F-2841',
       monto: 284_500,
+      pagado: 85_350,
       diasVencido: 42,
       tendencia: 'sube' as const,
       razon: 'Monto alto + puntualidad histórica cayó de 92% a 61% en 3 meses',
@@ -190,6 +192,7 @@ const MOCK = {
       cliente: 'Materiales Peninsulares',
       folio: 'F-2903',
       monto: 156_200,
+      pagado: 78_100,
       diasVencido: 28,
       tendencia: 'estable' as const,
       razon: 'Buen historial, primer atraso relevante en 2 años',
@@ -205,6 +208,7 @@ const MOCK = {
       cliente: 'Grupo Ferretero Bajío',
       folio: 'F-2877',
       monto: 98_400,
+      pagado: 0,
       diasVencido: 35,
       tendencia: 'sube' as const,
       razon: 'Tercer atraso consecutivo, no respondió los últimos 2 mensajes',
@@ -220,6 +224,7 @@ const MOCK = {
       cliente: 'Logística Andrade',
       folio: 'F-2915',
       monto: 62_800,
+      pagado: 47_100,
       diasVencido: 12,
       tendencia: 'baja' as const,
       razon: 'Paga tarde pero siempre paga. Su patrón normal son 15 días',
@@ -235,6 +240,7 @@ const MOCK = {
       cliente: 'Constructora Vanguardia',
       folio: 'F-2860',
       monto: 412_000,
+      pagado: 123_600,
       diasVencido: 19,
       tendencia: 'estable' as const,
       razon: 'Monto muy alto. Vigilar aunque el atraso aún es moderado',
@@ -299,10 +305,10 @@ const MOCK = {
         ],
       },
       mensajes: [
-        { fecha: '02 sep 2026, 09:14', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Estándar', nivel: 3, vencidoAlEnviar: 40, espera: '3 días', resultado: 'respondio' as const },
-        { fecha: '30 ago 2026, 09:05', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 2, vencidoAlEnviar: 37, espera: '5 días', resultado: 'sin_respuesta' as const },
-        { fecha: '25 ago 2026, 16:40', canal: 'Correo', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 32, espera: '7 días', resultado: 'sin_respuesta' as const },
-        { fecha: '18 ago 2026, 09:10', canal: 'WhatsApp', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 25, espera: 'sin siguiente', resultado: 'respondio' as const },
+        { fecha: '02 sep 2026, 09:14', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Estándar', nivel: 3, vencidoAlEnviar: 40, espera: '3 días', resultado: 'respondio' as const, texto: 'Hola, Distribuidora del Norte. Le recordamos la factura F-2841 por $284,500.00 MXN, con vencimiento el 22 de julio. Puede liquidarla desde esta liga segura. Si ya realizó el pago o necesita el estado de cuenta, responda este mensaje y lo revisamos.', respuesta: 'Sí, la vimos. Estamos cerrando el mes, la programamos para la próxima semana.' },
+        { fecha: '30 ago 2026, 09:05', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 2, vencidoAlEnviar: 37, espera: '5 días', resultado: 'sin_respuesta' as const, texto: 'Buen día. Seguimos al pendiente de la factura F-2841. Si requiere una copia del comprobante fiscal o apoyo con el proceso, con gusto lo atendemos.' },
+        { fecha: '25 ago 2026, 16:40', canal: 'Correo', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 32, espera: '7 días', resultado: 'sin_respuesta' as const, texto: 'Estimados, adjuntamos el estado de cuenta con el detalle de la factura F-2841. Quedamos atentos a cualquier aclaración.' },
+        { fecha: '18 ago 2026, 09:10', canal: 'WhatsApp', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 25, espera: 'sin siguiente', resultado: 'respondio' as const, texto: 'Hola. Le informamos que la factura F-2841 por $284,500.00 MXN cumple su fecha de vencimiento hoy. Si ya está programada, ignore este aviso.', respuesta: 'Recibido, la tenemos en revisión con el área de pagos.' },
       ],
     },
     {
@@ -325,9 +331,9 @@ const MOCK = {
         ],
       },
       mensajes: [
-        { fecha: '29 ago 2026, 16:22', canal: 'Correo', tipo: 'Oferta de plan', tono: 'Suave', nivel: 2, vencidoAlEnviar: 24, espera: '4 días', resultado: 'respondio' as const },
-        { fecha: '25 ago 2026, 17:03', canal: 'Correo', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 20, espera: '6 días', resultado: 'sin_respuesta' as const },
-        { fecha: '19 ago 2026, 10:30', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 14, espera: 'sin siguiente', resultado: 'sin_respuesta' as const },
+        { fecha: '29 ago 2026, 16:22', canal: 'Correo', tipo: 'Oferta de plan', tono: 'Suave', nivel: 2, vencidoAlEnviar: 24, espera: '4 días', resultado: 'respondio' as const, texto: 'Estimados. Sabemos que este mes ha sido distinto para ustedes. Podemos dividir la factura F-2903 en dos parcialidades, la primera este mes y la segunda el siguiente, sin costo adicional. ¿Les funciona?', respuesta: 'Nos ayudaría muchísimo. Confirmamos la primera parcialidad para el viernes.' },
+        { fecha: '25 ago 2026, 17:03', canal: 'Correo', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 20, espera: '6 días', resultado: 'sin_respuesta' as const, texto: 'Buenas tardes. Le recordamos la factura F-2903 por $156,200.00 MXN. Si necesita el estado de cuenta o revisar fechas, quedamos a sus órdenes.' },
+        { fecha: '19 ago 2026, 10:30', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 14, espera: 'sin siguiente', resultado: 'sin_respuesta' as const, texto: 'Hola, Materiales Peninsulares. Un recordatorio de la factura F-2903. Cualquier duda, con gusto la resolvemos.' },
       ],
     },
     {
@@ -350,10 +356,10 @@ const MOCK = {
         ],
       },
       mensajes: [
-        { fecha: '03 sep 2026, 12:45', canal: 'Llamada', tipo: 'Escalamiento', tono: 'Firme', nivel: 4, vencidoAlEnviar: 34, espera: '2 días', resultado: 'respondio' as const },
-        { fecha: '01 sep 2026, 12:10', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Firme', nivel: 3, vencidoAlEnviar: 32, espera: '4 días', resultado: 'sin_respuesta' as const },
-        { fecha: '28 ago 2026, 09:20', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Estándar', nivel: 2, vencidoAlEnviar: 28, espera: '5 días', resultado: 'sin_respuesta' as const },
-        { fecha: '23 ago 2026, 09:15', canal: 'Correo', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 23, espera: 'sin siguiente', resultado: 'sin_respuesta' as const },
+        { fecha: '03 sep 2026, 12:45', canal: 'Llamada', tipo: 'Escalamiento', tono: 'Firme', nivel: 4, vencidoAlEnviar: 34, espera: '2 días', resultado: 'respondio' as const, texto: 'Buenas tardes. Le marcamos desde Royáltica para revisar juntos el estatus de la factura F-2877 y encontrar una fecha que les funcione. ¿Tiene unos minutos?', respuesta: 'Sí, páseme con quien lleva el tema. Lo vemos el lunes con administración.' },
+        { fecha: '01 sep 2026, 12:10', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Firme', nivel: 3, vencidoAlEnviar: 32, espera: '4 días', resultado: 'sin_respuesta' as const, texto: 'Estimados, la factura F-2877 por $98,400.00 MXN continúa pendiente de conciliación. Le pedimos confirmar una fecha estimada de pago.' },
+        { fecha: '28 ago 2026, 09:20', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Estándar', nivel: 2, vencidoAlEnviar: 28, espera: '5 días', resultado: 'sin_respuesta' as const, texto: 'Hola. Le recordamos la factura F-2877. Si hay algún tema con la documentación, lo revisamos con gusto.' },
+        { fecha: '23 ago 2026, 09:15', canal: 'Correo', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 23, espera: 'sin siguiente', resultado: 'sin_respuesta' as const, texto: 'Buen día, Grupo Ferretero Bajío. Le compartimos el recordatorio de la factura F-2877 y su estado de cuenta.' },
       ],
     },
     {
@@ -375,8 +381,8 @@ const MOCK = {
         ],
       },
       mensajes: [
-        { fecha: '26 ago 2026, 09:32', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 9, espera: '2 días', resultado: 'pago' as const },
-        { fecha: '19 ago 2026, 09:40', canal: 'WhatsApp', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 2, espera: 'sin siguiente', resultado: 'respondio' as const },
+        { fecha: '26 ago 2026, 09:32', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 9, espera: '2 días', resultado: 'pago' as const, texto: 'Hola, Logística Andrade. Un recordatorio breve de la factura F-2915. Como siempre, cualquier cosa nos dice.', respuesta: 'Listo, ya se envió la transferencia del resto. Les paso el comprobante.' },
+        { fecha: '19 ago 2026, 09:40', canal: 'WhatsApp', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 2, espera: 'sin siguiente', resultado: 'respondio' as const, texto: 'Buen día. La factura F-2915 por $62,800.00 MXN vence hoy. Si ya está en proceso, ignore este mensaje.', respuesta: 'Va, hacemos un abono parcial hoy y el resto la próxima semana.' },
       ],
     },
     {
@@ -398,8 +404,8 @@ const MOCK = {
         ],
       },
       mensajes: [
-        { fecha: '01 sep 2026, 08:30', canal: 'Correo', tipo: 'Recordatorio', tono: 'Estándar', nivel: 2, vencidoAlEnviar: 17, espera: '6 días', resultado: 'respondio' as const },
-        { fecha: '26 ago 2026, 08:45', canal: 'Correo', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 11, espera: 'sin siguiente', resultado: 'sin_respuesta' as const },
+        { fecha: '01 sep 2026, 08:30', canal: 'Correo', tipo: 'Recordatorio', tono: 'Estándar', nivel: 2, vencidoAlEnviar: 17, espera: '6 días', resultado: 'respondio' as const, texto: 'Estimados. Adjuntamos el estado de cuenta correspondiente a la factura F-2860 por $412,000.00 MXN. Quedamos atentos a la programación de pago por parte de su área administrativa.', respuesta: 'Gracias. Lo turnamos a finanzas, nos confirman la programación esta semana.' },
+        { fecha: '26 ago 2026, 08:45', canal: 'Correo', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 11, espera: 'sin siguiente', resultado: 'sin_respuesta' as const, texto: 'Buen día, Constructora Vanguardia. Le informamos que la factura F-2860 cumple su fecha de vencimiento hoy. Adjuntamos el comprobante fiscal para su referencia.' },
       ],
     },
   ],
@@ -607,6 +613,12 @@ const URGENCIA_STYLES = {
  */
 function scoreOf(factores: readonly { peso: number; valor: number }[]): number {
   return Math.round(factores.reduce((sum, f) => sum + (f.peso * f.valor) / 100, 0));
+}
+
+/** Porcentaje ya liquidado de una cuenta, redondeado. */
+function pctPagado(cuenta: CarteraItem): number {
+  if (cuenta.monto <= 0) return 0;
+  return Math.round((cuenta.pagado / cuenta.monto) * 100);
 }
 
 /** Datos de riesgo de una cuenta, por nombre de cliente. */
@@ -895,7 +907,23 @@ function RecordatoriosPanel() {
                           </span>
                         </div>
                       )}
-                      <div className="text-[11px] text-brand-ink/35 mt-1 tabular-nums">
+                      {cuentaFila && (
+                        <div className="mt-2">
+                          <div className="flex items-baseline justify-between gap-2 mb-1">
+                            <span className="text-[10px] text-brand-ink/40">
+                              Pagado{' '}
+                              <span className="font-semibold text-brand-ink/70 tabular-nums">
+                                {pctPagado(cuentaFila)}%
+                              </span>
+                            </span>
+                            <span className="text-[10px] text-brand-ink/35 tabular-nums">
+                              falta {CURRENCY_FORMATTER.format(cuentaFila.monto - cuentaFila.pagado)}
+                            </span>
+                          </div>
+                          <Bar value={pctPagado(cuentaFila)} tone="positivo" delay={0.15} />
+                        </div>
+                      )}
+                      <div className="text-[11px] text-brand-ink/35 mt-2 tabular-nums">
                         {r.enviados} mensajes · {r.tasa}% respuesta
                       </div>
                     </div>
@@ -1247,6 +1275,33 @@ function SubResumen({ cuenta }: { cuenta: CarteraItem | undefined }) {
         </div>
       </div>
 
+      {/* Avance de pago: cuánto de la factura ya entró y cuánto falta */}
+      <div className="space-y-2.5">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <BlockTitle>Avance de pago</BlockTitle>
+          <span className="text-[11px] text-brand-ink/45 tabular-nums">
+            {pctPagado(cuenta)}% liquidado
+          </span>
+        </div>
+        <Bar value={pctPagado(cuenta)} tone="positivo" delay={0.1} />
+        <div className="grid grid-cols-2 divide-x divide-brand-ink/8">
+          <div className="pr-4">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">Pagado</div>
+            <div className="text-base font-serif text-emerald-700 mt-1 tabular-nums">
+              <Figure value={cuenta.pagado} format="moneda" />
+            </div>
+          </div>
+          <div className="pl-4">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">
+              Falta por pagar
+            </div>
+            <div className="text-base font-serif text-brand-ink mt-1 tabular-nums">
+              <Figure value={cuenta.monto - cuenta.pagado} format="moneda" />
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="pl-4 border-l-2 border-brand-gold">
         <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">
           Por qué está aquí
@@ -1419,17 +1474,34 @@ function CanalIcon({ canal }: { canal: string }) {
 }
 
 // ── Subpestaña 3 · Historial ────────────────────────────────────────
+// Registro de todo lo enviado y lo que contestó el cliente. Cada mensaje se
+// abre para leer el texto exacto que salió y la respuesta literal recibida.
 
 function SubHistorial({ registro, reduce }: { registro: RecordatorioItem; reduce: boolean | null }) {
+  const [abierto, setAbierto] = React.useState<string | null>(null);
+  const respondidos = registro.mensajes.filter((m) => m.respuesta).length;
+
   return (
-    <div className="px-7 py-6">
-      <ol className="relative border-l border-brand-ink/10 ml-3 space-y-5">
+    <div className="px-7 py-6 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <BlockTitle icon={<MessageSquare size={13} className="text-brand-gold" />}>
+          Registro de mensajes
+        </BlockTitle>
+        <span className="text-[11px] text-brand-ink/40 tabular-nums">
+          {registro.mensajes.length} enviados · {respondidos} con respuesta
+        </span>
+      </div>
+
+      <ol className="relative border-l border-brand-ink/10 ml-3 space-y-3">
         {registro.mensajes.map((m, i) => {
           const Icon = CANAL_ICON[m.canal as keyof typeof CANAL_ICON] ?? MessageSquare;
           const res = RESULTADO_STYLES[m.resultado];
+          const id = `${m.fecha}-${m.tipo}`;
+          const expandido = abierto === id;
+
           return (
             <motion.li
-              key={`${m.fecha}-${m.tipo}`}
+              key={id}
               initial={reduce ? false : { opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ duration: 0.3, delay: reduce ? 0 : 0.08 + i * 0.06, ease: EASE }}
@@ -1439,25 +1511,107 @@ function SubHistorial({ registro, reduce }: { registro: RecordatorioItem; reduce
                 <Icon size={9} className="text-brand-ink/45" />
               </span>
 
-              <div className="flex flex-wrap items-center gap-2.5">
-                <span className="text-[13px] font-semibold text-brand-ink">{m.tipo}</span>
-                <span className={`audit-badge ${res.chip}`}>{res.label}</span>
-                <span className="text-[11px] text-brand-ink/35 ml-auto tabular-nums whitespace-nowrap">
-                  {m.fecha}
-                </span>
-              </div>
+              <button
+                onClick={() => setAbierto(expandido ? null : id)}
+                aria-expanded={expandido}
+                className={`w-full text-left rounded-xl border px-4 py-3 transition-colors ${
+                  expandido
+                    ? 'bg-brand-cream border-brand-gold/40'
+                    : 'bg-brand-paper border-brand-ink/8 hover:border-brand-ink/20'
+                }`}
+              >
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <span className="text-[13px] font-semibold text-brand-ink">{m.tipo}</span>
+                  <span className={`audit-badge ${res.chip}`}>{res.label}</span>
+                  <span className="flex items-center gap-2 ml-auto shrink-0">
+                    <span className="text-[11px] text-brand-ink/35 tabular-nums whitespace-nowrap">
+                      {m.fecha}
+                    </span>
+                    <ChevronDown
+                      size={14}
+                      className={`text-brand-ink/30 transition-transform duration-200 ${
+                        expandido ? 'rotate-180' : ''
+                      }`}
+                    />
+                  </span>
+                </div>
 
-              <dl className="flex flex-wrap gap-x-5 gap-y-1 mt-2 text-[11px]">
-                <MsgMeta label="Canal" value={m.canal} />
-                <MsgMeta label="Tono" value={m.tono} />
-                <MsgMeta label="Nivel" value={`${m.nivel} de 4`} />
-                <MsgMeta label="Vencida al enviar" value={`${m.vencidoAlEnviar} días`} />
-                <MsgMeta label="Espera al siguiente" value={m.espera} />
-              </dl>
+                <dl className="flex flex-wrap gap-x-5 gap-y-1 mt-2 text-[11px]">
+                  <MsgMeta label="Canal" value={m.canal} />
+                  <MsgMeta label="Tono" value={m.tono} />
+                  <MsgMeta label="Nivel" value={`${m.nivel} de 4`} />
+                  <MsgMeta label="Vencida al enviar" value={`${m.vencidoAlEnviar} días`} />
+                </dl>
+              </button>
+
+              {/* El detalle aparece sin animar altura: solo el contenido entra
+                  con opacidad y desplazamiento, para no tocar el layout. */}
+              {expandido && (
+                <motion.div
+                  initial={reduce ? false : { opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2, ease: EASE }}
+                  className="mt-2 space-y-2"
+                >
+                  <Burbuja
+                    autor="Royáltica"
+                    marca={m.canal}
+                    texto={m.texto}
+                    tono="enviado"
+                  />
+                  {m.respuesta ? (
+                    <Burbuja
+                      autor={registro.cliente}
+                      marca="Respuesta"
+                      texto={m.respuesta}
+                      tono="recibido"
+                    />
+                  ) : (
+                    <p className="text-[11px] text-brand-ink/35 italic pl-4">
+                      Sin respuesta del cliente a este mensaje.
+                    </p>
+                  )}
+                </motion.div>
+              )}
             </motion.li>
           );
         })}
       </ol>
+    </div>
+  );
+}
+
+function Burbuja({
+  autor,
+  marca,
+  texto,
+  tono,
+}: {
+  autor: string;
+  marca: string;
+  texto: string;
+  tono: 'enviado' | 'recibido';
+}) {
+  const enviado = tono === 'enviado';
+  return (
+    <div
+      className={`rounded-xl px-4 py-3 border ${
+        enviado
+          ? 'bg-brand-paper border-brand-ink/10 ml-0 mr-6'
+          : 'bg-emerald-50/60 border-emerald-200 ml-6 mr-0'
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <span
+          className={`text-[10px] uppercase tracking-[0.12em] font-semibold ${
+            enviado ? 'text-brand-ink/45' : 'text-emerald-700'
+          }`}
+        >
+          {autor}
+        </span>
+        <span className="text-[10px] text-brand-ink/30">{marca}</span>
+      </div>
+      <p className="text-[13px] text-brand-ink/80 leading-relaxed">{texto}</p>
     </div>
   );
 }
