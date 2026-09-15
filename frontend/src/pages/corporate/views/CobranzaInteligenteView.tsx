@@ -286,6 +286,18 @@ const MOCK = {
       ultimo: 'hace 2 días',
       mejor: { canal: 'WhatsApp', tono: 'Estándar', hora: '9-11h', estrategia: 'Recordatorio con liga de pago' },
       nota: 'No responde correo. Por WhatsApp contesta casi siempre en la mañana.',
+      plan: {
+        proxima: { accion: 'Llamada del encargado', canal: 'Llamada', cuando: 'mañana 9:30' },
+        pasos: [
+          { dia: '-5', fase: 'temprana' as const, accion: 'Aviso preventivo', canal: 'WhatsApp', tono: 'Suave', estado: 'hecho' as const, resultado: 'Respondió' },
+          { dia: '0', fase: 'temprana' as const, accion: 'Aviso de vencimiento', canal: 'WhatsApp', tono: 'Suave', estado: 'hecho' as const, resultado: 'Sin respuesta' },
+          { dia: '+3', fase: 'temprana' as const, accion: 'Primer recordatorio', canal: 'WhatsApp', tono: 'Suave', estado: 'hecho' as const, resultado: 'Sin respuesta' },
+          { dia: '+7', fase: 'seguimiento' as const, accion: 'Recordatorio con liga de pago', canal: 'WhatsApp', tono: 'Estándar', estado: 'hecho' as const, resultado: 'Respondió' },
+          { dia: '+15', fase: 'seguimiento' as const, accion: 'Segundo intento con liga', canal: 'WhatsApp', tono: 'Estándar', estado: 'hecho' as const, resultado: 'Sin respuesta' },
+          { dia: '+45', fase: 'escalamiento' as const, accion: 'Llamada del encargado', canal: 'Llamada', tono: 'Firme', estado: 'actual' as const },
+          { dia: '+60', fase: 'escalamiento' as const, accion: 'Propuesta de plan de pagos', canal: 'Llamada', tono: 'Firme', estado: 'programado' as const },
+        ],
+      },
       mensajes: [
         { fecha: '02 sep 2026, 09:14', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Estándar', nivel: 3, vencidoAlEnviar: 40, espera: '3 días', resultado: 'respondio' as const },
         { fecha: '30 ago 2026, 09:05', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 2, vencidoAlEnviar: 37, espera: '5 días', resultado: 'sin_respuesta' as const },
@@ -301,6 +313,17 @@ const MOCK = {
       ultimo: 'hace 5 días',
       mejor: { canal: 'Correo', tono: 'Suave', hora: '16-18h', estrategia: 'Plan de pagos en 2 parcialidades' },
       nota: 'Prefiere correo, lo revisa su área administrativa por la tarde.',
+      plan: {
+        proxima: { accion: 'Oferta de plan en 2 parcialidades', canal: 'Correo', cuando: 'en 2 días, 16:30' },
+        pasos: [
+          { dia: '-5', fase: 'temprana' as const, accion: 'Aviso preventivo', canal: 'Correo', tono: 'Suave', estado: 'hecho' as const, resultado: 'Respondió' },
+          { dia: '0', fase: 'temprana' as const, accion: 'Aviso de vencimiento', canal: 'Correo', tono: 'Suave', estado: 'hecho' as const, resultado: 'Sin respuesta' },
+          { dia: '+3', fase: 'temprana' as const, accion: 'Primer recordatorio', canal: 'Correo', tono: 'Suave', estado: 'hecho' as const, resultado: 'Respondió' },
+          { dia: '+7', fase: 'seguimiento' as const, accion: 'Recordatorio con estado de cuenta', canal: 'Correo', tono: 'Suave', estado: 'hecho' as const, resultado: 'Sin respuesta' },
+          { dia: '+30', fase: 'seguimiento' as const, accion: 'Oferta de plan en 2 parcialidades', canal: 'Correo', tono: 'Suave', estado: 'actual' as const },
+          { dia: '+45', fase: 'escalamiento' as const, accion: 'Llamada del encargado', canal: 'Llamada', tono: 'Estándar', estado: 'programado' as const },
+        ],
+      },
       mensajes: [
         { fecha: '29 ago 2026, 16:22', canal: 'Correo', tipo: 'Oferta de plan', tono: 'Suave', nivel: 2, vencidoAlEnviar: 24, espera: '4 días', resultado: 'respondio' as const },
         { fecha: '25 ago 2026, 17:03', canal: 'Correo', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 20, espera: '6 días', resultado: 'sin_respuesta' as const },
@@ -315,6 +338,17 @@ const MOCK = {
       ultimo: 'hace 1 día',
       mejor: { canal: 'Llamada', tono: 'Firme', hora: '12-14h', estrategia: 'Escalamiento a llamada del encargado' },
       nota: 'Responde poco por texto. El tono suave no genera respuesta con esta cuenta.',
+      plan: {
+        proxima: { accion: 'Escalar a encargado humano', canal: 'Llamada', cuando: 'hoy 12:30' },
+        pasos: [
+          { dia: '-5', fase: 'temprana' as const, accion: 'Aviso preventivo', canal: 'WhatsApp', tono: 'Suave', estado: 'hecho' as const, resultado: 'Sin respuesta' },
+          { dia: '0', fase: 'temprana' as const, accion: 'Aviso de vencimiento', canal: 'Correo', tono: 'Suave', estado: 'hecho' as const, resultado: 'Sin respuesta' },
+          { dia: '+3', fase: 'temprana' as const, accion: 'Primer recordatorio', canal: 'WhatsApp', tono: 'Estándar', estado: 'hecho' as const, resultado: 'Sin respuesta' },
+          { dia: '+15', fase: 'seguimiento' as const, accion: 'Recordatorio en tono firme', canal: 'WhatsApp', tono: 'Firme', estado: 'hecho' as const, resultado: 'Sin respuesta' },
+          { dia: '+35', fase: 'escalamiento' as const, accion: 'Escalar a encargado humano', canal: 'Llamada', tono: 'Firme', estado: 'actual' as const },
+          { dia: '+50', fase: 'escalamiento' as const, accion: 'Revisión de crédito con dirección', canal: 'Llamada', tono: 'Firme', estado: 'programado' as const },
+        ],
+      },
       mensajes: [
         { fecha: '03 sep 2026, 12:45', canal: 'Llamada', tipo: 'Escalamiento', tono: 'Firme', nivel: 4, vencidoAlEnviar: 34, espera: '2 días', resultado: 'respondio' as const },
         { fecha: '01 sep 2026, 12:10', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Firme', nivel: 3, vencidoAlEnviar: 32, espera: '4 días', resultado: 'sin_respuesta' as const },
@@ -330,6 +364,16 @@ const MOCK = {
       ultimo: 'hace 8 días',
       mejor: { canal: 'WhatsApp', tono: 'Suave', hora: '9-11h', estrategia: 'Recordatorio simple, sin insistir' },
       nota: 'Responde casi siempre. Basta un recordatorio amable.',
+      plan: {
+        proxima: { accion: 'Recordatorio simple, sin insistir', canal: 'WhatsApp', cuando: 'en 3 días, 9:30' },
+        pasos: [
+          { dia: '-5', fase: 'temprana' as const, accion: 'Aviso preventivo', canal: 'WhatsApp', tono: 'Suave', estado: 'hecho' as const, resultado: 'Respondió' },
+          { dia: '0', fase: 'temprana' as const, accion: 'Aviso de vencimiento', canal: 'WhatsApp', tono: 'Suave', estado: 'hecho' as const, resultado: 'Pagó parcial' },
+          { dia: '+15', fase: 'temprana' as const, accion: 'Recordatorio simple, sin insistir', canal: 'WhatsApp', tono: 'Suave', estado: 'actual' as const },
+          { dia: '+25', fase: 'seguimiento' as const, accion: 'Recordatorio con liga de pago', canal: 'WhatsApp', tono: 'Suave', estado: 'programado' as const },
+          { dia: '+40', fase: 'escalamiento' as const, accion: 'Llamada del encargado', canal: 'Llamada', tono: 'Estándar', estado: 'programado' as const },
+        ],
+      },
       mensajes: [
         { fecha: '26 ago 2026, 09:32', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 9, espera: '2 días', resultado: 'pago' as const },
         { fecha: '19 ago 2026, 09:40', canal: 'WhatsApp', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 2, espera: 'sin siguiente', resultado: 'respondio' as const },
@@ -343,6 +387,16 @@ const MOCK = {
       ultimo: 'hace 3 días',
       mejor: { canal: 'Correo', tono: 'Estándar', hora: '8-10h', estrategia: 'Recordatorio con estado de cuenta adjunto' },
       nota: 'Cuenta grande, requiere formalidad. Responde mejor con documento adjunto.',
+      plan: {
+        proxima: { accion: 'Recordatorio con estado de cuenta', canal: 'Correo', cuando: 'mañana 8:30' },
+        pasos: [
+          { dia: '-7', fase: 'temprana' as const, accion: 'Aviso preventivo (cuenta grande)', canal: 'Correo', tono: 'Estándar', estado: 'hecho' as const, resultado: 'Respondió' },
+          { dia: '0', fase: 'temprana' as const, accion: 'Aviso de vencimiento', canal: 'Correo', tono: 'Suave', estado: 'hecho' as const, resultado: 'Sin respuesta' },
+          { dia: '+20', fase: 'temprana' as const, accion: 'Recordatorio con estado de cuenta', canal: 'Correo', tono: 'Estándar', estado: 'actual' as const },
+          { dia: '+35', fase: 'seguimiento' as const, accion: 'Confirmación con área administrativa', canal: 'Llamada', tono: 'Estándar', estado: 'programado' as const },
+          { dia: '+50', fase: 'escalamiento' as const, accion: 'Escalar a dirección de finanzas', canal: 'Llamada', tono: 'Firme', estado: 'programado' as const },
+        ],
+      },
       mensajes: [
         { fecha: '01 sep 2026, 08:30', canal: 'Correo', tipo: 'Recordatorio', tono: 'Estándar', nivel: 2, vencidoAlEnviar: 17, espera: '6 días', resultado: 'respondio' as const },
         { fecha: '26 ago 2026, 08:45', canal: 'Correo', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 11, espera: 'sin siguiente', resultado: 'sin_respuesta' as const },
@@ -759,8 +813,27 @@ const CANAL_ICON = {
   Llamada: Phone,
 } as const;
 
+type RecordatorioItem = (typeof MOCK.recordatorios)[number];
+type PasoPlan = RecordatorioItem['plan']['pasos'][number];
+
+type SubSeccion = 'resumen' | 'plan' | 'historial' | 'simulador';
+
+const SUB_SECCIONES: { id: SubSeccion; label: string }[] = [
+  { id: 'resumen', label: 'Resumen' },
+  { id: 'plan', label: 'Plan' },
+  { id: 'historial', label: 'Historial' },
+  { id: 'simulador', label: 'Simulador' },
+];
+
+/**
+ * El expediente de cada cliente se reparte en subpestañas en vez de apilarse.
+ * Antes la columna de detalle medía 2,260px (más de cuatro pantallas) contra
+ * 511px de la lista: eso dejaba 1,750px de columna izquierda vacía. Con las
+ * subpestañas cada vista cabe de un vistazo y las alturas se emparejan.
+ */
 function RecordatoriosPanel() {
   const [selected, setSelected] = React.useState(MOCK.recordatorios[0].cliente);
+  const [sub, setSub] = React.useState<SubSeccion>('resumen');
   const activo = MOCK.recordatorios.find((r) => r.cliente === selected) ?? MOCK.recordatorios[0];
   const reduce = useReducedMotion();
   // El riesgo de la cuenta vive en MOCK.cartera y se enlaza por nombre de
@@ -768,8 +841,18 @@ function RecordatoriosPanel() {
   // por eso las tarjetas de riesgo y simulación se renderizan condicionadas.
   const cuenta = cuentaDe(activo.cliente);
 
+  // Agregados de la cartera contactada: llenan el pie de la lista con algo
+  // útil en vez de dejar aire muerto bajo los cinco clientes.
+  const totalMensajes = MOCK.recordatorios.reduce((s, r) => s + r.enviados, 0);
+  const tasaPromedio = Math.round(
+    MOCK.recordatorios.reduce((s, r) => s + r.tasa, 0) / MOCK.recordatorios.length,
+  );
+  const enEscalamiento = MOCK.recordatorios.filter((r) =>
+    r.plan.pasos.some((p) => p.estado === 'actual' && p.fase === 'escalamiento'),
+  ).length;
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
+    <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
       {/* Lista de clientes */}
       <Reveal className="lg:col-span-2">
         <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden lg:sticky lg:top-4">
@@ -780,6 +863,7 @@ function RecordatoriosPanel() {
             {MOCK.recordatorios.map((r) => {
               const cuentaFila = cuentaDe(r.cliente);
               const activa = selected === r.cliente;
+              const pasoActual = r.plan.pasos.find((p) => p.estado === 'actual');
               return (
                 <button
                   key={r.cliente}
@@ -799,18 +883,20 @@ function RecordatoriosPanel() {
                     />
                   )}
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold text-brand-ink truncate">
                         {r.cliente}
                       </div>
-                      <div className="text-[11px] text-brand-ink/40 mt-1">
-                        {r.enviados} mensajes, último {r.ultimo}
-                      </div>
-                      <div className="text-[11px] text-brand-ink/40 mt-0.5">
-                        Respuesta{' '}
-                        <span className="font-semibold text-brand-ink/70 tabular-nums">
-                          {r.tasa}%
-                        </span>
+                      {pasoActual && (
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          <FaseDot fase={pasoActual.fase} />
+                          <span className="text-[11px] text-brand-ink/55 truncate">
+                            {pasoActual.accion}
+                          </span>
+                        </div>
+                      )}
+                      <div className="text-[11px] text-brand-ink/35 mt-1 tabular-nums">
+                        {r.enviados} mensajes · {r.tasa}% respuesta
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
@@ -819,110 +905,113 @@ function RecordatoriosPanel() {
                       ) : (
                         <span className="text-[11px] text-brand-ink/25">sin factura</span>
                       )}
-                      <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/30 mt-1.5">
-                        riesgo
-                      </div>
                     </div>
                   </div>
                 </button>
               );
             })}
           </div>
+
+          {/* Resumen de la cartera contactada */}
+          <div className="grid grid-cols-3 divide-x divide-brand-ink/8 border-t border-brand-ink/10 bg-brand-bone/50">
+            <ListaStat label="Mensajes" value={String(totalMensajes)} />
+            <ListaStat label="Respuesta" value={`${tasaPromedio}%`} />
+            <ListaStat label="Escalando" value={String(enEscalamiento)} alerta={enEscalamiento > 0} />
+          </div>
         </div>
       </Reveal>
 
-      {/* Detalle del cliente. La llave por cliente hace que todo el
-          expediente entre de nuevo al cambiar de cuenta, dejando claro que
-          lo que se ve pertenece a otra cuenta. */}
+      {/* Expediente del cliente, en subpestañas */}
       <div className="lg:col-span-3">
         <motion.div
           key={activo.cliente}
           initial={reduce ? false : { opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.28, ease: EASE }}
-          className="space-y-5"
+          className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden"
         >
-            {cuenta && <CuentaDetalle cuenta={cuenta} encargado={activo.encargado} />}
-
-            {/* Lo que mejor le funciona */}
-            <section className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-7 space-y-5">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <BlockTitle>Lo que mejor funciona</BlockTitle>
-                  <p className="text-xs text-brand-ink/50 mt-2 max-w-[46ch] leading-relaxed">
-                    Combinación con mayor tasa de respuesta registrada en esta cuenta.
-                  </p>
+          {/* Cabecera fija del expediente */}
+          <div className="px-7 pt-6 pb-0">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <BlockTitle>Cuenta seleccionada</BlockTitle>
+                <h3 className="text-[1.6rem] leading-tight font-serif text-brand-ink mt-1.5">
+                  {activo.cliente}
+                </h3>
+                <div className="flex items-center gap-2 mt-1 text-[11px] text-brand-ink/40">
+                  {cuenta && <span className="font-mono">{cuenta.folio}</span>}
+                  {cuenta && <span className="w-px h-3 bg-brand-ink/15" aria-hidden />}
+                  <span>{activo.encargado}</span>
                 </div>
-                <span className="audit-badge bg-brand-bone text-brand-ink/50 shrink-0">
-                  {activo.encargado}
+              </div>
+              {cuenta && (
+                <span className={`audit-badge shrink-0 ${URGENCIA_STYLES[cuenta.urgencia]}`}>
+                  {cuenta.accion}
                 </span>
-              </div>
+              )}
+            </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <BestFit label="Canal" value={activo.mejor.canal} />
-                <BestFit label="Tono" value={activo.mejor.tono} />
-                <BestFit label="Horario" value={activo.mejor.hora} />
-                <BestFit label="Respuesta" value={`${activo.tasa}%`} accent />
-              </div>
+            {/* Subpestañas: indicador deslizante, mismo lenguaje que la
+                navegación principal para que se lea como el mismo sistema. */}
+            <nav className="flex gap-1 mt-5 border-b border-brand-ink/10 -mx-7 px-7">
+              {SUB_SECCIONES.map((s) => {
+                const activa = sub === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setSub(s.id)}
+                    aria-current={activa ? 'page' : undefined}
+                    className={`relative px-3.5 py-2.5 text-xs font-semibold transition-colors duration-200 ${
+                      activa ? 'text-brand-ink' : 'text-brand-ink/40 hover:text-brand-ink/70'
+                    }`}
+                  >
+                    {s.label}
+                    {activa && (
+                      <motion.span
+                        layoutId={reduce ? undefined : 'subseccion-activa'}
+                        className="absolute left-2 right-2 -bottom-px h-0.5 bg-brand-gold rounded-full"
+                        transition={{ duration: 0.3, ease: EASE }}
+                      />
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
 
-              <div className="pt-4 border-t border-brand-ink/8 space-y-2">
-                <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">
-                  Estrategia que funciona
-                </div>
-                <p className="text-sm text-brand-ink">{activo.mejor.estrategia}</p>
-                <p className="text-xs text-brand-ink/50 leading-relaxed">{activo.nota}</p>
-              </div>
-            </section>
-
-            {/* Historial de mensajes, en línea de tiempo vertical: el orden
-                cronológico se lee por la línea, no por las fechas. */}
-            <section className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden">
-              <div className="px-6 py-4 border-b border-brand-ink/8 flex items-center gap-2">
-                <MessageSquare size={13} className="text-brand-gold" />
-                <BlockTitle>Mensajes enviados</BlockTitle>
-              </div>
-
-              <div className="px-6 py-5">
-                <ol className="relative border-l border-brand-ink/10 ml-3 space-y-6">
-                  {activo.mensajes.map((m, i) => {
-                    const Icon = CANAL_ICON[m.canal as keyof typeof CANAL_ICON] ?? MessageSquare;
-                    const res = RESULTADO_STYLES[m.resultado];
-                    return (
-                      <motion.li
-                        key={`${m.fecha}-${m.tipo}`}
-                        initial={reduce ? false : { opacity: 0, x: -8 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ duration: 0.3, delay: 0.1 + i * 0.06, ease: EASE }}
-                        className="pl-6"
-                      >
-                        <span className="absolute -left-[9px] flex items-center justify-center w-[18px] h-[18px] rounded-full bg-brand-paper border border-brand-ink/15">
-                          <Icon size={9} className="text-brand-ink/45" />
-                        </span>
-
-                        <div className="flex flex-wrap items-center gap-2.5">
-                          <span className="text-[13px] font-semibold text-brand-ink">{m.tipo}</span>
-                          <span className={`audit-badge ${res.chip}`}>{res.label}</span>
-                          <span className="text-[11px] text-brand-ink/35 ml-auto tabular-nums whitespace-nowrap">
-                            {m.fecha}
-                          </span>
-                        </div>
-
-                        <dl className="flex flex-wrap gap-x-5 gap-y-1 mt-2 text-[11px]">
-                          <MsgMeta label="Canal" value={m.canal} />
-                          <MsgMeta label="Tono" value={m.tono} />
-                          <MsgMeta label="Nivel" value={`${m.nivel} de 4`} />
-                          <MsgMeta label="Vencida al enviar" value={`${m.vencidoAlEnviar} días`} />
-                          <MsgMeta label="Espera al siguiente" value={m.espera} />
-                        </dl>
-                      </motion.li>
-                    );
-                  })}
-                </ol>
-              </div>
-            </section>
-
-          {cuenta && <SimuladorCuenta cuenta={cuenta} />}
+          <motion.div
+            key={`${activo.cliente}-${sub}`}
+            initial={reduce ? false : { opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, ease: EASE }}
+          >
+            {sub === 'resumen' && <SubResumen cuenta={cuenta} />}
+            {sub === 'plan' && <SubPlan registro={activo} />}
+            {sub === 'historial' && <SubHistorial registro={activo} reduce={reduce} />}
+            {sub === 'simulador' && cuenta && <SimuladorCuenta cuenta={cuenta} />}
+            {sub === 'simulador' && !cuenta && (
+              <p className="px-7 py-8 text-sm text-brand-ink/45">
+                Este cliente no tiene una factura priorizada, así que no hay nada que simular
+                todavía.
+              </p>
+            )}
+          </motion.div>
         </motion.div>
+      </div>
+    </div>
+  );
+}
+
+function ListaStat({ label, value, alerta = false }: { label: string; value: string; alerta?: boolean }) {
+  return (
+    <div className="px-4 py-3 text-center">
+      <div className="text-[9px] uppercase tracking-[0.12em] text-brand-ink/35">{label}</div>
+      <div
+        className={`text-lg font-serif mt-1 tabular-nums ${
+          alerta ? 'text-rose-600' : 'text-brand-ink'
+        }`}
+      >
+        {value}
       </div>
     </div>
   );
@@ -947,115 +1036,6 @@ function MsgMeta({ label, value }: { label: string; value: string }) {
       <dt className="text-brand-ink/40">{label}</dt>
       <dd className="text-brand-ink/75 font-semibold">{value}</dd>
     </div>
-  );
-}
-
-function CuentaDetalle({
-  cuenta,
-  encargado,
-}: {
-  cuenta: CarteraItem;
-  encargado: string;
-}) {
-  const score = scoreOf(cuenta.factores);
-  const nivel = nivelRiesgo(cuenta.factores.length ? score : 0);
-
-  return (
-    <section className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden">
-      <div className="p-7 space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <BlockTitle>Cuenta seleccionada</BlockTitle>
-            <h3 className="text-[1.75rem] leading-tight font-serif text-brand-ink mt-2">
-              {cuenta.cliente}
-            </h3>
-            <div className="flex items-center gap-2 mt-1.5 text-[11px] text-brand-ink/40">
-              <span className="font-mono">{cuenta.folio}</span>
-              <span className="w-px h-3 bg-brand-ink/15" aria-hidden />
-              <span>{encargado}</span>
-            </div>
-          </div>
-          <span className={`audit-badge shrink-0 ${URGENCIA_STYLES[cuenta.urgencia]}`}>
-            {cuenta.accion}
-          </span>
-        </div>
-
-        {/* Las tres cifras de la cuenta, sin cajas anidadas. */}
-        <div className="grid grid-cols-3 divide-x divide-brand-ink/8 border-y border-brand-ink/8">
-          <div className="pr-4 py-4">
-            <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">Monto</div>
-            <div className="text-xl font-serif text-brand-ink mt-2 tabular-nums">
-              <Figure value={cuenta.monto} format="moneda" />
-            </div>
-          </div>
-          <div className="px-4 py-4">
-            <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">Vencido</div>
-            <div className="text-xl font-serif text-brand-ink mt-2 tabular-nums">
-              <Figure value={cuenta.diasVencido} /> <span className="text-sm">días</span>
-            </div>
-          </div>
-          <div className="pl-4 py-4">
-            <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">Riesgo</div>
-            <div
-              className={`text-xl font-serif mt-2 tabular-nums ${
-                nivel === 'alto'
-                  ? 'text-rose-600'
-                  : nivel === 'medio'
-                    ? 'text-amber-600'
-                    : 'text-emerald-700'
-              }`}
-            >
-              <Figure value={score} />
-            </div>
-          </div>
-        </div>
-
-        <div className="pl-4 border-l-2 border-brand-gold">
-          <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">
-            Por qué está aquí
-          </div>
-          <p className="text-sm text-brand-ink/75 mt-1.5 leading-relaxed">{cuenta.razon}</p>
-        </div>
-      </div>
-
-      {/* Desglose del score sobre fondo propio: separa el "qué" del "por qué". */}
-      <div className="bg-brand-cream border-t border-brand-ink/8 p-7 space-y-5">
-        <div className="flex items-center gap-2">
-          <Scale size={13} className="text-brand-gold" />
-          <BlockTitle>Desglose del score</BlockTitle>
-        </div>
-        <p className="text-xs text-brand-ink/55 leading-relaxed max-w-[62ch]">
-          El score no es una caja negra: es la suma ponderada de estos factores. Cada peso es
-          configurable y cada valor sale de datos verificables de la cuenta.
-        </p>
-
-        <div className="space-y-4">
-          {cuenta.factores.map((f, i) => (
-            <div key={f.nombre}>
-              <div className="flex items-baseline justify-between gap-3 mb-2">
-                <span className="text-xs font-semibold text-brand-ink/75">{f.nombre}</span>
-                <span className="text-[11px] text-brand-ink/40 tabular-nums shrink-0">
-                  peso {f.peso}%, valor {f.valor}, aporta{' '}
-                  <span className="font-semibold text-brand-ink/70">
-                    {Math.round((f.peso * f.valor) / 100)}
-                  </span>
-                </span>
-              </div>
-              <Bar value={f.valor} delay={0.15 + i * 0.08} />
-            </div>
-          ))}
-        </div>
-
-        <div className="pt-4 border-t border-brand-ink/10 flex items-baseline justify-between">
-          <span className="text-[11px] uppercase tracking-[0.16em] font-semibold text-brand-ink/40">
-            Score compuesto
-          </span>
-          <span className="text-[2.75rem] leading-none font-serif text-brand-ink">
-            <Figure value={score} />
-          </span>
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -1102,7 +1082,7 @@ function SimuladorCuenta({ cuenta }: { cuenta: CarteraItem }) {
         </span>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-7">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-7">
         {/* Controles */}
         <div className="space-y-7">
           <div className="space-y-3">
@@ -1210,6 +1190,275 @@ function SimuladorCuenta({ cuenta }: { cuenta: CarteraItem }) {
         compromete un descuento con el cliente.
       </p>
     </section>
+  );
+}
+
+// ── Fases de la escalera de cobranza ────────────────────────────────
+// La escalera arranca ANTES del vencimiento: eso es la cobranza temprana.
+// El color codifica la fase, no la decora.
+
+const FASES = {
+  temprana: { label: 'Temprana', punto: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-700', linea: 'bg-emerald-200' },
+  seguimiento: { label: 'Seguimiento', punto: 'bg-amber-400', chip: 'bg-amber-50 text-amber-700', linea: 'bg-amber-200' },
+  escalamiento: { label: 'Escalamiento', punto: 'bg-rose-500', chip: 'bg-rose-50 text-rose-700', linea: 'bg-rose-200' },
+} as const;
+
+function FaseDot({ fase }: { fase: keyof typeof FASES }) {
+  return <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${FASES[fase].punto}`} aria-hidden />;
+}
+
+// ── Subpestaña 1 · Resumen ──────────────────────────────────────────
+
+function SubResumen({ cuenta }: { cuenta: CarteraItem | undefined }) {
+  if (!cuenta) {
+    return (
+      <p className="px-7 py-8 text-sm text-brand-ink/45">
+        Este cliente ha sido contactado, pero no tiene una factura priorizada en la cartera.
+      </p>
+    );
+  }
+  const score = scoreOf(cuenta.factores);
+  const nivel = nivelRiesgo(score);
+
+  return (
+    <div className="px-7 py-6 space-y-6">
+      <div className="grid grid-cols-3 divide-x divide-brand-ink/8 border-y border-brand-ink/8">
+        <div className="pr-4 py-3.5">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">Monto</div>
+          <div className="text-xl font-serif text-brand-ink mt-1.5 tabular-nums">
+            <Figure value={cuenta.monto} format="moneda" />
+          </div>
+        </div>
+        <div className="px-4 py-3.5">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">Vencido</div>
+          <div className="text-xl font-serif text-brand-ink mt-1.5 tabular-nums">
+            <Figure value={cuenta.diasVencido} /> <span className="text-sm">días</span>
+          </div>
+        </div>
+        <div className="pl-4 py-3.5">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">Riesgo</div>
+          <div
+            className={`text-xl font-serif mt-1.5 tabular-nums ${
+              nivel === 'alto' ? 'text-rose-600' : nivel === 'medio' ? 'text-amber-600' : 'text-emerald-700'
+            }`}
+          >
+            <Figure value={score} />
+          </div>
+        </div>
+      </div>
+
+      <div className="pl-4 border-l-2 border-brand-gold">
+        <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">
+          Por qué está aquí
+        </div>
+        <p className="text-sm text-brand-ink/75 mt-1.5 leading-relaxed">{cuenta.razon}</p>
+      </div>
+
+      <div className="space-y-3.5">
+        <div className="flex items-center gap-2">
+          <Scale size={13} className="text-brand-gold" />
+          <BlockTitle>Desglose del score</BlockTitle>
+        </div>
+        {cuenta.factores.map((f, i) => (
+          <div key={f.nombre}>
+            <div className="flex items-baseline justify-between gap-3 mb-1.5">
+              <span className="text-xs font-semibold text-brand-ink/75">{f.nombre}</span>
+              <span className="text-[11px] text-brand-ink/40 tabular-nums shrink-0">
+                peso {f.peso}% · aporta{' '}
+                <span className="font-semibold text-brand-ink/70">
+                  {Math.round((f.peso * f.valor) / 100)}
+                </span>
+              </span>
+            </div>
+            <Bar value={f.valor} delay={0.1 + i * 0.07} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Subpestaña 2 · Plan de escalamiento y seguimiento ───────────────
+
+function SubPlan({ registro }: { registro: RecordatorioItem }) {
+  const { plan, mejor, nota } = registro;
+  const hechos = plan.pasos.filter((p) => p.estado === 'hecho').length;
+  const avance = Math.round((hechos / plan.pasos.length) * 100);
+
+  return (
+    <div className="px-7 py-6 space-y-6">
+      {/* Próxima acción: lo primero que alguien necesita saber al abrir */}
+      <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4 bg-brand-cream border border-brand-gold/30 rounded-2xl">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40">
+            Próxima acción
+          </div>
+          <div className="text-base font-semibold text-brand-ink mt-1">{plan.proxima.accion}</div>
+        </div>
+        <div className="flex items-center gap-4 shrink-0">
+          <Tag icon={<CanalIcon canal={plan.proxima.canal} />} text={plan.proxima.canal} />
+          <div className="text-right">
+            <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">Cuándo</div>
+            <div className="text-sm font-semibold text-brand-ink mt-0.5">{plan.proxima.cuando}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Lo que mejor funciona: justifica por qué el plan es así y no otro */}
+      <div>
+        <BlockTitle>Por qué este plan</BlockTitle>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-3">
+          <BestFit label="Canal" value={mejor.canal} />
+          <BestFit label="Tono" value={mejor.tono} />
+          <BestFit label="Horario" value={mejor.hora} />
+          <BestFit label="Respuesta" value={`${registro.tasa}%`} accent />
+        </div>
+        <p className="text-xs text-brand-ink/50 leading-relaxed mt-3">{nota}</p>
+      </div>
+
+      {/* Escalera de cobranza */}
+      <div className="space-y-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <BlockTitle>Escalamiento y seguimiento</BlockTitle>
+          <div className="flex items-center gap-3">
+            {(Object.keys(FASES) as (keyof typeof FASES)[]).map((f) => (
+              <span key={f} className="flex items-center gap-1.5">
+                <FaseDot fase={f} />
+                <span className="text-[10px] text-brand-ink/45">{FASES[f].label}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="flex-1">
+            <Bar value={avance} tone="accent" delay={0.1} />
+          </div>
+          <span className="text-[11px] text-brand-ink/45 tabular-nums shrink-0">
+            {hechos} de {plan.pasos.length} pasos
+          </span>
+        </div>
+
+        <ol className="relative border-l border-brand-ink/10 ml-2 mt-4 space-y-4">
+          {plan.pasos.map((paso, i) => (
+            <PasoEscalera key={`${paso.dia}-${paso.accion}`} paso={paso} index={i} />
+          ))}
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+function PasoEscalera({
+  paso,
+  index,
+}: {
+  // Convención del proyecto: un componente que recibe `key` debe declararla.
+  key?: string;
+  paso: PasoPlan;
+  index: number;
+}) {
+  const reduce = useReducedMotion();
+  const fase = FASES[paso.fase];
+  const esActual = paso.estado === 'actual';
+  const hecho = paso.estado === 'hecho';
+
+  return (
+    <motion.li
+      initial={reduce ? false : { opacity: 0, x: -6 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.26, delay: reduce ? 0 : 0.06 + index * 0.05, ease: EASE }}
+      className="pl-5"
+    >
+      <span
+        className={`absolute -left-[5px] w-2.5 h-2.5 rounded-full border-2 border-brand-paper ${
+          hecho ? fase.punto : esActual ? fase.punto : 'bg-brand-ink/15'
+        }`}
+        aria-hidden
+      />
+      <div
+        className={`rounded-xl px-4 py-3 border transition-colors ${
+          esActual
+            ? 'bg-brand-cream border-brand-gold/40'
+            : hecho
+              ? 'bg-brand-paper border-brand-ink/8'
+              : 'bg-brand-bone/40 border-brand-ink/6'
+        }`}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`text-[11px] font-mono font-semibold tabular-nums px-1.5 py-0.5 rounded ${fase.chip}`}
+          >
+            día {paso.dia}
+          </span>
+          <span
+            className={`text-sm font-semibold ${hecho || esActual ? 'text-brand-ink' : 'text-brand-ink/45'}`}
+          >
+            {paso.accion}
+          </span>
+          {esActual && (
+            <span className="audit-badge bg-brand-gold/15 text-brand-ink/70">Ahora</span>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-[11px] text-brand-ink/40">
+          <span>{paso.canal}</span>
+          <span>Tono {paso.tono}</span>
+          {paso.estado === 'programado' && <span className="italic">programado</span>}
+          {paso.resultado && (
+            <span className="ml-auto font-semibold text-brand-ink/60">{paso.resultado}</span>
+          )}
+        </div>
+      </div>
+    </motion.li>
+  );
+}
+
+function CanalIcon({ canal }: { canal: string }) {
+  const Icon = CANAL_ICON[canal as keyof typeof CANAL_ICON] ?? MessageSquare;
+  return <Icon size={11} />;
+}
+
+// ── Subpestaña 3 · Historial ────────────────────────────────────────
+
+function SubHistorial({ registro, reduce }: { registro: RecordatorioItem; reduce: boolean | null }) {
+  return (
+    <div className="px-7 py-6">
+      <ol className="relative border-l border-brand-ink/10 ml-3 space-y-5">
+        {registro.mensajes.map((m, i) => {
+          const Icon = CANAL_ICON[m.canal as keyof typeof CANAL_ICON] ?? MessageSquare;
+          const res = RESULTADO_STYLES[m.resultado];
+          return (
+            <motion.li
+              key={`${m.fecha}-${m.tipo}`}
+              initial={reduce ? false : { opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.3, delay: reduce ? 0 : 0.08 + i * 0.06, ease: EASE }}
+              className="pl-6"
+            >
+              <span className="absolute -left-[9px] flex items-center justify-center w-[18px] h-[18px] rounded-full bg-brand-paper border border-brand-ink/15">
+                <Icon size={9} className="text-brand-ink/45" />
+              </span>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="text-[13px] font-semibold text-brand-ink">{m.tipo}</span>
+                <span className={`audit-badge ${res.chip}`}>{res.label}</span>
+                <span className="text-[11px] text-brand-ink/35 ml-auto tabular-nums whitespace-nowrap">
+                  {m.fecha}
+                </span>
+              </div>
+
+              <dl className="flex flex-wrap gap-x-5 gap-y-1 mt-2 text-[11px]">
+                <MsgMeta label="Canal" value={m.canal} />
+                <MsgMeta label="Tono" value={m.tono} />
+                <MsgMeta label="Nivel" value={`${m.nivel} de 4`} />
+                <MsgMeta label="Vencida al enviar" value={`${m.vencidoAlEnviar} días`} />
+                <MsgMeta label="Espera al siguiente" value={m.espera} />
+              </dl>
+            </motion.li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 
