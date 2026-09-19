@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { GeminiService } from '../gemini/gemini.service';
 import type { Env } from '../config/env.validation';
 
 export interface WhatsappSendResult {
@@ -20,6 +21,13 @@ export interface WhatsappSendResult {
  *
  * Soporta dos proveedores (WHATSAPP_PROVIDER): 'meta' (Cloud API) y 'twilio'.
  * La llamada HTTP real se hace con fetch nativo cuando esté configurado.
+ *
+ * Redacción con IA: antes de enviar una alerta vía notifyOrgAdmins(), el texto
+ * (ya armado por el llamador con los datos duros: montos, fechas, nombres) se
+ * pasa por Gemini (vía Vertex AI, GeminiService) para pulir el tono/redacción
+ * a un mensaje de WhatsApp natural y profesional. Mismo patrón "degradación
+ * elegante": si Gemini no está configurado o falla, se manda el texto
+ * original tal cual — nunca bloquea ni retrasa una alerta crítica por esto.
  */
 @Injectable()
 export class WhatsappService implements OnModuleInit {
@@ -32,6 +40,7 @@ export class WhatsappService implements OnModuleInit {
   constructor(
     private readonly config: ConfigService<Env, true>,
     private readonly prisma: PrismaService,
+    private readonly gemini: GeminiService,
   ) {}
 
   onModuleInit(): void {
@@ -80,6 +89,10 @@ export class WhatsappService implements OnModuleInit {
   /**
    * Alerta crítica a todos los admins de una organización que hicieron opt-in
    * y tienen teléfono. Fire-and-forget desde el llamador (`void`).
+   *
+   * El texto se redacta una sola vez (vía Gemini, si está disponible) y se
+   * reusa para todos los destinatarios — no tiene caso pagar/llamar a Gemini
+   * por cada admin cuando el mensaje es idéntico para todos.
    */
   async notifyOrgAdmins(
     organizationId: string,
@@ -96,15 +109,65 @@ export class WhatsappService implements OnModuleInit {
       select: { whatsappPhone: true },
     });
 
+    const drafted = await this.draftWithAi(text, organizationId);
+
     let sent = 0;
     await Promise.all(
       admins.map(async (a) => {
         if (!a.whatsappPhone) return;
-        const res = await this.sendMessage(a.whatsappPhone, text);
+        const res = await this.sendMessage(a.whatsappPhone, drafted);
         if (res.sent) sent += 1;
       }),
     );
     return { recipients: admins.length, sent };
+  }
+
+  /**
+   * Pule la redacción de una alerta con Gemini (Vertex AI), preservando
+   * intactos todos los datos duros del texto original (montos, fechas,
+   * nombres, folios). Si Gemini no está configurado, falla, o devuelve un
+   * texto vacío/sospechoso, se regresa el texto original sin modificar —
+   * nunca debe ser la causa de que una alerta crítica no llegue o llegue
+   * con datos incorrectos.
+   */
+  private async draftWithAi(
+    rawText: string,
+    organizationId: string,
+  ): Promise<string> {
+    if (!this.gemini.isConfigured) return rawText;
+
+    const prompt = `Eres el redactor de alertas de Royáltica, una plataforma de cobranza B2B en México.
+Reescribe el siguiente mensaje interno como un mensaje de WhatsApp natural, claro y profesional en español de México, dirigido a un administrador de la empresa.
+
+Reglas ESTRICTAS:
+- No inventes, no omitas y no cambies NINGÚN dato: montos, fechas, nombres, folios, porcentajes y cualquier cifra deben quedar EXACTAMENTE igual que en el mensaje original.
+- No agregues información que no esté en el mensaje original.
+- Tono profesional pero cercano, como si se lo escribiera un colega. Nada de lenguaje robótico ni de "estimado usuario".
+- Máximo ~350 caracteres.
+- Sin formato markdown (no uses **, #, etc.). Como mucho un emoji relevante al inicio.
+- Responde ÚNICAMENTE con JSON: {"mensaje": "..."}
+
+Mensaje original:
+"""
+${rawText}
+"""`;
+
+    try {
+      const result = await this.gemini.generateJson<{ mensaje?: string }>(
+        prompt,
+        { organizationId, feature: 'GEMINI_WHATSAPP' },
+      );
+      const drafted = result?.mensaje?.trim();
+      if (!drafted) return rawText;
+      return drafted;
+    } catch (err) {
+      this.logger.warn(
+        `Fallo al redactar alerta de WhatsApp con Gemini, se manda el texto original: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return rawText;
+    }
   }
 
   // ── Proveedores (implementación real, activa con credenciales) ──

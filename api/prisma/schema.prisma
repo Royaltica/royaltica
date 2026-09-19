@@ -798,6 +798,7 @@ model Sat69bEntry {
 enum UsageFeature {
   GEMINI_AUDIT // tokens de auditoría forense de facturas
   GEMINI_CHAT // tokens del asistente IA (/ai/chat)
+  GEMINI_WHATSAPP // tokens de redacción de alertas críticas por WhatsApp
   EMAIL_SENT // correos enviados vía Resend
   GCS_UPLOAD // bytes subidos a Google Cloud Storage
   SAT_QUERY // consultas al SAT (69-B / verificación CFDI)

@@ -51,6 +51,7 @@ export function estimateCostMxn(
   switch (feature) {
     case 'GEMINI_AUDIT':
     case 'GEMINI_CHAT':
+    case 'GEMINI_WHATSAPP':
       usd =
         (inputTokens / 1_000_000) * GEMINI_INPUT_USD_PER_M +
         (outputTokens / 1_000_000) * GEMINI_OUTPUT_USD_PER_M;
