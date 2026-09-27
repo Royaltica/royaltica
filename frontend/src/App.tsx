@@ -12,6 +12,7 @@ import { TwoFactorScreen } from './pages/auth/TwoFactorScreen.tsx';
 import { LockScreen } from './pages/auth/LockScreen.tsx';
 import { AdminDashboard } from './pages/admin/AdminDashboard.tsx';
 import { CorporateDashboard } from './pages/corporate/CorporateDashboard.tsx';
+import { AgentDashboard } from './pages/agent/AgentDashboard.tsx';
 import { ProviderDashboard } from './pages/provider/ProviderDashboard.tsx';
 import { CustomerPortalPage } from './pages/customer-portal/CustomerPortalPage.tsx';
 
@@ -110,6 +111,12 @@ function LegacyApp() {
       // (antes se mostraba siempre la pantalla y caía al código demo, lo que
       // hacía fallar el código real de la app autenticadora).
       setNeeds2FA(login.twoFactorRequired);
+    } else if (apiUser.role === 'CORPORATE_USER' && apiUser.operationalProfile === 'AGENTE_EJECUTIVO') {
+      // Perfil Agente/Ejecutivo: pantalla ultra-simplificada aparte del
+      // portal completo (spec "Mejoras V1", sección 2). Sigue siendo
+      // CORPORATE_USER del lado del backend — esto es solo ruteo de UI.
+      setRole('agent');
+      setNeeds2FA(login.twoFactorRequired);
     } else {
       setRole('corporate');
       setNeeds2FA(login.twoFactorRequired);
@@ -169,6 +176,10 @@ function LegacyApp() {
 
   if (role === 'admin') {
     return <AdminDashboard user={user} onLogout={handleLogout} onBackToRole={handleLogout} />;
+  }
+
+  if (role === 'agent') {
+    return <AgentDashboard user={user} onLogout={handleLogout} />;
   }
 
   if (role === 'corporate') {

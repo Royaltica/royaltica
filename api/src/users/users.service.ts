@@ -6,11 +6,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import type { Prisma, User, UserRole } from '@prisma/client';
+import type { OperationalProfile, Prisma, User, UserRole } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { FirebaseService } from '../auth/firebase/firebase.service';
 import { EmailService } from '../email/email.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { ALL_AREAS } from '../auth/constants/permissions';
 import { InviteUserDto } from './dto/invite-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
@@ -21,12 +22,30 @@ const USER_SELECT = {
   name: true,
   role: true,
   permissions: true,
+  operationalProfile: true,
   isActive: true,
   status: true,
   lastLoginAt: true,
   avatarUrl: true,
   createdAt: true,
 } satisfies Prisma.UserSelect;
+
+/**
+ * Bundle de áreas sugerido al invitar según el perfil operativo, cuando el
+ * admin no manda `permissions` explícitas. Puramente un default cómodo — el
+ * admin lo puede sobreescribir mandando su propio `permissions[]`. No aplica
+ * a CORPORATE_ADMIN (ese rol ignora permissions y ve todo siempre).
+ */
+const DEFAULT_PERMISSIONS_BY_PROFILE: Record<OperationalProfile, string[]> = {
+  // Control total de negocio: se le da acceso a todas las áreas operativas
+  // (a diferencia de CORPORATE_ADMIN, si este perfil vive en un
+  // CORPORATE_USER sigue respetando permissions, así que se lo damos todo).
+  ADMINISTRADOR_DATA: [...ALL_AREAS],
+  // Buckets, simulaciones de quitas y KPIs viven en dashboard/cxc/finanzas/estados.
+  SUPERVISOR_GERENTE: ['dashboard', 'cxc', 'finanzas', 'estados'],
+  // Solo su bandeja de cobranza (pantalla ultra-simplificada aparte).
+  AGENTE_EJECUTIVO: ['cxc'],
+};
 
 const TEAM_ROLES: UserRole[] = ['CORPORATE_ADMIN', 'CORPORATE_USER'];
 
@@ -76,7 +95,15 @@ export class UsersService {
     });
 
     // Áreas: un admin ve todo, así que no guardamos permisos para ese rol.
-    const permissions = role === 'CORPORATE_ADMIN' ? [] : dto.permissions ?? [];
+    // Si no mandan permissions explícitas pero sí un perfil operativo, se usa
+    // el bundle sugerido de ese perfil como default (el admin lo puede pisar).
+    const permissions =
+      role === 'CORPORATE_ADMIN'
+        ? []
+        : (dto.permissions ??
+          (dto.operationalProfile
+            ? DEFAULT_PERMISSIONS_BY_PROFILE[dto.operationalProfile]
+            : []));
 
     const fbUser = await this.firebase.createOrGetUser(email, dto.name);
     const inviteLink = await this.firebase.generateInviteLink(email);
@@ -90,6 +117,7 @@ export class UsersService {
           name: dto.name,
           role,
           permissions,
+          operationalProfile: dto.operationalProfile ?? null,
           status: 'INVITED',
           isActive: true,
           invitedById: admin.id,
@@ -127,6 +155,9 @@ export class UsersService {
     }
     if (dto.permissions !== undefined && dto.role !== 'CORPORATE_ADMIN') {
       data.permissions = dto.permissions;
+    }
+    if (dto.operationalProfile !== undefined) {
+      data.operationalProfile = dto.operationalProfile;
     }
 
     const organizationId = this.requireOrg(admin);

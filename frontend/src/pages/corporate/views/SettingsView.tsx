@@ -9,7 +9,7 @@ import {
 import { auth } from '../../../lib/firebase.ts';
 import { validateRFC } from '../../../lib/validators.ts';
 import { MOCK_SUPPLIERS, type Supplier } from '../../../types.ts';
-import { api, type ApiUserRow } from '../../../services/apiClient.ts';
+import { api, type ApiUserRow, type OperationalProfile } from '../../../services/apiClient.ts';
 import {
   DualLoggerService, type FiscalAuditEvent, type AuditSubscriber,
   SupplierMessageService, type SupplierMessage,
@@ -328,15 +328,39 @@ const USER_AREA_LABELS: Record<string, string> = {
 };
 const USER_AREAS = Object.keys(USER_AREA_LABELS);
 
+/**
+ * Perfiles operativos (SoD, spec "Mejoras V1" sección 2). Cada uno trae un
+ * bundle de áreas sugerido (el admin lo puede ajustar manualmente después
+ * de elegirlo). AGENTE_EJECUTIVO además manda a esa cuenta a la pantalla
+ * ultra-simplificada en vez del portal completo (ver App.tsx).
+ */
+const OPERATIONAL_PROFILE_OPTIONS: { value: OperationalProfile | ''; label: string; hint: string; defaultPerms: string[] }[] = [
+  { value: '', label: 'Sin perfil', hint: 'Portal completo, sin restricción de UI', defaultPerms: ['dashboard'] },
+  { value: 'ADMINISTRADOR_DATA', label: 'Administrador / Data', hint: 'Control total, carga masiva, logs', defaultPerms: USER_AREAS },
+  { value: 'SUPERVISOR_GERENTE', label: 'Supervisor / Gerente', hint: 'Buckets, quitas, KPIs', defaultPerms: ['dashboard', 'cxc', 'finanzas', 'estados'] },
+  { value: 'AGENTE_EJECUTIVO', label: 'Agente / Ejecutivo', hint: 'Pantalla simplificada, solo sus cuentas', defaultPerms: ['cxc'] },
+];
+
 export function UsersManager() {
   const [users, setUsers] = useState<ApiUserRow[]>([]);
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [role, setRole] = useState<'CORPORATE_USER' | 'CORPORATE_ADMIN'>('CORPORATE_USER');
   const [perms, setPerms] = useState<string[]>(['dashboard']);
+  const [profile, setProfile] = useState<OperationalProfile | ''>('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  const selectProfile = (p: OperationalProfile | '') => {
+    setProfile(p);
+    const opt = OPERATIONAL_PROFILE_OPTIONS.find(o => o.value === p);
+    if (opt) setPerms(opt.defaultPerms);
+    // Administrador/Data se mapea al rol técnico CORPORATE_ADMIN (control
+    // total); Supervisor/Agente se quedan como CORPORATE_USER con áreas.
+    if (p === 'ADMINISTRADOR_DATA') setRole('CORPORATE_ADMIN');
+    else if (role === 'CORPORATE_ADMIN') setRole('CORPORATE_USER');
+  };
 
   const load = React.useCallback(() => {
     api.getUsers().then(setUsers).catch(() => setUsers([]));
@@ -355,9 +379,10 @@ export function UsersManager() {
         name: name.trim(),
         role,
         permissions: role === 'CORPORATE_USER' ? perms : undefined,
+        operationalProfile: profile || undefined,
       });
       setMsg(res.inviteLink ? `Invitación creada para ${email.trim()}.` : `Usuario ${email.trim()} dado de alta.`);
-      setEmail(''); setName(''); setPerms(['dashboard']); setRole('CORPORATE_USER');
+      setEmail(''); setName(''); setPerms(['dashboard']); setRole('CORPORATE_USER'); setProfile('');
       load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'No se pudo invitar al usuario.');
@@ -396,6 +421,19 @@ export function UsersManager() {
             className="px-4 py-3 bg-white border border-brand-sand rounded-xl text-sm focus:outline-none focus:border-brand-gold" />
           <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="correo@empresa.com"
             className="px-4 py-3 bg-white border border-brand-sand rounded-xl text-sm focus:outline-none focus:border-brand-gold" />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[9px] uppercase font-bold tracking-widest text-brand-ink/40">Perfil</span>
+          {OPERATIONAL_PROFILE_OPTIONS.map(opt => (
+            <button key={opt.value || 'none'} onClick={() => selectProfile(opt.value)}
+              title={opt.hint}
+              className={`px-4 py-2 rounded-xl text-[9px] font-bold uppercase tracking-widest transition-all ${profile === opt.value ? 'bg-brand-gold text-brand-ink' : 'bg-white border border-brand-sand text-brand-ink/40 hover:text-brand-ink'}`}>
+              {opt.label}
+            </button>
+          ))}
+          <span className="text-[9px] text-brand-ink/30 font-serif">
+            {OPERATIONAL_PROFILE_OPTIONS.find(o => o.value === profile)?.hint}
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[9px] uppercase font-bold tracking-widest text-brand-ink/40">Rol</span>
@@ -446,6 +484,7 @@ export function UsersManager() {
               <tr>
                 <th className="px-6 py-3 text-[8px] uppercase tracking-widest font-bold text-brand-ink/30">Usuario</th>
                 <th className="px-6 py-3 text-[8px] uppercase tracking-widest font-bold text-brand-ink/30">Rol</th>
+                <th className="px-6 py-3 text-[8px] uppercase tracking-widest font-bold text-brand-ink/30">Perfil</th>
                 <th className="px-6 py-3 text-[8px] uppercase tracking-widest font-bold text-brand-ink/30">Estatus</th>
                 <th className="px-6 py-3 text-[8px] uppercase tracking-widest font-bold text-brand-ink/30 text-right">Acción</th>
               </tr>
@@ -458,6 +497,9 @@ export function UsersManager() {
                     <p className="text-[9px] font-mono text-brand-ink/40">{u.email}</p>
                   </td>
                   <td className="px-6 py-3 text-[10px] text-brand-ink/60">{roleLabel(u.role)}</td>
+                  <td className="px-6 py-3 text-[10px] text-brand-ink/60">
+                    {OPERATIONAL_PROFILE_OPTIONS.find(o => o.value === (u.operationalProfile ?? ''))?.label ?? '—'}
+                  </td>
                   <td className="px-6 py-3">
                     <span className={`text-[8px] font-bold px-2 py-0.5 rounded-full ${u.status === 'ACTIVE' ? 'bg-green-100 text-green-700' : u.status === 'INVITED' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'}`}>
                       {u.status === 'ACTIVE' ? 'Activo' : u.status === 'INVITED' ? 'Invitado' : u.status === 'SUSPENDED' ? 'Suspendido' : u.status}

@@ -33,6 +33,7 @@ export interface AuthResult {
     supplierId: string | null;
     avatarUrl: string | null;
     totpEnabled: boolean;
+    operationalProfile: User['operationalProfile'];
   };
 }
 
@@ -356,6 +357,7 @@ export class AuthService {
       supplierId: user.supplierId,
       avatarUrl: user.avatarUrl,
       totpEnabled: user.totpEnabled,
+      operationalProfile: user.operationalProfile,
     };
   }
 

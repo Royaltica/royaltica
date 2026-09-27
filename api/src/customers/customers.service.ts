@@ -61,6 +61,7 @@ export class CustomersService {
           phone: dto.phone,
           category: dto.category,
           creditLimitDays: dto.creditLimitDays,
+          assignedAgentId: dto.assignedAgentId,
         },
       });
     });
