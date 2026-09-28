@@ -1,11 +1,12 @@
 import React from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { AlertTriangle, Check, ChevronDown, Clock, Loader2, MapPin, Phone, Send, Sparkles } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Clock, Loader2, MapPin, Megaphone, MessageCircle, Phone, Send, Sparkles } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { EASE, Reveal, Bar } from './primitives.tsx';
-import { AGENTES, PLANTILLAS, llenarPlantilla, saldoDe, type Agente, type CuentaCartera } from './mockV1.ts';
+import { AGENTES, PLANTILLAS, llenarPlantilla, saldoDe, type Agente } from './mockV1.ts';
 import { FaseDot, LineaPlan, textoHoy, CanalIcon } from './plan.tsx';
-import { useCobranza, planCuenta } from './store.tsx';
+import { useCobranza, planCuenta, plantillaPorId, type CuentaViva } from './store.tsx';
+import { SegmentoChip } from './segmento.tsx';
 
 /**
  * Vista del Agente / Ejecutivo. Pensada para alta rotación: se entiende sin
@@ -96,18 +97,27 @@ export function AgenteVista() {
         ))}
       </nav>
 
-      {pestana === 'cuentas' ? <MisCuentas cuentas={mias} /> : <RecordatoriosAgente cuentas={mias} />}
+      {pestana === 'cuentas' ? (
+        <>
+          <FranjaCampanas cuentas={mias} />
+          <MisCuentas cuentas={mias} />
+        </>
+      ) : (
+        <RecordatoriosAgente cuentas={mias} />
+      )}
     </div>
   );
 }
 
 // ── Mis cuentas ────────────────────────────────────────────────────────
 
-function MisCuentas({ cuentas }: { cuentas: CuentaCartera[] }) {
-  const { resultadosHoy } = useCobranza();
-  const pendientes = cuentas
-    .filter((c) => !resultadosHoy[c.id])
-    .sort((a, b) => Number(b.contactable) - Number(a.contactable));
+function MisCuentas({ cuentas }: { cuentas: CuentaViva[] }) {
+  const { resultadosHoy, toques, tareas } = useCobranza();
+  // Orden: primero quien respondió a una campaña, luego llamadas que dejó
+  // una campaña, luego lo que se puede contactar ahora.
+  const peso = (c: CuentaViva) =>
+    (toques[c.id]?.some((t) => t.respuesta) ? 4 : 0) + (tareas[c.id] ? 2 : 0) + (c.contactable ? 1 : 0);
+  const pendientes = cuentas.filter((c) => !resultadosHoy[c.id]).sort((a, b) => peso(b) - peso(a));
   const listas = cuentas.filter((c) => resultadosHoy[c.id]);
   const [abierta, setAbierta] = React.useState<string | null>(pendientes[0]?.id ?? null);
 
@@ -164,13 +174,16 @@ function TarjetaCuenta({
   onToggle,
   onTerminar,
 }: {
-  cuenta: CuentaCartera;
+  cuenta: CuentaViva;
   abierta: boolean;
   onToggle: () => void;
   onTerminar: () => void;
 }) {
   const reduce = useReducedMotion();
-  const { envios, enviar, registrar } = useCobranza();
+  const { envios, enviar, registrar, toques, tareas } = useCobranza();
+  const misToques = toques[c.id] ?? [];
+  const respuesta = [...misToques].reverse().find((t) => t.respuesta);
+  const tarea = tareas[c.id];
   const [generando, setGenerando] = React.useState(false);
   const [mensaje, setMensaje] = React.useState<string | null>(null);
 
@@ -204,7 +217,10 @@ function TarjetaCuenta({
       <button onClick={onToggle} className="w-full text-left px-6 py-5" aria-expanded={abierta}>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-base font-semibold text-brand-ink truncate">{c.cliente}</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-base font-semibold text-brand-ink truncate">{c.cliente}</span>
+              <SegmentoChip cuenta={c} />
+            </div>
             <div className="text-sm text-brand-ink/60 mt-0.5">
               {contacto ? `${contacto.nombre} · ${contacto.puesto}` : c.registrado}
             </div>
@@ -216,6 +232,26 @@ function TarjetaCuenta({
             <div className={`text-[11px] font-semibold mt-0.5 ${sit.clase}`}>{sit.texto}</div>
           </div>
         </div>
+
+        {(respuesta || tarea || misToques.length > 0) && (
+          <div className="flex flex-wrap gap-1.5 mt-3">
+            {respuesta && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-brand-gold/20 text-[11px] font-semibold text-brand-ink">
+                <MessageCircle size={11} /> Respondió a “{respuesta.campana}”
+              </span>
+            )}
+            {tarea && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-50 text-[11px] font-semibold text-rose-700">
+                <Phone size={11} /> Llamada que dejó “{tarea.campana}”
+              </span>
+            )}
+            {!respuesta && !tarea && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-brand-ink/5 text-[11px] font-semibold text-brand-ink/60">
+                <Megaphone size={11} /> En campaña “{misToques[misToques.length - 1].campana}”
+              </span>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 mt-3 text-[12px]">
           {contacto && (
@@ -265,6 +301,38 @@ function TarjetaCuenta({
                 <div className="flex items-start gap-2 text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
                   <AlertTriangle size={13} className="shrink-0 mt-0.5" />
                   Sin contacto de finanzas. Pide el nombre y teléfono de tesorería y avísale a tu supervisor.
+                </div>
+              )}
+
+              {/* Qué le llegó por campañas y qué contestó */}
+              {misToques.length > 0 && (
+                <div className="space-y-2">
+                  <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40">Lo que le llegó por campaña</div>
+                  {misToques.map((t, i) => {
+                    const pl = plantillaPorId(t.plantilla);
+                    return (
+                      <div key={i} className="rounded-2xl border border-brand-ink/8 overflow-hidden">
+                        <div className="px-4 py-2 bg-brand-bone/60 text-[11px] text-brand-ink/55 flex flex-wrap justify-between gap-2">
+                          <span className="font-semibold text-brand-ink/70">{t.campana}</span>
+                          <span>{pl?.etapa} · {t.hora}</span>
+                        </div>
+                        {pl && <p className="px-4 py-2.5 text-[13px] text-brand-ink/70 leading-relaxed">{llenarPlantilla(pl.texto, c)}</p>}
+                        {t.respuesta && (
+                          <div className="px-4 py-2.5 bg-brand-cream border-t border-brand-gold/25">
+                            <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40">Respondió</div>
+                            <p className="text-[13px] text-brand-ink mt-0.5">“{t.respuesta}”</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {tarea && (
+                <div className="flex items-start gap-2 text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+                  <Phone size={13} className="shrink-0 mt-0.5" />
+                  La campaña “{tarea.campana}” no manda mensajes en esta etapa: {tarea.motivo}. Te toca llamar.
                 </div>
               )}
 
@@ -384,7 +452,7 @@ function TarjetaCuenta({
 
 // ── Recordatorios (solo el plan) ───────────────────────────────────────
 
-function RecordatoriosAgente({ cuentas }: { cuentas: CuentaCartera[] }) {
+function RecordatoriosAgente({ cuentas }: { cuentas: CuentaViva[] }) {
   const [sel, setSel] = React.useState<string | undefined>(cuentas[0]?.id);
   const activa = cuentas.find((c) => c.id === sel) ?? cuentas[0];
   if (!activa) return <p className="text-sm text-brand-ink/45 px-2">No tienes cuentas asignadas hoy.</p>;
@@ -403,7 +471,10 @@ function RecordatoriosAgente({ cuentas }: { cuentas: CuentaCartera[] }) {
                 c.id === activa.id ? 'bg-brand-cream' : 'hover:bg-brand-bone'
               }`}
             >
-              <div className="text-sm font-semibold text-brand-ink">{c.cliente}</div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-brand-ink">{c.cliente}</span>
+                <SegmentoChip cuenta={c} alinear="derecha" />
+              </div>
               {act && (
                 <div className="flex items-center gap-1.5 mt-1 text-[11px] text-brand-ink/55">
                   <FaseDot fase={act.fase} /> {act.etiqueta} · {act.nombre}
@@ -426,6 +497,60 @@ function RecordatoriosAgente({ cuentas }: { cuentas: CuentaCartera[] }) {
         </div>
         <LineaPlan pasos={pasos} />
       </div>
+    </div>
+  );
+}
+
+// ── Franja: campañas que tocan mis cuentas ─────────────────────────────
+
+function FranjaCampanas({ cuentas }: { cuentas: CuentaViva[] }) {
+  const { toques, tareas, campanas } = useCobranza();
+  const [abierta, setAbierta] = React.useState(false);
+  const ids = new Set(cuentas.map((c) => c.id));
+  const porCampana = campanas
+    .map((camp) => {
+      const tocadas = cuentas.filter((c) => toques[c.id]?.some((t) => t.campanaId === camp.id));
+      const llamadas = cuentas.filter((c) => tareas[c.id]?.campana === camp.nombre);
+      const respondieron = tocadas.filter((c) => toques[c.id]?.some((t) => t.campanaId === camp.id && t.respuesta));
+      return { camp, tocadas, llamadas, respondieron };
+    })
+    .filter((x) => x.tocadas.length || x.llamadas.length);
+  if (!porCampana.length || !ids.size) return null;
+  const total = new Set(porCampana.flatMap((x) => [...x.tocadas, ...x.llamadas].map((c) => c.id))).size;
+  const respuestas = porCampana.reduce((s, x) => s + x.respondieron.length, 0);
+
+  return (
+    <div className="rounded-2xl border border-brand-ink/10 bg-brand-paper">
+      <button onClick={() => setAbierta(!abierta)} className="w-full flex flex-wrap items-center gap-3 px-5 py-3 text-left">
+        <Megaphone size={14} className="text-brand-gold" />
+        <span className="text-[13px] text-brand-ink">
+          <span className="font-semibold">{porCampana.length} {porCampana.length === 1 ? 'campaña toca' : 'campañas tocan'}</span>{' '}
+          {total} de tus cuentas
+          {respuestas > 0 && <span className="text-brand-ink/60"> · {respuestas} {respuestas === 1 ? 'respondió' : 'respondieron'}</span>}
+        </span>
+        <ChevronDown size={14} className={`ml-auto text-brand-ink/35 transition-transform ${abierta ? 'rotate-180' : ''}`} />
+      </button>
+      {abierta && (
+        <ul className="border-t border-brand-ink/8 divide-y divide-brand-ink/6">
+          {porCampana.map(({ camp, tocadas, llamadas, respondieron }) => {
+            const pl = PLANTILLAS.find((p) => p.id === camp.config.plantilla);
+            return (
+              <li key={camp.id} className="px-5 py-3">
+                <div className="text-[13px] font-semibold text-brand-ink">{camp.nombre}</div>
+                <div className="text-[11px] text-brand-ink/50 mt-0.5">
+                  Envió {pl?.etapa} · {pl?.nombre} por {camp.config.canal}
+                  {camp.config.seguimiento.activo && ` · si no responden en ${camp.config.seguimiento.dias} días, sigue otro aviso`}
+                </div>
+                <div className="text-[11px] text-brand-ink/65 mt-1">
+                  {tocadas.length > 0 && <span>A tus clientes: {tocadas.map((c) => c.cliente).join(', ')}. </span>}
+                  {respondieron.length > 0 && <span className="font-semibold">Respondieron: {respondieron.map((c) => c.cliente).join(', ')}. </span>}
+                  {llamadas.length > 0 && <span className="text-rose-700 font-semibold">Te dejó llamadas: {llamadas.map((c) => c.cliente).join(', ')}.</span>}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

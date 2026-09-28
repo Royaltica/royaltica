@@ -4,36 +4,58 @@ import {
   GESTIONES,
   HOY,
   CAMPANAS,
+  PLANTILLAS,
+  RESPUESTAS_SIM,
+  TOQUES_INICIALES,
   audiencia,
+  diagnosticoDe,
   gestion,
+  planConfig,
   type Agente,
   type Campana,
   type CuentaCartera,
+  type Diagnostico,
   type Gestion,
   type PasoId,
   type Resultado,
+  type Segmento,
 } from './mockV1.ts';
 import { construirPlan } from './plan.tsx';
 
 /**
  * Estado compartido de Cobranza IA. Lo que hace un perfil se ve en los
- * otros: si el Supervisor reasigna una cuenta, aparece en la lista del
- * Agente; si el Agente envía un mensaje o registra un resultado, se refleja
- * en el plan que ve el Administrador y en los Reportes; si se lanza una
- * campaña, sus cuentas quedan marcadas como enviadas.
+ * otros: si el Supervisor reasigna una cuenta o cambia su segmento, el
+ * Agente lo ve; si el Agente envía o registra un resultado, se refleja en el
+ * plan del Administrador y en Reportes; si se lanza una campaña, sus
+ * cuentas quedan marcadas, las respuestas le llegan al agente y las
+ * llamadas se vuelven tareas suyas.
  */
 export const HORA_ACTUAL = '11:24';
 
 type Envio = { paso: PasoId; canal: string; origen: string; hora: string };
+export type Toque = { campanaId: string; campana: string; plantilla: string; hora: string; respuesta?: string };
+export type Tarea = { campana: string; motivo: string };
+export type CambioSegmento = { cliente: string; de: Segmento; a: Segmento; motivo: string; hora: string };
+
+/** Cuenta tal como la ven los 3 perfiles: con segmento, agente y lo hecho hoy. */
+export type CuentaViva = CuentaCartera & {
+  segmento: Segmento;
+  diagnostico: Diagnostico;
+  segmentoManual?: { motivo: string };
+};
 
 type Store = {
-  cartera: CuentaCartera[];
+  cartera: CuentaViva[];
   campanas: Campana[];
   gestiones: Gestion[];
   envios: Record<string, Envio>;
   resultadosHoy: Record<string, string>;
+  toques: Record<string, Toque[]>;
+  tareas: Record<string, Tarea>;
+  cambiosSegmento: CambioSegmento[];
   reasignar: (id: string, agente: Agente) => void;
   agregarContacto: (id: string, f: NonNullable<CuentaCartera['finanzas']>) => void;
+  cambiarSegmento: (id: string, segmento: Segmento | null, motivo: string) => void;
   enviar: (id: string, paso: PasoId, canal: string, origen: string) => void;
   registrar: (id: string, resultado: string) => void;
   guardarCampana: (c: Campana) => void;
@@ -53,46 +75,77 @@ const A_RESULTADO: Record<string, Resultado> = {
 export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   const [agentes, setAgentes] = React.useState<Record<string, Agente>>({});
   const [contactos, setContactos] = React.useState<Record<string, NonNullable<CuentaCartera['finanzas']>>>({});
+  const [segManual, setSegManual] = React.useState<Record<string, { segmento: Segmento; motivo: string }>>({});
+  const [cambiosSegmento, setCambiosSegmento] = React.useState<CambioSegmento[]>([]);
   const [envios, setEnvios] = React.useState<Record<string, Envio>>({});
   const [resultadosHoy, setResultadosHoy] = React.useState<Record<string, string>>({});
+  const [toques, setToques] = React.useState<Record<string, Toque[]>>(TOQUES_INICIALES);
+  const [tareas, setTareas] = React.useState<Record<string, Tarea>>({});
   const [campanas, setCampanas] = React.useState<Campana[]>(CAMPANAS);
   const [bitacora, setBitacora] = React.useState<Gestion[]>([]);
 
-  const cartera = React.useMemo(
+  const cartera: CuentaViva[] = React.useMemo(
     () =>
       CARTERA.map((c) => {
+        const diagnostico = diagnosticoDe(c);
+        const manual = segManual[c.id];
+        const segmento = manual?.segmento ?? diagnostico.segmento;
         const envio = envios[c.id];
         const res = { ...c.resultados };
         if (envio) res[envio.paso] = resultadosHoy[c.id] ?? `Enviado hoy ${envio.hora}`;
         else if (resultadosHoy[c.id]) {
-          const actual = construirPlan({ hoy: c.dias, canal: c.canal, perfil: c.perfil, resultados: c.resultados }).actual;
+          const actual = construirPlan(planConfig(c, segmento)).actual;
           if (actual) res[actual.id] = resultadosHoy[c.id];
         }
-        return { ...c, agente: agentes[c.id] ?? c.agente, finanzas: contactos[c.id] ?? c.finanzas, resultados: res };
+        return {
+          ...c,
+          agente: agentes[c.id] ?? c.agente,
+          finanzas: contactos[c.id] ?? c.finanzas,
+          resultados: res,
+          segmento,
+          diagnostico,
+          segmentoManual: manual ? { motivo: manual.motivo } : undefined,
+        };
       }),
-    [agentes, contactos, envios, resultadosHoy],
+    [agentes, contactos, segManual, envios, resultadosHoy],
   );
 
-  // Lanzar hoy = "enviar" el paso vigente del plan a toda la audiencia
-  // contactable que aún no recibió nada hoy.
+  const anotar = (c: CuentaViva, r: Resultado) =>
+    setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, r), agente: c.agente }]);
+
+  // Lanzar hoy: a cada cuenta contactable de la audiencia se le hace el
+  // "toque" de la campaña. Si su paso del plan es una llamada, en vez de
+  // mensaje se le crea una tarea al agente asignado.
   const lanzar = (camp: Campana): Campana => {
     const { incluidas } = audiencia(camp.config, cartera);
-    const nuevos: Record<string, Envio> = {};
-    for (const c of incluidas) {
-      if (!c.contactable || envios[c.id]) continue;
-      const paso = construirPlan({ hoy: c.dias, canal: c.canal, perfil: c.perfil, resultados: c.resultados }).actual;
+    const nuevosEnvios: Record<string, Envio> = {};
+    const nuevosToques: Record<string, Toque> = {};
+    const nuevasTareas: Record<string, Tarea> = {};
+    for (const c of incluidas as CuentaViva[]) {
+      if (!c.contactable || envios[c.id] || tareas[c.id]) continue;
+      const toque: Toque = { campanaId: camp.id, campana: camp.nombre, plantilla: camp.config.plantilla, hora: HORA_ACTUAL, respuesta: RESPUESTAS_SIM[c.id] };
+      if (camp.config.tipo === 'Servicio') {
+        nuevosToques[c.id] = toque;
+        continue;
+      }
+      const paso = construirPlan(planConfig(c, c.segmento)).actual;
       if (!paso) continue;
-      nuevos[c.id] = { paso: paso.id, canal: camp.config.canal, origen: `Campaña "${camp.nombre}"`, hora: HORA_ACTUAL };
+      if (paso.canal === 'Llamada') {
+        nuevasTareas[c.id] = { campana: camp.nombre, motivo: `${paso.etiqueta} · ${paso.nombre}: toca llamada` };
+        continue;
+      }
+      nuevosEnvios[c.id] = { paso: paso.id, canal: camp.config.canal, origen: `Campaña "${camp.nombre}"`, hora: HORA_ACTUAL };
+      nuevosToques[c.id] = toque;
     }
-    setEnvios((e) => ({ ...e, ...nuevos }));
-    setBitacora((b) => [
-      ...b,
-      ...Object.keys(nuevos).map((id) => {
-        const c = cartera.find((x) => x.id === id)!;
-        return { ...gestion(HOY, HORA_ACTUAL, c.cliente, 'Enviado'), agente: c.agente };
-      }),
-    ]);
-    return { ...camp, enviados: camp.enviados + Object.keys(nuevos).length };
+    setEnvios((e) => ({ ...e, ...nuevosEnvios }));
+    setTareas((t) => ({ ...t, ...nuevasTareas }));
+    setToques((t) => {
+      const out = { ...t };
+      for (const [id, tq] of Object.entries(nuevosToques)) out[id] = [...(out[id] ?? []), tq];
+      return out;
+    });
+    for (const id of Object.keys(nuevosToques)) anotar(cartera.find((x) => x.id === id)!, 'Enviado');
+    return { ...camp, enviados: camp.enviados + Object.keys(nuevosToques).length };
   };
 
   const value: Store = {
@@ -101,20 +154,42 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
     gestiones: [...GESTIONES, ...bitacora],
     envios,
     resultadosHoy,
+    toques,
+    tareas,
+    cambiosSegmento,
     reasignar: (id, agente) => setAgentes((a) => ({ ...a, [id]: agente })),
     agregarContacto: (id, f) => setContactos((c) => ({ ...c, [id]: f })),
+    cambiarSegmento: (id, segmento, motivo) => {
+      const c = cartera.find((x) => x.id === id)!;
+      setSegManual((m) => {
+        const out = { ...m };
+        if (segmento) out[id] = { segmento, motivo };
+        else delete out[id];
+        return out;
+      });
+      setCambiosSegmento((h) => [
+        {
+          cliente: c.cliente,
+          de: c.segmento,
+          a: segmento ?? c.diagnostico.segmento,
+          motivo: segmento ? motivo : 'Regresó al segmento calculado',
+          hora: HORA_ACTUAL,
+        },
+        ...h,
+      ]);
+    },
     enviar: (id, paso, canal, origen) => {
       setEnvios((e) => ({ ...e, [id]: { paso, canal, origen, hora: HORA_ACTUAL } }));
-      const c = CARTERA.find((x) => x.id === id)!;
-      setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, 'Enviado'), agente: agentes[id] ?? c.agente }]);
+      anotar(cartera.find((x) => x.id === id)!, 'Enviado');
     },
     registrar: (id, resultado) => {
       setResultadosHoy((r) => ({ ...r, [id]: resultado }));
-      const c = CARTERA.find((x) => x.id === id)!;
-      setBitacora((b) => [
-        ...b,
-        { ...gestion(HOY, HORA_ACTUAL, c.cliente, A_RESULTADO[resultado] ?? 'Sin respuesta'), agente: agentes[id] ?? c.agente },
-      ]);
+      setTareas((t) => {
+        const out = { ...t };
+        delete out[id];
+        return out;
+      });
+      anotar(cartera.find((x) => x.id === id)!, A_RESULTADO[resultado] ?? 'Sin respuesta');
     },
     guardarCampana: (c) => {
       const final = c.estado === 'Activa' && c.config.inicio <= HOY ? lanzar(c) : c;
@@ -138,7 +213,10 @@ export function useCobranza(): Store {
   return s;
 }
 
-/** Plan calculado de una cuenta (con lo enviado/registrado hoy). */
-export function planCuenta(c: CuentaCartera) {
-  return construirPlan({ hoy: c.dias, canal: c.canal, perfil: c.perfil, resultados: c.resultados });
+/** Plan calculado de una cuenta (con su segmento y lo enviado/registrado hoy). */
+export function planCuenta(c: CuentaViva) {
+  return construirPlan(planConfig(c, c.segmento));
 }
+
+/** Plantilla usada en un toque de campaña. */
+export const plantillaPorId = (id: string) => PLANTILLAS.find((p) => p.id === id);

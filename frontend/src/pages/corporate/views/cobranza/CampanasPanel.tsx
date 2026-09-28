@@ -10,6 +10,7 @@ import {
   HOY,
   LINEAS,
   PLANTILLAS,
+  SEGMENTOS,
   audiencia,
   bucketDe,
   llenarPlantilla,
@@ -156,6 +157,21 @@ export function CampanasPanel() {
                 <p className="text-sm text-brand-ink/60">Toda la cartera, para confirmar que el contacto de pagos sigue vigente.</p>
               )}
 
+              <div className="mt-4">
+                <Grupo label="Segmento de pago">
+                  <Chip activo={!cfg.segmentos.length} onClick={() => set('segmentos', [])}>Todos</Chip>
+                  {(Object.keys(SEGMENTOS) as (keyof typeof SEGMENTOS)[]).map((sg) => {
+                    const n = cartera.filter((c) => c.segmento === sg).length;
+                    return (
+                      <Chip key={sg} activo={cfg.segmentos.includes(sg)} onClick={() => set('segmentos', toggle(cfg.segmentos, sg))}>
+                        <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle ${SEGMENTOS[sg].punto}`} />
+                        {SEGMENTOS[sg].nombre} · {n}
+                      </Chip>
+                    );
+                  })}
+                </Grupo>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
                 <Grupo label="Agentes">
                   <Chip activo={!cfg.agentes.length} onClick={() => set('agentes', [])}>Todos</Chip>
@@ -297,6 +313,11 @@ export function CampanasPanel() {
             </div>
             <ul className="text-[12px] text-brand-ink/65 space-y-1">
               <li>{plantilla.etapa} · {plantilla.nombre} por {cfg.canal}</li>
+              <li>
+                {cfg.segmentos.length
+                  ? `Solo: ${cfg.segmentos.map((x) => SEGMENTOS[x as keyof typeof SEGMENTOS].nombre).join(', ')}`
+                  : 'Todos los segmentos'}
+              </li>
               {cfg.seguimiento.activo && <li>Seguimiento a los {cfg.seguimiento.dias} días si no responde</li>}
               <li>
                 {lanzaHoy ? 'Sale hoy' : `Sale el ${cfg.inicio.slice(8)}/${cfg.inicio.slice(5, 7)}`} a las {cfg.hora} · {cfg.ventana[0]}–{cfg.ventana[1]} ·{' '}
@@ -363,6 +384,7 @@ export function CampanasPanel() {
                         <div className="text-sm font-semibold text-brand-ink">{c.nombre}</div>
                         <div className="text-[11px] text-brand-ink/45 mt-0.5">
                           {pl?.etapa} · {c.config.canal} · {n} cuentas · {c.enviados} enviados
+                          {c.config.segmentos.length ? ` · ${c.config.segmentos.map((x) => SEGMENTOS[x as keyof typeof SEGMENTOS].nombre).join(', ')}` : ''}
                           {c.respuesta !== undefined ? ` · ${c.respuesta}% respuesta` : ''}
                         </div>
                       </div>

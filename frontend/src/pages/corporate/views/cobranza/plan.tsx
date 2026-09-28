@@ -44,6 +44,7 @@ export type PasoPlan = (typeof PLANTILLA)[number] & {
   estado: EstadoPaso;
   resultado?: string;
   obligatorio: boolean;
+  motivo?: string;
   /** Días que faltan para que un paso sombreado se active. */
   faltan: number;
 };
@@ -62,23 +63,83 @@ export function textoHoy(hoy: number): string {
   return `${hoy} ${hoy === 1 ? 'día' : 'días'} vencida`;
 }
 
+type Regla = {
+  omitir?: PasoId[];
+  motivo?: string;
+  dias?: Partial<Record<PasoId, number>>;
+  tono?: Partial<Record<PasoId, string>>;
+  canal?: Partial<Record<PasoId, Canal>>;
+  nota: string;
+};
+
+/** Qué cambia en el plan según el segmento del cliente. */
+function reglaDe(plan: PlanConfig): Regla {
+  const d = plan.desfase;
+  switch (plan.segmento) {
+    case 'puntual':
+      return {
+        omitir: ['N1', 'N2', 'N3'],
+        motivo: 'paga a tiempo',
+        tono: { N4: 'Cordial', A: 'Cordial' },
+        nota: 'Puntual: solo aviso de factura y del día de vencimiento. Al pagar recibe agradecimiento y puede ofrecérsele descuento por pronto pago.',
+      };
+    case 'tardio':
+      return {
+        omitir: ['N1', 'N2'],
+        motivo: 'paga con patrón fijo',
+        dias: { A: 1 + d, B: 7 + d, C: 20 + d, D: 35 + d },
+        tono: { A: 'Suave', B: 'Suave' },
+        nota: `Tardío predecible: paga unos ${d} días tarde pero siempre paga. Las etapas se corren ${d} días para no escalar antes de su patrón.`,
+      };
+    case 'deterioro':
+      return {
+        dias: { B: 3 },
+        canal: { B: 'Llamada' },
+        tono: { B: 'Cercano' },
+        nota: 'En deterioro: su puntualidad está empeorando. Una persona le llama al día 3 (etapa B) para entender qué cambió.',
+      };
+    case 'moroso':
+      return {
+        dias: { A: 1, B: 5, C: 10, D: 20 },
+        tono: { A: 'Firme', B: 'Firme' },
+        nota: 'Moroso recurrente: escalamiento acelerado. Notificación formal al día 10 y negociación al día 20.',
+      };
+    case 'disputa':
+      return {
+        omitir: ['A', 'B', 'C', 'D'],
+        motivo: 'pausado por disputa',
+        nota: 'En disputa: la cobranza vencida se pausa hasta resolver la aclaración.',
+      };
+    case 'nuevo':
+      return { nota: 'Nuevo: sin historial todavía, se usa la plantilla general tal cual.' };
+    default:
+      return { nota: 'Olvidadizo: paga cuando se le recuerda. Plantilla completa con liga de pago en cada aviso.' };
+  }
+}
+
 /**
- * Aplica la plantilla general a un cliente. Reglas de personalización
- * (deterministas y explicables, se muestran en pantalla):
- * - cumplido  → se omiten los niveles 0 a 2.
- * - formal    → tono más formal y todo por correo (salvo la llamada final).
- * - disputas  → la confirmación de factura es obligatoria.
+ * Aplica la plantilla general a un cliente según su segmento (ver
+ * mockV1 → segmentoDe) y dos ajustes que se suman: cuenta grande (tono
+ * formal, todo por correo) y aclaraciones previas (nivel 0 obligatorio).
  * Estado: el paso más reciente cuyo día ya llegó es "Hoy"; los anteriores
  * están hechos y los que no han llegado quedan sombreados.
  */
 export function construirPlan(plan: PlanConfig) {
-  const omitidos = new Set<PasoId>(plan.perfil === 'cumplido' ? ['N0', 'N1', 'N2'] : []);
-  const base = PLANTILLA.map((t) => ({
-    ...t,
-    canal: (plan.perfil === 'formal' && t.id !== 'D' ? 'Correo' : t.canalFijo ?? plan.canal) as Canal,
-    tono: plan.perfil === 'formal' && (t.tono === 'Cordial' || t.tono === 'Suave') ? 'Estándar' : t.tono,
-    obligatorio: plan.perfil === 'disputas' && t.id === 'N0',
-  }));
+  const r = reglaDe(plan);
+  const omitidos = new Set<PasoId>(r.omitir ?? []);
+  const subirTono = (t: string) => (['Cordial', 'Suave', 'Cercano'].includes(t) ? 'Estándar' : t);
+
+  const base = PLANTILLA.map((t) => {
+    const canal = (r.canal?.[t.id] ?? t.canalFijo ?? plan.canal) as Canal;
+    const tono = r.tono?.[t.id] ?? t.tono;
+    return {
+      ...t,
+      dia: r.dias?.[t.id] ?? t.dia,
+      canal: plan.cuentaGrande && canal !== 'Llamada' ? ('Correo' as Canal) : canal,
+      tono: plan.cuentaGrande ? subirTono(tono) : tono,
+      obligatorio: plan.aclaraciones && t.id === 'N0',
+    };
+  });
   const vigentes = base.filter((t) => !omitidos.has(t.id));
   const actual = [...vigentes].reverse().find((t) => t.dia <= plan.hoy)?.id;
 
@@ -90,15 +151,19 @@ export function construirPlan(plan: PlanConfig) {
         : t.dia <= plan.hoy
           ? 'hecho'
           : 'programado';
-    return { ...t, estado, resultado: plan.resultados[t.id], faltan: t.dia - plan.hoy };
+    return {
+      ...t,
+      estado,
+      motivo: omitidos.has(t.id) ? r.motivo : undefined,
+      resultado: plan.resultados[t.id],
+      faltan: t.dia - plan.hoy,
+    };
   });
 
-  const ajustes: string[] = [];
-  if (plan.perfil === 'cumplido') ajustes.push('Se omiten los niveles 0 a 2: es un cliente cumplido y no necesita avisos tan temprano.');
-  if (plan.perfil === 'formal') ajustes.push('Cuenta grande: tono más formal y estado de cuenta adjunto, todo por correo.');
-  if (plan.perfil === 'disputas') ajustes.push('Ha tenido aclaraciones de factura: la confirmación (nivel 0) es obligatoria.');
-  if (plan.perfil !== 'formal') ajustes.push(`Avisos por ${plan.canal}, el canal donde más responde.`);
-  if (plan.perfil === 'estandar') ajustes.push('Resto de la plantilla general sin cambios.');
+  const ajustes: string[] = [r.nota];
+  if (plan.cuentaGrande) ajustes.push('Cuenta grande: tono más formal y estado de cuenta adjunto, todo por correo.');
+  if (plan.aclaraciones) ajustes.push('Ha tenido aclaraciones de factura: la confirmación (nivel 0) es obligatoria.');
+  if (!plan.cuentaGrande) ajustes.push(`Avisos por ${plan.canal}, el canal donde más responde.`);
 
   return {
     pasos,
@@ -107,7 +172,6 @@ export function construirPlan(plan: PlanConfig) {
     ajustes,
   };
 }
-
 
 export const FASES = {
   temprana: { label: 'Temprana', punto: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-700', linea: 'bg-emerald-200' },
@@ -194,7 +258,7 @@ export function PasoEscalera({
           </span>
         </div>
         {omitido ? (
-          <div className="mt-1.5 text-[11px] text-brand-ink/35 italic">Omitido para este cliente</div>
+          <div className="mt-1.5 text-[11px] text-brand-ink/35 italic">Omitido · {paso.motivo ?? 'no aplica a este cliente'}</div>
         ) : (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-[11px] text-brand-ink/45">
             <span className="flex items-center gap-1">

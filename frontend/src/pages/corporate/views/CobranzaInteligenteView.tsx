@@ -4,13 +4,10 @@ import {
   AlertTriangle,
   ArrowRight,
   ChevronDown,
-  CalendarClock,
   Check,
   Info,
   Link2,
-  Mail,
   MessageSquare,
-  Phone,
   Scale,
   Sparkles,
   TrendingDown,
@@ -23,12 +20,12 @@ import {
   FASES,
   FaseDot,
   LineaPlan,
-  construirPlan,
   textoHoy,
   CanalIcon,
 } from './cobranza/plan.tsx';
 import { planDe, saldoDe, AGENTES } from './cobranza/mockV1.ts';
 import { CobranzaProvider, useCobranza, planCuenta } from './cobranza/store.tsx';
+import { SegmentoChip, SegmentosPanel } from './cobranza/segmento.tsx';
 import { AgenteVista } from './cobranza/AgenteVista.tsx';
 import { CampanasPanel } from './cobranza/CampanasPanel.tsx';
 import { PlantillasPanel } from './cobranza/PlantillasPanel.tsx';
@@ -57,6 +54,7 @@ type Section =
   | 'reportes'
   | 'datos'
   | 'estrategias'
+  | 'segmentos'
   | 'equipo';
 
 const LABEL: Record<Section, string> = {
@@ -68,6 +66,7 @@ const LABEL: Record<Section, string> = {
   reportes: 'Reportes',
   datos: 'Datos y pagos',
   estrategias: 'Estrategias',
+  segmentos: 'Segmentos',
   equipo: 'Equipo',
 };
 
@@ -76,9 +75,9 @@ const LABEL: Record<Section, string> = {
 const SECCIONES_POR_ROL: Record<Exclude<Rol, 'agente'>, Section[][]> = {
   admin: [
     ['prioridades', 'alertas', 'recordatorios', 'campanas'],
-    ['plantillas', 'reportes', 'datos', 'estrategias', 'equipo'],
+    ['segmentos', 'plantillas', 'reportes', 'datos', 'estrategias', 'equipo'],
   ],
-  supervisor: [['prioridades', 'recordatorios', 'campanas', 'equipo'], ['reportes']],
+  supervisor: [['prioridades', 'recordatorios', 'campanas', 'equipo'], ['segmentos', 'reportes']],
 };
 
 const ENCABEZADO: Record<Rol, { titulo: string; texto: string }> = {
@@ -175,8 +174,8 @@ const MOCK = {
       pagado: 47_100,
       diasVencido: 12,
       tendencia: 'baja' as const,
-      razon: 'Paga tarde pero siempre paga. Su patrón normal son 15 días',
-      accion: 'Preguntar qué pasó',
+      razon: 'Paga tarde pero siempre paga. Su patrón normal son 15 días: no conviene escalar antes',
+      accion: 'Esperar su patrón (~15 días)',
       urgencia: 'baja' as const,
       factores: [
         { nombre: 'Puntualidad histórica', peso: 40, valor: 18 },
@@ -192,7 +191,7 @@ const MOCK = {
       diasVencido: 19,
       tendencia: 'estable' as const,
       razon: 'Monto muy alto. Vigilar aunque el atraso aún es moderado',
-      accion: 'Preguntar qué pasó (formal)',
+      accion: 'Notificación formal (mañana)',
       urgencia: 'media' as const,
       factores: [
         { nombre: 'Puntualidad histórica', peso: 40, valor: 20 },
@@ -343,48 +342,6 @@ const MOCK = {
       { nombre: 'Mensajes fuera de horario laboral', exito: 8, usos: 19, nota: 'Sin respuesta, y además fuera de la ventana permitida.' },
     ],
   },
-  perfiles: [
-    {
-      nombre: 'El distraído puntual',
-      clientes: 38,
-      descripcion: 'Paga bien, pero se le pasa la fecha. Un recordatorio basta.',
-      tono: 'Suave',
-      horario: '9-11h',
-      canal: 'WhatsApp',
-      estrategia: 'Aviso 3 días antes del vencimiento',
-      exito: 88,
-    },
-    {
-      nombre: 'El que siempre negocia',
-      clientes: 17,
-      descripcion: 'Puede pagar, pero pide plazo o descuento cada vez.',
-      tono: 'Estándar',
-      horario: '16-18h',
-      canal: 'Correo',
-      estrategia: 'Ofrecer plan de parcialidades desde el inicio',
-      exito: 71,
-    },
-    {
-      nombre: 'El silencioso',
-      clientes: 12,
-      descripcion: 'No contesta mensajes, pero reacciona a la llamada.',
-      tono: 'Firme',
-      horario: '12-14h',
-      canal: 'Llamada',
-      estrategia: 'Escalar a llamada tras 2 mensajes sin respuesta',
-      exito: 54,
-    },
-    {
-      nombre: 'El formal corporativo',
-      clientes: 9,
-      descripcion: 'Cuenta grande con área administrativa. Requiere documento.',
-      tono: 'Estándar',
-      horario: '8-10h',
-      canal: 'Correo',
-      estrategia: 'Recordatorio con estado de cuenta adjunto',
-      exito: 66,
-    },
-  ],
   equipo: [
     {
       nombre: 'María Jiménez',
@@ -522,17 +479,8 @@ function CobranzaIA() {
             {section === 'plantillas' && <PlantillasPanel />}
             {section === 'reportes' && <ReportesPanel soloEquipo={rol === 'supervisor'} />}
             {section === 'datos' && <DatosPagosPanel />}
-            {section === 'estrategias' && (
-              <div className="space-y-10">
-                <EstrategiasPanel />
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.16em] font-semibold text-brand-ink/40 mb-4">
-                    Perfiles de cliente
-                  </div>
-                  <PerfilesPanel />
-                </div>
-              </div>
-            )}
+            {section === 'estrategias' && <EstrategiasPanel />}
+            {section === 'segmentos' && <SegmentosPanel />}
             {section === 'equipo' && (
               <>
                 <EquipoPanel />
@@ -594,6 +542,7 @@ function cuentaDe(cliente: string): CarteraItem | undefined {
 
 function PrioridadesPanel() {
   const reduce = useReducedMotion();
+  const { cartera: viva } = useCobranza();
   const total = MOCK.cartera.reduce((sum, c) => sum + c.monto, 0);
   const requierenHumano = MOCK.cartera.filter((c) => c.urgencia === 'alta').length;
   const riesgoProm = Math.round(
@@ -677,8 +626,11 @@ function PrioridadesPanel() {
                             {i + 1}
                           </span>
                           <div>
-                            <div className="text-sm font-semibold text-brand-ink whitespace-nowrap">
-                              {c.cliente}
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-brand-ink whitespace-nowrap">
+                                {c.cliente}
+                              </span>
+                              <SegmentoChip cuenta={viva.find((v) => v.cliente === c.cliente)!} />
                             </div>
                             <div className="text-[10px] text-brand-ink/35 font-mono mt-0.5">
                               {c.folio}
@@ -813,6 +765,7 @@ function RecordatoriosPanel() {
   // cliente. Puede no existir (un cliente contactado sin factura priorizada),
   // por eso las tarjetas de riesgo y simulación se renderizan condicionadas.
   const cuenta = cuentaDe(activo.cliente);
+  const activoVivo = cartera.find((c) => c.cliente === activo.cliente)!;
 
   // Agregados de la cartera contactada: llenan el pie de la lista con algo
   // útil en vez de dejar aire muerto bajo los cinco clientes.
@@ -857,8 +810,9 @@ function RecordatoriosPanel() {
                   )}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-brand-ink truncate">
-                        {r.cliente}
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm font-semibold text-brand-ink truncate">{r.cliente}</span>
+                        <SegmentoChip cuenta={cartera.find((c) => c.cliente === r.cliente)!} />
                       </div>
                       {pasoActual && (
                         <div className="flex items-center gap-1.5 mt-1.5">
@@ -930,7 +884,8 @@ function RecordatoriosPanel() {
                 <div className="flex items-center gap-2 mt-1 text-[11px] text-brand-ink/40">
                   {cuenta && <span className="font-mono">{cuenta.folio}</span>}
                   {cuenta && <span className="w-px h-3 bg-brand-ink/15" aria-hidden />}
-                  <span>{activo.encargado}</span>
+                  <span>{activoVivo.agente}</span>
+                  <SegmentoChip cuenta={activoVivo} />
                 </div>
               </div>
               {cuenta && (
@@ -1290,7 +1245,7 @@ function SubPlan({ registro }: { registro: RecordatorioItem }) {
   const { mejor, nota } = registro;
   const { cartera } = useCobranza();
   const cuentaViva = cartera.find((c) => c.cliente === registro.cliente)!;
-  const { pasos, actual, proxima, ajustes } = construirPlan({ ...registro.plan, resultados: cuentaViva.resultados });
+  const { pasos, actual, proxima, ajustes } = planCuenta(cuentaViva);
   const vigentes = pasos.filter((p) => p.estado !== 'omitido');
   const hechos = vigentes.filter((p) => p.estado === 'hecho').length;
   const avance = Math.round((hechos / vigentes.length) * 100);
@@ -1600,75 +1555,6 @@ function StrategyColumn({
         ))}
       </div>
     </section>
-  );
-}
-
-// ─── 5 · Perfiles ────────────────────────────────────────────────────
-
-function PerfilesPanel() {
-  const reduce = useReducedMotion();
-
-  return (
-    <div className="space-y-5">
-      <Reveal>
-        <p className="text-sm text-brand-ink/55 max-w-[62ch] leading-relaxed">
-          Agrupación de clientes por cómo se comportan, no por cuánto deben. Cada perfil trae la
-          combinación que mejor le funciona, y es el punto de partida del agente con un cliente
-          nuevo, antes de tener historial propio suyo.
-        </p>
-      </Reveal>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {MOCK.perfiles.map((p, i) => (
-          <Reveal key={p.nombre} delay={0.06 + i * 0.06}>
-            <motion.article
-              whileHover={reduce ? undefined : { y: -3 }}
-              transition={{ duration: 0.25, ease: EASE }}
-              className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-6 space-y-5 h-full"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h4 className="text-xl font-serif text-brand-ink">{p.nombre}</h4>
-                  <p className="text-xs text-brand-ink/50 mt-1.5 leading-relaxed max-w-[38ch]">
-                    {p.descripcion}
-                  </p>
-                </div>
-                <div className="text-right shrink-0">
-                  <div className="text-3xl font-serif text-brand-ink leading-none">
-                    <Figure value={p.clientes} />
-                  </div>
-                  <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35 mt-1.5">
-                    clientes
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Tag icon={<MessageSquare size={11} />} text={p.canal} />
-                <Tag icon={<Scale size={11} />} text={`Tono ${p.tono}`} />
-                <Tag icon={<CalendarClock size={11} />} text={p.horario} />
-              </div>
-
-              <div className="pt-4 border-t border-brand-ink/8">
-                <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">
-                  Estrategia recomendada
-                </div>
-                <p className="text-sm text-brand-ink mt-1.5">{p.estrategia}</p>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="flex-1">
-                  <Bar value={p.exito} tone="accent" delay={0.25 + i * 0.06} />
-                </div>
-                <span className="text-sm font-semibold text-brand-ink tabular-nums shrink-0">
-                  <Figure value={p.exito} format="porcentaje" /> éxito
-                </span>
-              </div>
-            </motion.article>
-          </Reveal>
-        ))}
-      </div>
-    </div>
   );
 }
 
