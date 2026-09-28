@@ -3,6 +3,8 @@
 // planes y reportes se derivan de aquí para que los 3 perfiles cuadren.
 // Reemplazar por el API cuando exista el backend del Módulo 2.
 
+import { construirPlan } from './plan.tsx';
+
 export const HOY = '2026-09-28';
 
 export const AGENTES = ['María Jiménez', 'Carlos Mendoza', 'Ana Robles'] as const;
@@ -176,14 +178,14 @@ export const saldoDe = (c: CuentaCartera) => c.monto - c.pagado;
 // Reglas deterministas y explicables (no caja negra), en este orden:
 //  nuevo → disputa → moroso → en deterioro → puntual → tardío → olvidadizo
 
-export const SEGMENTOS: Record<Segmento, { nombre: string; chip: string; punto: string; trato: string }> = {
-  puntual: { nombre: 'Puntual', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200', punto: 'bg-emerald-500', trato: 'Solo aviso de factura y del día de vencimiento. Tono cordial, agradecimiento al pagar y opción de descuento por pronto pago.' },
-  tardio: { nombre: 'Tardío predecible', chip: 'bg-sky-50 text-sky-700 border-sky-200', punto: 'bg-sky-500', trato: 'Siempre paga, pero tarde. El plan se corre según su patrón para no escalar antes de tiempo. Tono suave.' },
-  olvidadizo: { nombre: 'Olvidadizo', chip: 'bg-amber-50 text-amber-700 border-amber-200', punto: 'bg-amber-400', trato: 'Paga cuando se le recuerda. Plantilla completa, liga de pago en cada aviso, por su canal preferido.' },
-  deterioro: { nombre: 'En deterioro', chip: 'bg-orange-50 text-orange-700 border-orange-200', punto: 'bg-orange-500', trato: 'Buen historial que está empeorando. Una persona le llama al día 3 para entender qué cambió. Alerta al supervisor.' },
-  moroso: { nombre: 'Moroso recurrente', chip: 'bg-rose-50 text-rose-700 border-rose-200', punto: 'bg-rose-600', trato: 'Escalamiento acelerado: formal al día 10 y negociación al 20. Promesas con seguimiento estricto y revisión de su línea de crédito.' },
-  disputa: { nombre: 'En disputa', chip: 'bg-brand-ink/5 text-brand-ink/70 border-brand-ink/15', punto: 'bg-brand-ink/50', trato: 'La cobranza se pausa mientras la aclaración siga abierta.' },
-  nuevo: { nombre: 'Nuevo', chip: 'bg-brand-bone text-brand-ink/60 border-brand-ink/12', punto: 'bg-brand-ink/25', trato: 'Sin historial todavía: se usa la plantilla general hasta tener pagos para medir.' },
+export const SEGMENTOS: Record<Segmento, { nombre: string; chip: string; punto: string; trato: string; calendario: string; tono: string }> = {
+  puntual: { nombre: 'Puntual', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200', punto: 'bg-emerald-500', trato: 'Solo aviso de factura y del día de vencimiento. Tono cordial, agradecimiento al pagar y opción de descuento por pronto pago.', calendario: 'Solo niveles 0 y 4', tono: 'Cordial' },
+  tardio: { nombre: 'Tardío predecible', chip: 'bg-sky-50 text-sky-700 border-sky-200', punto: 'bg-sky-500', trato: 'Siempre paga, pero tarde. El plan se corre según su patrón para no escalar antes de tiempo. Tono suave.', calendario: 'Etapas corridas por su patrón', tono: 'Suave' },
+  olvidadizo: { nombre: 'Olvidadizo', chip: 'bg-amber-50 text-amber-700 border-amber-200', punto: 'bg-amber-400', trato: 'Paga cuando se le recuerda. Plantilla completa, liga de pago en cada aviso, por su canal preferido.', calendario: 'Plan completo', tono: 'Estándar' },
+  deterioro: { nombre: 'En deterioro', chip: 'bg-orange-50 text-orange-700 border-orange-200', punto: 'bg-orange-500', trato: 'Buen historial que está empeorando. Una persona le llama al día 3 para entender qué cambió. Alerta al supervisor.', calendario: 'Llamada al día 3', tono: 'Cercano' },
+  moroso: { nombre: 'Moroso recurrente', chip: 'bg-rose-50 text-rose-700 border-rose-200', punto: 'bg-rose-600', trato: 'Escalamiento acelerado: formal al día 10 y negociación al 20. Promesas con seguimiento estricto y revisión de su línea de crédito.', calendario: 'Formal día 10 · negociación día 20', tono: 'Firme' },
+  disputa: { nombre: 'En disputa', chip: 'bg-brand-ink/5 text-brand-ink/70 border-brand-ink/15', punto: 'bg-brand-ink/50', trato: 'La cobranza se pausa mientras la aclaración siga abierta.', calendario: 'Cobranza vencida en pausa', tono: '—' },
+  nuevo: { nombre: 'Nuevo', chip: 'bg-brand-bone text-brand-ink/60 border-brand-ink/12', punto: 'bg-brand-ink/25', trato: 'Sin historial todavía: se usa la plantilla general hasta tener pagos para medir.', calendario: 'Plantilla general', tono: 'Estándar' },
 };
 
 const prom = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -305,22 +307,23 @@ export function llenarPlantilla(texto: string, c: CuentaCartera): string {
 }
 
 // ── Campañas ───────────────────────────────────────────────────────────
+export type Momento = 'porVencer' | 'vencidas' | 'todas';
+
 export type CampanaConfig = {
-  tipo: 'Bloque' | 'Especial' | 'Servicio';
-  buckets: string[];
+  momento: Momento;
+  buckets: string[]; // vencidas: rangos de atraso (vacío = todos)
   segmentos: string[]; // vacío = todos
   agentes: string[]; // vacío = todos
   lineas: string[]; // vacío = todas
   montoMin: number;
   excluirPromesa: boolean;
-  excluirDisputa: boolean;
   plantilla: string;
   canal: 'WhatsApp' | 'Correo';
   seguimiento: { activo: boolean; dias: number; plantilla: string };
   oferta: string;
   inicio: string; // YYYY-MM-DD
   hora: string;
-  ventana: [string, string];
+  horario: [string, string];
   diasSemana: 'L-V' | 'L-S';
   maxPorSemana: number;
 };
@@ -335,39 +338,54 @@ export type Campana = {
 };
 
 export const CONFIG_BASE: CampanaConfig = {
-  tipo: 'Bloque',
-  buckets: ['prev'],
+  momento: 'porVencer',
+  buckets: [],
   segmentos: [],
   agentes: [],
   lineas: [],
   montoMin: 0,
   excluirPromesa: true,
-  excluirDisputa: true,
   plantilla: 'N2',
   canal: 'WhatsApp',
-  seguimiento: { activo: true, dias: 3, plantilla: 'N3' },
+  seguimiento: { activo: true, dias: 4, plantilla: 'N3' },
   oferta: 'Hasta 3 parcialidades sin recargo',
   inicio: HOY,
   hora: '09:30',
-  ventana: ['09:00', '18:00'],
+  horario: ['09:00', '18:00'],
   diasSemana: 'L-V',
   maxPorSemana: 2,
 };
 
-/** Cuentas que entran a una campaña con esta configuración + las que se excluyen y por qué. */
+/** Pasos del plan que puede mandar una campaña (el nivel 0 sale solo al emitir). */
+export const PASOS_CAMPANA = ['N1', 'N2', 'N3', 'N4', 'A', 'B', 'C', 'D'];
+
+/** En cobranza temprana, el nivel decide a quién le toca: vencen en N días o menos. */
+export const VENTANA_NIVEL: Record<string, number> = { N1: 14, N2: 7, N3: 3, N4: 0 };
+
+/**
+ * Cuentas que entran a una campaña + las que quedan fuera y por qué: sin
+ * contacto de finanzas, promesa vigente, o porque el plan de su segmento no
+ * incluye ese nivel/etapa (p. ej. a un Puntual no se le manda el nivel 2).
+ */
 export function audiencia(cfg: CampanaConfig, cartera: (CuentaCartera & { segmento?: Segmento })[]) {
   const incluidas: CuentaCartera[] = [];
   const excluidas: { cuenta: CuentaCartera; motivo: string }[] = [];
+  const pl = PLANTILLAS.find((p) => p.id === cfg.plantilla);
   for (const c of cartera) {
-    const enBloque = cfg.tipo === 'Servicio' || cfg.buckets.includes(bucketDe(c.dias).id);
-    if (!enBloque) continue;
-    if (cfg.segmentos.length && !cfg.segmentos.includes(c.segmento ?? diagnosticoDe(c).segmento)) continue;
+    if (cfg.momento === 'porVencer' && !(c.dias <= 0 && c.dias >= -(VENTANA_NIVEL[cfg.plantilla] ?? 14))) continue;
+    if (cfg.momento === 'vencidas' && !(c.dias > 0 && (!cfg.buckets.length || cfg.buckets.includes(bucketDe(c.dias).id)))) continue;
+    const segmento = c.segmento ?? diagnosticoDe(c).segmento;
+    if (cfg.segmentos.length && !cfg.segmentos.includes(segmento)) continue;
     if (cfg.agentes.length && !cfg.agentes.includes(c.agente)) continue;
     if (cfg.lineas.length && !cfg.lineas.includes(c.linea)) continue;
     if (saldoDe(c) < cfg.montoMin) continue;
+    const paso = PASOS_CAMPANA.includes(cfg.plantilla)
+      ? construirPlan(planConfig(c, segmento)).pasos.find((p) => p.id === cfg.plantilla)
+      : undefined;
     if (!c.finanzas) excluidas.push({ cuenta: c, motivo: 'Sin contacto de finanzas' });
     else if (cfg.excluirPromesa && c.promesa) excluidas.push({ cuenta: c, motivo: 'Promesa de pago vigente' });
-    else if (cfg.excluirDisputa && c.disputa) excluidas.push({ cuenta: c, motivo: 'En disputa' });
+    else if (paso?.estado === 'omitido')
+      excluidas.push({ cuenta: c, motivo: `Su plan no incluye ${pl?.etapa ?? 'este paso'} (${SEGMENTOS[segmento].nombre})` });
     else incluidas.push(c);
   }
   return { incluidas, excluidas };
@@ -375,20 +393,20 @@ export function audiencia(cfg: CampanaConfig, cartera: (CuentaCartera & { segmen
 
 export const CAMPANAS: Campana[] = [
   {
-    id: 'c1', nombre: 'Preventiva · por vencer (sin puntuales)', estado: 'Activa', enviados: 1, respuesta: 100,
-    config: { ...CONFIG_BASE, buckets: ['prev'], segmentos: ['olvidadizo', 'nuevo', 'tardio', 'deterioro', 'moroso'], plantilla: 'N2' },
+    id: 'c1', nombre: 'Temprana · Recordatorio de cortesía', estado: 'Activa', enviados: 1, respuesta: 100,
+    config: { ...CONFIG_BASE, momento: 'porVencer', plantilla: 'N2' },
   },
   {
-    id: 'c2', nombre: 'Recuperación 16–60 días', estado: 'Programada', enviados: 0,
-    config: { ...CONFIG_BASE, buckets: ['b3', 'b4'], plantilla: 'C', canal: 'Correo', inicio: '2026-09-29', hora: '09:00', seguimiento: { activo: true, dias: 5, plantilla: 'D' } },
+    id: 'c2', nombre: 'Vencidas 16–60 días · Notificación formal', estado: 'Programada', enviados: 0,
+    config: { ...CONFIG_BASE, momento: 'vencidas', buckets: ['b3', 'b4'], plantilla: 'C', canal: 'Correo', inicio: '2026-09-29', hora: '09:00', seguimiento: { activo: true, dias: 5, plantilla: 'D' } },
   },
   {
     id: 'c3', nombre: 'Validación de contactos', estado: 'Activa', enviados: 11, respuesta: 27,
-    config: { ...CONFIG_BASE, tipo: 'Servicio', plantilla: 'S1', excluirPromesa: false, seguimiento: { activo: false, dias: 3, plantilla: 'S1' } },
+    config: { ...CONFIG_BASE, momento: 'todas', plantilla: 'S1', excluirPromesa: false, seguimiento: { activo: false, dias: 3, plantilla: 'S1' } },
   },
   {
     id: 'c4', nombre: 'Buen Fin · 3 parcialidades', estado: 'Borrador', enviados: 0,
-    config: { ...CONFIG_BASE, tipo: 'Especial', buckets: ['b3', 'b4', 'b5', 'b6', 'b7'], segmentos: ['deterioro', 'moroso'], plantilla: 'E1', inicio: '2026-11-13', seguimiento: { activo: false, dias: 2, plantilla: 'E1' } },
+    config: { ...CONFIG_BASE, momento: 'vencidas', buckets: ['b3', 'b4', 'b5', 'b6', 'b7'], segmentos: ['deterioro', 'moroso'], plantilla: 'E1', inicio: '2026-11-13', seguimiento: { activo: false, dias: 2, plantilla: 'E1' } },
   },
 ];
 
@@ -459,7 +477,7 @@ export const RESPUESTAS_SIM: Record<string, string> = {
 
 /** Toques que ya hicieron las campañas activas antes de hoy. */
 export const TOQUES_INICIALES: Record<string, { campanaId: string; campana: string; plantilla: string; hora: string; respuesta?: string }[]> = {
-  k06: [{ campanaId: 'c1', campana: 'Preventiva · por vencer (sin puntuales)', plantilla: 'N2', hora: 'ayer 09:30', respuesta: RESPUESTAS_SIM.k06 }],
+  k06: [{ campanaId: 'c1', campana: 'Temprana · Recordatorio de cortesía', plantilla: 'N2', hora: 'ayer 09:30', respuesta: RESPUESTAS_SIM.k06 }],
   k07: [{ campanaId: 'c3', campana: 'Validación de contactos', plantilla: 'S1', hora: 'ayer 10:00', respuesta: RESPUESTAS_SIM.k07 }],
   k02: [{ campanaId: 'c3', campana: 'Validación de contactos', plantilla: 'S1', hora: 'ayer 10:00' }],
   k04: [{ campanaId: 'c3', campana: 'Validación de contactos', plantilla: 'S1', hora: 'ayer 10:00' }],

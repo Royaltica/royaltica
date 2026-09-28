@@ -5,6 +5,7 @@ import {
   HOY,
   CAMPANAS,
   PLANTILLAS,
+  PASOS_CAMPANA,
   RESPUESTAS_SIM,
   TOQUES_INICIALES,
   audiencia,
@@ -113,29 +114,24 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   const anotar = (c: CuentaViva, r: Resultado) =>
     setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, r), agente: c.agente }]);
 
-  // Lanzar hoy: a cada cuenta contactable de la audiencia se le hace el
-  // "toque" de la campaña. Si su paso del plan es una llamada, en vez de
-  // mensaje se le crea una tarea al agente asignado.
+  // Lanzar hoy: a cada cuenta contactable de la audiencia se le manda el
+  // nivel/etapa elegido en la campaña (y queda marcado en su plan).
   const lanzar = (camp: Campana): Campana => {
     const { incluidas } = audiencia(camp.config, cartera);
     const nuevosEnvios: Record<string, Envio> = {};
     const nuevosToques: Record<string, Toque> = {};
     const nuevasTareas: Record<string, Tarea> = {};
+    const pl = PLANTILLAS.find((p) => p.id === camp.config.plantilla);
+    const esPaso = !!pl && PASOS_CAMPANA.includes(pl.id);
     for (const c of incluidas as CuentaViva[]) {
       if (!c.contactable || envios[c.id] || tareas[c.id]) continue;
-      const toque: Toque = { campanaId: camp.id, campana: camp.nombre, plantilla: camp.config.plantilla, hora: HORA_ACTUAL, respuesta: RESPUESTAS_SIM[c.id] };
-      if (camp.config.tipo === 'Servicio') {
-        nuevosToques[c.id] = toque;
+      // La etapa D es llamada: la campaña no manda mensaje, le deja la tarea al agente.
+      if (pl?.canal === 'Llamada') {
+        nuevasTareas[c.id] = { campana: camp.nombre, motivo: `${pl.etapa} · ${pl.nombre}` };
         continue;
       }
-      const paso = construirPlan(planConfig(c, c.segmento)).actual;
-      if (!paso) continue;
-      if (paso.canal === 'Llamada') {
-        nuevasTareas[c.id] = { campana: camp.nombre, motivo: `${paso.etiqueta} · ${paso.nombre}: toca llamada` };
-        continue;
-      }
-      nuevosEnvios[c.id] = { paso: paso.id, canal: camp.config.canal, origen: `Campaña "${camp.nombre}"`, hora: HORA_ACTUAL };
-      nuevosToques[c.id] = toque;
+      nuevosToques[c.id] = { campanaId: camp.id, campana: camp.nombre, plantilla: camp.config.plantilla, hora: HORA_ACTUAL, respuesta: RESPUESTAS_SIM[c.id] };
+      if (esPaso) nuevosEnvios[c.id] = { paso: pl!.id as PasoId, canal: camp.config.canal, origen: `Campaña "${camp.nombre}"`, hora: HORA_ACTUAL };
     }
     setEnvios((e) => ({ ...e, ...nuevosEnvios }));
     setTareas((t) => ({ ...t, ...nuevasTareas }));
