@@ -2,7 +2,8 @@ import React from 'react';
 import { Download, Save } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { Reveal, BlockTitle, Figure } from './primitives.tsx';
-import { AGENTES, GESTIONES, LINEAS, RESULTADOS, type Gestion } from './mockV1.ts';
+import { AGENTES, HOY, LINEAS, RESULTADOS, type Gestion } from './mockV1.ts';
+import { useCobranza } from './store.tsx';
 
 /**
  * Reportes configurables: en vez de reportes fijos semanales/mensuales, el
@@ -26,7 +27,7 @@ const INICIAL: Filtros = {
   linea: 'Todas',
   resultado: 'Todos',
   desde: '2026-09-22',
-  hasta: '2026-09-27',
+  hasta: HOY,
   horaDesde: '00:00',
   horaHasta: '23:59',
   soloNoGestionadas: false,
@@ -38,8 +39,8 @@ const GUARDADOS_INICIALES: { nombre: string; filtros: Filtros }[] = [
   { nombre: 'Ana · mañanas', filtros: { ...INICIAL, agente: 'Ana Robles', horaHasta: '12:00' } },
 ];
 
-function aplicar(f: Filtros): Gestion[] {
-  return GESTIONES.filter(
+function aplicar(f: Filtros, gestiones: Gestion[]): Gestion[] {
+  return gestiones.filter(
     (g) =>
       (f.agente === 'Todos' || g.agente === f.agente) &&
       (f.linea === 'Todas' || g.linea === f.linea) &&
@@ -72,13 +73,16 @@ const RESULTADO_TONO: Record<string, string> = {
   Disputa: 'text-rose-600',
   Escalado: 'text-rose-600',
   'No gestionada': 'text-brand-ink/40 italic',
+  Enviado: 'text-brand-ink/70',
 };
 
 export function ReportesPanel({ soloEquipo = false }: { soloEquipo?: boolean }) {
   const [f, setF] = React.useState<Filtros>(INICIAL);
   const [guardados, setGuardados] = React.useState(GUARDADOS_INICIALES);
   const [nombre, setNombre] = React.useState('');
-  const filas = aplicar(f);
+  const { gestiones } = useCobranza();
+  // Lo más reciente arriba: lo que se hizo hoy se ve primero.
+  const filas = aplicar(f, gestiones).sort((a, b) => (b.fecha + b.hora).localeCompare(a.fecha + a.hora));
   const set = <K extends keyof Filtros>(k: K, v: Filtros[K]) => setF((x) => ({ ...x, [k]: v }));
 
   const monto = filas.reduce((s, g) => s + g.monto, 0);

@@ -2,7 +2,8 @@ import React from 'react';
 import { AlertTriangle, Check, Database, Upload, X } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { Reveal, BlockTitle } from './primitives.tsx';
-import { CONTACTOS, MOVIMIENTOS, ASIGNACIONES, AGENTES, type ContactoFinanzas, type Agente } from './mockV1.ts';
+import { MOVIMIENTOS, AGENTES, saldoDe, type Agente } from './mockV1.ts';
+import { useCobranza } from './store.tsx';
 
 /**
  * Administrador / Data: cargar y administrar la base, validar pagos y
@@ -158,17 +159,24 @@ function PagosT1() {
 
 function CargaCartera() {
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const { cartera } = useCobranza();
+  const total = cartera.reduce((s, c) => s + saldoDe(c), 0);
+  const sinFinanzas = cartera.filter((c) => !c.finanzas).length;
   return (
     <Reveal delay={0.06}>
       <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-6 h-full">
         <BlockTitle icon={<Database size={12} />}>Base de cartera</BlockTitle>
         <div className="mt-4 grid grid-cols-3 gap-2">
-          <Dato label="Facturas" value="1,284" />
-          <Dato label="Clientes" value="64" />
-          <Dato label="Errores" value="3" alerta />
+          <Dato label="Facturas" value={String(cartera.length)} />
+          <Dato label="Por cobrar" value={CURRENCY_FORMATTER.format(total)} />
+          <Dato label="Incompletas" value={String(sinFinanzas)} alerta={sinFinanzas > 0} />
         </div>
-        <p className="text-[12px] text-brand-ink/50 mt-3">Última carga: 26 sep, 18:40 · por Data</p>
-        <p className="text-[12px] text-rose-600 mt-1">3 facturas sin RFC válido quedaron fuera de campañas.</p>
+        <p className="text-[12px] text-brand-ink/50 mt-3">Última carga: 27 sep, 18:40 · por Data</p>
+        {sinFinanzas > 0 && (
+          <p className="text-[12px] text-rose-600 mt-1">
+            {sinFinanzas} {sinFinanzas === 1 ? 'cuenta sin' : 'cuentas sin'} contacto de finanzas: no entran a campañas hasta completarlas.
+          </p>
+        )}
         <button
           onClick={() => inputRef.current?.click()}
           className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-dashed border-brand-ink/20 text-[12px] font-semibold text-brand-ink/65 hover:bg-brand-bone transition-colors"
@@ -193,14 +201,16 @@ function Dato({ label, value, alerta = false }: { label: string; value: string; 
 // ── Contactos de finanzas (obligatorio) ────────────────────────────────
 
 function ContactosFinanzas() {
-  const [lista, setLista] = React.useState<ContactoFinanzas[]>(CONTACTOS);
+  const { cartera, agregarContacto } = useCobranza();
   const [editando, setEditando] = React.useState<string | null>(null);
   const [form, setForm] = React.useState({ nombre: '', puesto: 'Tesorería', telefono: '' });
-  const faltan = lista.filter((c) => !c.finanzas).length;
+  const faltan = cartera.filter((c) => !c.finanzas).length;
+  // Primero las que faltan: es lo que hay que resolver.
+  const lista = [...cartera].sort((x, y) => Number(!!x.finanzas) - Number(!!y.finanzas));
 
-  const guardar = (cliente: string) => {
+  const guardar = (id: string) => {
     if (!form.nombre.trim() || !form.telefono.trim()) return;
-    setLista((l) => l.map((c) => (c.cliente === cliente ? { ...c, finanzas: { ...form } } : c)));
+    agregarContacto(id, { ...form });
     setEditando(null);
     setForm({ nombre: '', puesto: 'Tesorería', telefono: '' });
   };
@@ -219,9 +229,9 @@ function ContactosFinanzas() {
         <p className="text-[12px] text-brand-ink/50 mt-2 leading-relaxed">
           En B2B quien paga es tesorería, no el dueño. Sin este contacto la cuenta no entra a campañas.
         </p>
-        <ul className="mt-4 divide-y divide-brand-ink/6">
+        <ul className="mt-4 divide-y divide-brand-ink/6 max-h-[420px] overflow-y-auto">
           {lista.map((c) => (
-            <li key={c.cliente} className="py-3">
+            <li key={c.id} className="py-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-brand-ink">{c.cliente}</div>
@@ -235,16 +245,16 @@ function ContactosFinanzas() {
                     </div>
                   )}
                 </div>
-                {!c.finanzas && editando !== c.cliente && (
+                {!c.finanzas && editando !== c.id && (
                   <button
-                    onClick={() => setEditando(c.cliente)}
+                    onClick={() => setEditando(c.id)}
                     className="shrink-0 px-2.5 py-1.5 rounded-lg border border-brand-gold/50 text-[11px] font-semibold text-brand-ink hover:bg-brand-cream"
                   >
                     Agregar
                   </button>
                 )}
               </div>
-              {editando === c.cliente && (
+              {editando === c.id && (
                 <div className="mt-2 grid grid-cols-1 sm:grid-cols-4 gap-2">
                   <input
                     autoFocus
@@ -260,7 +270,7 @@ function ContactosFinanzas() {
                     className="px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-bone/50 text-sm outline-none focus:border-brand-gold/60"
                   />
                   <button
-                    onClick={() => guardar(c.cliente)}
+                    onClick={() => guardar(c.id)}
                     className="px-3 py-2 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold"
                   >
                     Guardar
@@ -278,12 +288,13 @@ function ContactosFinanzas() {
 // ── Asignación de cuentas (Supervisor y Admin) ─────────────────────────
 
 export function AsignacionPanel() {
-  const [filas, setFilas] = React.useState(ASIGNACIONES);
+  const { cartera, reasignar: reasignarCuenta } = useCobranza();
   const [cambio, setCambio] = React.useState<string | null>(null);
-  const carga = AGENTES.map((a) => ({ a, n: filas.filter((f) => f.agente === a).length }));
+  const filas = [...cartera].sort((a, b) => b.dias - a.dias);
+  const carga = AGENTES.map((a) => ({ a, n: cartera.filter((f) => f.agente === a).length }));
 
-  const reasignar = (cliente: string, agente: Agente) => {
-    setFilas((f) => f.map((x) => (x.cliente === cliente ? { ...x, agente } : x)));
+  const reasignar = (id: string, cliente: string, agente: Agente) => {
+    reasignarCuenta(id, agente);
     setCambio(`${cliente} → ${agente}`);
   };
 
@@ -300,18 +311,18 @@ export function AsignacionPanel() {
             ))}
           </div>
         </div>
-        <div className="divide-y divide-brand-ink/6">
+        <div className="divide-y divide-brand-ink/6 max-h-[480px] overflow-y-auto">
           {filas.map((f) => (
-            <div key={f.cliente} className="flex flex-wrap items-center gap-4 px-6 py-3">
+            <div key={f.id} className="flex flex-wrap items-center gap-4 px-6 py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-semibold text-brand-ink">{f.cliente}</div>
                 <div className="text-[11px] text-brand-ink/45 tabular-nums">
-                  {CURRENCY_FORMATTER.format(f.saldo)} · {f.dias < 0 ? `vence en ${-f.dias} días` : `${f.dias} días vencida`}
+                  {CURRENCY_FORMATTER.format(saldoDe(f))} · {f.dias < 0 ? `vence en ${-f.dias} días` : `${f.dias} días vencida`}
                 </div>
               </div>
               <select
                 value={f.agente}
-                onChange={(e) => reasignar(f.cliente, e.target.value as Agente)}
+                onChange={(e) => reasignar(f.id, f.cliente, e.target.value as Agente)}
                 className="px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-bone/50 text-[12px] font-semibold text-brand-ink outline-none focus:border-brand-gold/60"
               >
                 {AGENTES.map((a) => (

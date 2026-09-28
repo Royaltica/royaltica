@@ -18,6 +18,17 @@ import {
 } from 'lucide-react';
 import { EASE, Reveal, Figure, Bar, Tag, BlockTitle, type FigureFormat } from './cobranza/primitives.tsx';
 import { RolSelector, type Rol } from './cobranza/RolSelector.tsx';
+import {
+  CANAL_ICON,
+  FASES,
+  FaseDot,
+  LineaPlan,
+  construirPlan,
+  textoHoy,
+  CanalIcon,
+} from './cobranza/plan.tsx';
+import { planDe, saldoDe, AGENTES } from './cobranza/mockV1.ts';
+import { CobranzaProvider, useCobranza, planCuenta } from './cobranza/store.tsx';
 import { AgenteVista } from './cobranza/AgenteVista.tsx';
 import { CampanasPanel } from './cobranza/CampanasPanel.tsx';
 import { PlantillasPanel } from './cobranza/PlantillasPanel.tsx';
@@ -102,8 +113,6 @@ const ENCABEZADO: Record<Rol, { titulo: string; texto: string }> = {
 // etapas DESPUÉS. Cada cliente la hereda y solo se ajusta por reglas simples
 // (perfil + canal preferido). Nada se mueve a mano: el estado de cada paso
 // sale de comparar su día contra el día de hoy del cliente.
-type PasoId = 'N0' | 'N1' | 'N2' | 'N3' | 'N4' | 'A' | 'B' | 'C' | 'D';
-type Resultados = Partial<Record<PasoId, string>>;
 
 const MOCK = {
   // Una sola lista: la prioridad de trabajo y el riesgo de cada cuenta son la
@@ -119,7 +128,7 @@ const MOCK = {
       diasVencido: 42,
       tendencia: 'sube' as const,
       razon: 'Monto alto + puntualidad histórica cayó de 92% a 61% en 3 meses',
-      accion: 'Llamada del encargado',
+      accion: 'Negociación por llamada',
       urgencia: 'alta' as const,
       factores: [
         { nombre: 'Puntualidad histórica', peso: 40, valor: 66 },
@@ -135,7 +144,7 @@ const MOCK = {
       diasVencido: 28,
       tendencia: 'estable' as const,
       razon: 'Buen historial, primer atraso relevante en 2 años',
-      accion: 'Recordatorio tono suave',
+      accion: 'Notificación formal',
       urgencia: 'media' as const,
       factores: [
         { nombre: 'Puntualidad histórica', peso: 40, valor: 37 },
@@ -151,7 +160,7 @@ const MOCK = {
       diasVencido: 35,
       tendencia: 'sube' as const,
       razon: 'Tercer atraso consecutivo, no respondió los últimos 2 mensajes',
-      accion: 'Escalar a humano',
+      accion: 'Negociación por llamada',
       urgencia: 'alta' as const,
       factores: [
         { nombre: 'Puntualidad histórica', peso: 40, valor: 77 },
@@ -167,7 +176,7 @@ const MOCK = {
       diasVencido: 12,
       tendencia: 'baja' as const,
       razon: 'Paga tarde pero siempre paga. Su patrón normal son 15 días',
-      accion: 'Esperar (no contactar)',
+      accion: 'Preguntar qué pasó',
       urgencia: 'baja' as const,
       factores: [
         { nombre: 'Puntualidad histórica', peso: 40, valor: 18 },
@@ -183,7 +192,7 @@ const MOCK = {
       diasVencido: 19,
       tendencia: 'estable' as const,
       razon: 'Monto muy alto. Vigilar aunque el atraso aún es moderado',
-      accion: 'Recordatorio estándar',
+      accion: 'Preguntar qué pasó (formal)',
       urgencia: 'media' as const,
       factores: [
         { nombre: 'Puntualidad histórica', peso: 40, valor: 20 },
@@ -197,7 +206,7 @@ const MOCK = {
       severidad: 'critica' as const,
       titulo: 'Concentración de riesgo en un solo cliente',
       detalle:
-        'El 34% de tu cartera vencida depende de Distribuidora del Norte. Si esa cuenta se deteriora, el impacto es desproporcionado.',
+        'El 23% de tu cartera vencida depende de Constructora Vanguardia ($288,400). Si esa cuenta se deteriora, el impacto es desproporcionado.',
       cuando: 'Detectado hoy',
     },
     {
@@ -209,9 +218,9 @@ const MOCK = {
     },
     {
       severidad: 'media' as const,
-      titulo: '4 facturas vencen esta semana sin recordatorio programado',
+      titulo: '2 clientes sin contacto de finanzas',
       detalle:
-        'Suman $318,400 MXN. Ninguna tiene secuencia de cobranza activa porque se importaron después del último ciclo.',
+        'Grupo Ferretero Bajío y Constructora Vanguardia solo tienen registrado al director. Quedan fuera de las campañas hasta registrar a tesorería (Datos y pagos).',
       cuando: 'Hace 4 horas',
     },
     {
@@ -231,7 +240,7 @@ const MOCK = {
       ultimo: 'hace 2 días',
       mejor: { canal: 'WhatsApp', tono: 'Estándar', hora: '9-11h', estrategia: 'Recordatorio con liga de pago' },
       nota: 'No responde correo. Por WhatsApp contesta casi siempre en la mañana.',
-      plan: { hoy: 42, canal: 'WhatsApp' as const, perfil: 'estandar' as const, resultados: { N0: 'Confirmó factura', N1: 'Sin respuesta', N2: 'Respondió', N3: 'Sin respuesta', N4: 'Sin respuesta', A: 'Respondió', B: 'Prometió fecha', C: 'Sin respuesta' } as Resultados },
+      plan: planDe('Distribuidora del Norte'),
       mensajes: [
         { fecha: '02 sep 2026, 09:14', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Estándar', nivel: 3, vencidoAlEnviar: 40, espera: '3 días', resultado: 'respondio' as const, texto: 'Hola, Distribuidora del Norte. Le recordamos la factura F-2841 por $284,500.00 MXN, con vencimiento el 22 de julio. Puede liquidarla desde esta liga segura. Si ya realizó el pago o necesita el estado de cuenta, responda este mensaje y lo revisamos.', respuesta: 'Sí, la vimos. Estamos cerrando el mes, la programamos para la próxima semana.' },
         { fecha: '30 ago 2026, 09:05', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 2, vencidoAlEnviar: 37, espera: '5 días', resultado: 'sin_respuesta' as const, texto: 'Buen día. Seguimos al pendiente de la factura F-2841. Si requiere una copia del comprobante fiscal o apoyo con el proceso, con gusto lo atendemos.' },
@@ -247,7 +256,7 @@ const MOCK = {
       ultimo: 'hace 5 días',
       mejor: { canal: 'Correo', tono: 'Suave', hora: '16-18h', estrategia: 'Plan de pagos en 2 parcialidades' },
       nota: 'Prefiere correo, lo revisa su área administrativa por la tarde.',
-      plan: { hoy: 28, canal: 'Correo' as const, perfil: 'estandar' as const, resultados: { N0: 'Confirmó factura', N1: 'Respondió', N2: 'Sin respuesta', N3: 'Respondió', N4: 'Sin respuesta', A: 'Sin respuesta', B: 'Respondió', C: 'Pidió parcialidades' } as Resultados },
+      plan: planDe('Materiales Peninsulares'),
       mensajes: [
         { fecha: '29 ago 2026, 16:22', canal: 'Correo', tipo: 'Oferta de plan', tono: 'Suave', nivel: 2, vencidoAlEnviar: 24, espera: '4 días', resultado: 'respondio' as const, texto: 'Estimados. Sabemos que este mes ha sido distinto para ustedes. Podemos dividir la factura F-2903 en dos parcialidades, la primera este mes y la segunda el siguiente, sin costo adicional. ¿Les funciona?', respuesta: 'Nos ayudaría muchísimo. Confirmamos la primera parcialidad para el viernes.' },
         { fecha: '25 ago 2026, 17:03', canal: 'Correo', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 20, espera: '6 días', resultado: 'sin_respuesta' as const, texto: 'Buenas tardes. Le recordamos la factura F-2903 por $156,200.00 MXN. Si necesita el estado de cuenta o revisar fechas, quedamos a sus órdenes.' },
@@ -262,7 +271,7 @@ const MOCK = {
       ultimo: 'hace 1 día',
       mejor: { canal: 'Llamada', tono: 'Firme', hora: '12-14h', estrategia: 'Escalamiento a llamada del encargado' },
       nota: 'Responde poco por texto. El tono suave no genera respuesta con esta cuenta.',
-      plan: { hoy: 35, canal: 'WhatsApp' as const, perfil: 'disputas' as const, resultados: { N0: 'Aclaró factura', N1: 'Sin respuesta', N2: 'Sin respuesta', N3: 'Sin respuesta', N4: 'Sin respuesta', A: 'Sin respuesta', B: 'Sin respuesta', C: 'Sin respuesta', D: 'Aceptó llamada' } as Resultados },
+      plan: planDe('Grupo Ferretero Bajío'),
       mensajes: [
         { fecha: '03 sep 2026, 12:45', canal: 'Llamada', tipo: 'Escalamiento', tono: 'Firme', nivel: 4, vencidoAlEnviar: 34, espera: '2 días', resultado: 'respondio' as const, texto: 'Buenas tardes. Le marcamos desde Royáltica para revisar juntos el estatus de la factura F-2877 y encontrar una fecha que les funcione. ¿Tiene unos minutos?', respuesta: 'Sí, páseme con quien lleva el tema. Lo vemos el lunes con administración.' },
         { fecha: '01 sep 2026, 12:10', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Firme', nivel: 3, vencidoAlEnviar: 32, espera: '4 días', resultado: 'sin_respuesta' as const, texto: 'Estimados, la factura F-2877 por $98,400.00 MXN continúa pendiente de conciliación. Le pedimos confirmar una fecha estimada de pago.' },
@@ -278,7 +287,7 @@ const MOCK = {
       ultimo: 'hace 8 días',
       mejor: { canal: 'WhatsApp', tono: 'Suave', hora: '9-11h', estrategia: 'Recordatorio simple, sin insistir' },
       nota: 'Responde casi siempre. Basta un recordatorio amable.',
-      plan: { hoy: 12, canal: 'WhatsApp' as const, perfil: 'cumplido' as const, resultados: { N3: 'Respondió', N4: 'Pagó parcial', A: 'Respondió', B: 'Prometió el resto' } as Resultados },
+      plan: planDe('Logística Andrade'),
       mensajes: [
         { fecha: '26 ago 2026, 09:32', canal: 'WhatsApp', tipo: 'Recordatorio', tono: 'Suave', nivel: 1, vencidoAlEnviar: 9, espera: '2 días', resultado: 'pago' as const, texto: 'Hola, Logística Andrade. Un recordatorio breve de la factura F-2915. Como siempre, cualquier cosa nos dice.', respuesta: 'Listo, ya se envió la transferencia del resto. Les paso el comprobante.' },
         { fecha: '19 ago 2026, 09:40', canal: 'WhatsApp', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 2, espera: 'sin siguiente', resultado: 'respondio' as const, texto: 'Buen día. La factura F-2915 por $62,800.00 MXN vence hoy. Si ya está en proceso, ignore este mensaje.', respuesta: 'Va, hacemos un abono parcial hoy y el resto la próxima semana.' },
@@ -292,7 +301,7 @@ const MOCK = {
       ultimo: 'hace 3 días',
       mejor: { canal: 'Correo', tono: 'Estándar', hora: '8-10h', estrategia: 'Recordatorio con estado de cuenta adjunto' },
       nota: 'Cuenta grande, requiere formalidad. Responde mejor con documento adjunto.',
-      plan: { hoy: 19, canal: 'Correo' as const, perfil: 'formal' as const, resultados: { N0: 'Confirmó factura', N1: 'Respondió', N2: 'Sin respuesta', N3: 'Sin respuesta', N4: 'Sin respuesta', A: 'Sin respuesta', B: 'Turnado a finanzas' } as Resultados },
+      plan: planDe('Constructora Vanguardia'),
       mensajes: [
         { fecha: '01 sep 2026, 08:30', canal: 'Correo', tipo: 'Recordatorio', tono: 'Estándar', nivel: 2, vencidoAlEnviar: 17, espera: '6 días', resultado: 'respondio' as const, texto: 'Estimados. Adjuntamos el estado de cuenta correspondiente a la factura F-2860 por $412,000.00 MXN. Quedamos atentos a la programación de pago por parte de su área administrativa.', respuesta: 'Gracias. Lo turnamos a finanzas, nos confirman la programación esta semana.' },
         { fecha: '26 ago 2026, 08:45', canal: 'Correo', tipo: 'Aviso de vencimiento', tono: 'Suave', nivel: 1, vencidoAlEnviar: 11, espera: 'sin siguiente', resultado: 'sin_respuesta' as const, texto: 'Buen día, Constructora Vanguardia. Le informamos que la factura F-2860 cumple su fecha de vencimiento hoy. Adjuntamos el comprobante fiscal para su referencia.' },
@@ -306,7 +315,7 @@ const MOCK = {
       ultimo: 'hace 2 días',
       mejor: { canal: 'WhatsApp', tono: 'Suave', hora: '10-12h', estrategia: 'Avisos tempranos con liga de pago' },
       nota: 'Cliente nuevo, aún sin historial suficiente: se usa la plantilla general tal cual. Su factura todavía no vence.',
-      plan: { hoy: -5, canal: 'WhatsApp' as const, perfil: 'estandar' as const, resultados: { N0: 'Confirmó factura', N1: 'Sin respuesta', N2: 'Respondió' } as Resultados },
+      plan: planDe('Comercializadora Lumen'),
       mensajes: [
         { fecha: '17 sep 2026, 10:15', canal: 'WhatsApp', tipo: 'Recordatorio de cortesía', tono: 'Suave', nivel: 2, vencidoAlEnviar: -7, espera: 'sin siguiente', resultado: 'respondio' as const, texto: 'Hola, Comercializadora Lumen. Le recordamos que la factura F-2951 por $74,300.00 MXN vence el 29 de septiembre. Si le es más práctico, puede pagarla desde esta liga segura. ¿Todo en orden con la factura?', respuesta: 'Todo bien, gracias. La tenemos programada para el viernes 26.' },
         { fecha: '10 sep 2026, 10:05', canal: 'WhatsApp', tipo: 'Aviso preventivo', tono: 'Cordial', nivel: 1, vencidoAlEnviar: -14, espera: '7 días', resultado: 'sin_respuesta' as const, texto: 'Buen día. Solo para tenerlo en su radar: la factura F-2951 por $74,300.00 MXN vence el 29 de septiembre.' },
@@ -410,6 +419,14 @@ const MOCK = {
 // ─── Vista principal ─────────────────────────────────────────────────
 
 export function CobranzaInteligenteView() {
+  return (
+    <CobranzaProvider>
+      <CobranzaIA />
+    </CobranzaProvider>
+  );
+}
+
+function CobranzaIA() {
   const [rol, setRol] = React.useState<Rol>('admin');
   const [section, setSection] = React.useState<Section>('prioridades');
   const reduce = useReducedMotion();
@@ -768,107 +785,7 @@ const RESULTADO_STYLES = {
   sin_respuesta: { chip: 'bg-brand-sand/40 text-brand-ink/40', label: 'Sin respuesta' },
 } as const;
 
-const CANAL_ICON = {
-  WhatsApp: MessageSquare,
-  Correo: Mail,
-  Llamada: Phone,
-} as const;
-
 type RecordatorioItem = (typeof MOCK.recordatorios)[number];
-type Canal = keyof typeof CANAL_ICON;
-
-const PLANTILLA: {
-  id: PasoId;
-  etiqueta: string;
-  nombre: string;
-  /** Días respecto al vencimiento (negativo = antes). */
-  dia: number;
-  fase: keyof typeof FASES;
-  tono: string;
-  liga: boolean;
-  /** Canal fijo del paso; si no hay, usa el preferido del cliente. */
-  canalFijo?: Canal;
-}[] = [
-  { id: 'N0', etiqueta: 'Nivel 0', nombre: 'Confirmación de factura', dia: -30, fase: 'temprana', tono: 'Informativo', liga: false, canalFijo: 'Correo' },
-  { id: 'N1', etiqueta: 'Nivel 1', nombre: 'Aviso preventivo', dia: -14, fase: 'temprana', tono: 'Cordial', liga: false },
-  { id: 'N2', etiqueta: 'Nivel 2', nombre: 'Recordatorio de cortesía', dia: -7, fase: 'temprana', tono: 'Suave', liga: true },
-  { id: 'N3', etiqueta: 'Nivel 3', nombre: 'Vence en 3 días', dia: -3, fase: 'temprana', tono: 'Estándar', liga: true },
-  { id: 'N4', etiqueta: 'Nivel 4', nombre: 'Vence hoy', dia: 0, fase: 'temprana', tono: 'Neutral', liga: true },
-  { id: 'A', etiqueta: 'Etapa A', nombre: 'Aviso urgente', dia: 1, fase: 'seguimiento', tono: 'Estándar', liga: true },
-  { id: 'B', etiqueta: 'Etapa B', nombre: 'Preguntar qué pasó', dia: 7, fase: 'seguimiento', tono: 'Cercano', liga: true },
-  { id: 'C', etiqueta: 'Etapa C', nombre: 'Notificación formal', dia: 20, fase: 'escalamiento', tono: 'Firme', liga: true },
-  { id: 'D', etiqueta: 'Etapa D', nombre: 'Negociación', dia: 35, fase: 'escalamiento', tono: 'Firme', liga: false, canalFijo: 'Llamada' },
-];
-
-type EstadoPaso = 'hecho' | 'actual' | 'programado' | 'omitido';
-type PasoPlan = (typeof PLANTILLA)[number] & {
-  canal: Canal;
-  estado: EstadoPaso;
-  resultado?: string;
-  obligatorio: boolean;
-  /** Días que faltan para que un paso sombreado se active. */
-  faltan: number;
-};
-
-/** "14 días antes", "Día del vencimiento", "1 día después"… */
-function cuandoPaso(id: PasoId, dia: number): string {
-  if (id === 'N0') return 'Al emitir';
-  if (dia === 0) return 'Día del vencimiento';
-  const n = Math.abs(dia);
-  return `${n} ${n === 1 ? 'día' : 'días'} ${dia < 0 ? 'antes' : 'después'}`;
-}
-
-function textoHoy(hoy: number): string {
-  if (hoy < 0) return `Faltan ${-hoy} ${hoy === -1 ? 'día' : 'días'} para vencer`;
-  if (hoy === 0) return 'Vence hoy';
-  return `${hoy} ${hoy === 1 ? 'día' : 'días'} vencida`;
-}
-
-/**
- * Aplica la plantilla general a un cliente. Reglas de personalización
- * (deterministas y explicables, se muestran en pantalla):
- * - cumplido  → se omiten los niveles 0 a 2.
- * - formal    → tono más formal y todo por correo (salvo la llamada final).
- * - disputas  → la confirmación de factura es obligatoria.
- * Estado: el paso más reciente cuyo día ya llegó es "Hoy"; los anteriores
- * están hechos y los que no han llegado quedan sombreados.
- */
-function construirPlan(plan: RecordatorioItem['plan']) {
-  const omitidos = new Set<PasoId>(plan.perfil === 'cumplido' ? ['N0', 'N1', 'N2'] : []);
-  const base = PLANTILLA.map((t) => ({
-    ...t,
-    canal: (plan.perfil === 'formal' && t.id !== 'D' ? 'Correo' : t.canalFijo ?? plan.canal) as Canal,
-    tono: plan.perfil === 'formal' && (t.tono === 'Cordial' || t.tono === 'Suave') ? 'Estándar' : t.tono,
-    obligatorio: plan.perfil === 'disputas' && t.id === 'N0',
-  }));
-  const vigentes = base.filter((t) => !omitidos.has(t.id));
-  const actual = [...vigentes].reverse().find((t) => t.dia <= plan.hoy)?.id;
-
-  const pasos: PasoPlan[] = base.map((t) => {
-    const estado: EstadoPaso = omitidos.has(t.id)
-      ? 'omitido'
-      : t.id === actual
-        ? 'actual'
-        : t.dia <= plan.hoy
-          ? 'hecho'
-          : 'programado';
-    return { ...t, estado, resultado: plan.resultados[t.id], faltan: t.dia - plan.hoy };
-  });
-
-  const ajustes: string[] = [];
-  if (plan.perfil === 'cumplido') ajustes.push('Se omiten los niveles 0 a 2: es un cliente cumplido y no necesita avisos tan temprano.');
-  if (plan.perfil === 'formal') ajustes.push('Cuenta grande: tono más formal y estado de cuenta adjunto, todo por correo.');
-  if (plan.perfil === 'disputas') ajustes.push('Ha tenido aclaraciones de factura: la confirmación (nivel 0) es obligatoria.');
-  if (plan.perfil !== 'formal') ajustes.push(`Avisos por ${plan.canal}, el canal donde más responde.`);
-  if (plan.perfil === 'estandar') ajustes.push('Resto de la plantilla general sin cambios.');
-
-  return {
-    pasos,
-    actual: pasos.find((p) => p.estado === 'actual'),
-    proxima: pasos.find((p) => p.estado === 'programado'),
-    ajustes,
-  };
-}
 
 type SubSeccion = 'resumen' | 'plan' | 'historial' | 'simulador';
 
@@ -886,6 +803,8 @@ const SUB_SECCIONES: { id: SubSeccion; label: string }[] = [
  * subpestañas cada vista cabe de un vistazo y las alturas se emparejan.
  */
 function RecordatoriosPanel() {
+  const { cartera } = useCobranza();
+  const planDeCliente = (cliente: string) => planCuenta(cartera.find((c) => c.cliente === cliente)!);
   const [selected, setSelected] = React.useState(MOCK.recordatorios[0].cliente);
   const [sub, setSub] = React.useState<SubSeccion>('resumen');
   const activo = MOCK.recordatorios.find((r) => r.cliente === selected) ?? MOCK.recordatorios[0];
@@ -902,7 +821,7 @@ function RecordatoriosPanel() {
     MOCK.recordatorios.reduce((s, r) => s + r.tasa, 0) / MOCK.recordatorios.length,
   );
   const enEscalamiento = MOCK.recordatorios.filter((r) =>
-    construirPlan(r.plan).actual?.fase === 'escalamiento',
+    planDeCliente(r.cliente).actual?.fase === 'escalamiento',
   ).length;
 
   return (
@@ -917,7 +836,7 @@ function RecordatoriosPanel() {
             {MOCK.recordatorios.map((r) => {
               const cuentaFila = cuentaDe(r.cliente);
               const activa = selected === r.cliente;
-              const pasoActual = construirPlan(r.plan).actual;
+              const pasoActual = planDeCliente(r.cliente).actual;
               return (
                 <button
                   key={r.cliente}
@@ -1267,16 +1186,6 @@ function SimuladorCuenta({ cuenta }: { cuenta: CarteraItem }) {
 // La escalera arranca ANTES del vencimiento: eso es la cobranza temprana.
 // El color codifica la fase, no la decora.
 
-const FASES = {
-  temprana: { label: 'Temprana', punto: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-700', linea: 'bg-emerald-200' },
-  seguimiento: { label: 'Seguimiento', punto: 'bg-amber-400', chip: 'bg-amber-50 text-amber-700', linea: 'bg-amber-200' },
-  escalamiento: { label: 'Escalamiento', punto: 'bg-rose-500', chip: 'bg-rose-50 text-rose-700', linea: 'bg-rose-200' },
-} as const;
-
-function FaseDot({ fase }: { fase: keyof typeof FASES }) {
-  return <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${FASES[fase].punto}`} aria-hidden />;
-}
-
 // ── Subpestaña 1 · Resumen ──────────────────────────────────────────
 
 function SubResumen({ cuenta }: { cuenta: CarteraItem | undefined }) {
@@ -1379,7 +1288,9 @@ function SubResumen({ cuenta }: { cuenta: CarteraItem | undefined }) {
 
 function SubPlan({ registro }: { registro: RecordatorioItem }) {
   const { mejor, nota } = registro;
-  const { pasos, actual, proxima, ajustes } = construirPlan(registro.plan);
+  const { cartera } = useCobranza();
+  const cuentaViva = cartera.find((c) => c.cliente === registro.cliente)!;
+  const { pasos, actual, proxima, ajustes } = construirPlan({ ...registro.plan, resultados: cuentaViva.resultados });
   const vigentes = pasos.filter((p) => p.estado !== 'omitido');
   const hechos = vigentes.filter((p) => p.estado === 'hecho').length;
   const avance = Math.round((hechos / vigentes.length) * 100);
@@ -1440,152 +1351,9 @@ function SubPlan({ registro }: { registro: RecordatorioItem }) {
         </div>
       </div>
 
-      {/* Escalera completa: antes y después del vencimiento */}
-      <div className="space-y-3.5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <BlockTitle>Plan de cobranza</BlockTitle>
-          <div className="flex items-center gap-3">
-            {(Object.keys(FASES) as (keyof typeof FASES)[]).map((f) => (
-              <span key={f} className="flex items-center gap-1.5">
-                <FaseDot fase={f} />
-                <span className="text-[10px] text-brand-ink/45">{FASES[f].label}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="flex-1">
-            <Bar value={avance} tone="accent" delay={0.1} />
-          </div>
-          <span className="text-[11px] text-brand-ink/45 tabular-nums shrink-0">
-            {hechos} de {vigentes.length} pasos
-          </span>
-        </div>
-
-        <TramoPlan titulo="Antes del vencimiento" pasos={antes} inicio={0} />
-
-        {/* Línea del vencimiento: separa la cobranza temprana de la vencida */}
-        <div className="flex items-center gap-3 py-1" aria-hidden>
-          <span className="h-px flex-1 bg-rose-200" />
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-500">
-            Vencimiento
-          </span>
-          <span className="h-px flex-1 bg-rose-200" />
-        </div>
-
-        <TramoPlan titulo="Después del vencimiento" pasos={despues} inicio={antes.length} />
-      </div>
+      <LineaPlan pasos={pasos} />
     </div>
   );
-}
-
-function TramoPlan({ titulo, pasos, inicio }: { titulo: string; pasos: PasoPlan[]; inicio: number }) {
-  return (
-    <div>
-      <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40 mb-3">{titulo}</div>
-      <ol className="relative border-l border-brand-ink/10 ml-2 space-y-3">
-        {pasos.map((paso, i) => (
-          <PasoEscalera key={paso.id} paso={paso} index={inicio + i} />
-        ))}
-      </ol>
-    </div>
-  );
-}
-
-function PasoEscalera({
-  paso,
-  index,
-}: {
-  // Convención del proyecto: un componente que recibe `key` debe declararla.
-  key?: string;
-  paso: PasoPlan;
-  index: number;
-}) {
-  const reduce = useReducedMotion();
-  const fase = FASES[paso.fase];
-  const { estado } = paso;
-  const esActual = estado === 'actual';
-  const hecho = estado === 'hecho';
-  const sombreado = estado === 'programado';
-  const omitido = estado === 'omitido';
-
-  return (
-    <motion.li
-      initial={reduce ? false : { opacity: 0, x: -6 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.26, delay: reduce ? 0 : 0.04 + index * 0.04, ease: EASE }}
-      className="pl-5"
-    >
-      {/* Punto de la línea: lleno si ya pasó, con halo si es hoy, vacío si falta */}
-      <span
-        className={`absolute -left-[6px] mt-4 w-3 h-3 rounded-full border-2 border-brand-paper flex items-center justify-center ${
-          hecho || esActual ? fase.punto : omitido ? 'bg-brand-paper ring-1 ring-brand-ink/15' : 'bg-brand-ink/15'
-        } ${esActual ? 'ring-4 ring-brand-gold/25' : ''}`}
-        aria-hidden
-      />
-      <div
-        className={`rounded-xl px-4 py-3 border transition-colors ${
-          esActual
-            ? 'bg-brand-cream border-brand-gold/50 shadow-sm'
-            : hecho
-              ? 'bg-brand-paper border-brand-ink/8'
-              : omitido
-                ? 'bg-transparent border-dashed border-brand-ink/12'
-                : 'bg-brand-bone/40 border-brand-ink/6 opacity-50'
-        }`}
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${sombreado || omitido ? 'bg-brand-ink/5 text-brand-ink/40' : fase.chip}`}>
-            {paso.etiqueta}
-          </span>
-          <span
-            className={`text-sm font-semibold ${
-              omitido ? 'text-brand-ink/35 line-through' : sombreado ? 'text-brand-ink/50' : 'text-brand-ink'
-            }`}
-          >
-            {paso.nombre}
-          </span>
-          {hecho && <Check size={13} className="text-emerald-600" aria-label="Hecho" />}
-          {esActual && <span className="audit-badge bg-brand-gold/20 text-brand-ink/75">Hoy</span>}
-          {paso.obligatorio && <span className="audit-badge bg-amber-50 text-amber-700">Obligatorio</span>}
-          <span className="ml-auto text-[11px] text-brand-ink/40 tabular-nums">
-            {cuandoPaso(paso.id, paso.dia)}
-          </span>
-        </div>
-        {omitido ? (
-          <div className="mt-1.5 text-[11px] text-brand-ink/35 italic">Omitido para este cliente</div>
-        ) : (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-[11px] text-brand-ink/45">
-            <span className="flex items-center gap-1">
-              <CanalIcon canal={paso.canal} />
-              {paso.canal}
-            </span>
-            <span>Tono {paso.tono}</span>
-            {paso.liga && (
-              <span className="flex items-center gap-1 text-brand-ink/55">
-                <Link2 size={11} />
-                Liga de pago
-              </span>
-            )}
-            {sombreado && (
-              <span className="ml-auto italic">
-                Se activa {paso.faltan === 1 ? 'mañana' : `en ${paso.faltan} días`}
-              </span>
-            )}
-            {!sombreado && paso.resultado && (
-              <span className="ml-auto font-semibold text-brand-ink/60">{paso.resultado}</span>
-            )}
-          </div>
-        )}
-      </div>
-    </motion.li>
-  );
-}
-
-function CanalIcon({ canal }: { canal: string }) {
-  const Icon = CANAL_ICON[canal as keyof typeof CANAL_ICON] ?? MessageSquare;
-  return <Icon size={11} />;
 }
 
 // ── Subpestaña 3 · Historial ────────────────────────────────────────
@@ -1907,6 +1675,25 @@ function PerfilesPanel() {
 // ─── 6 · Equipo ──────────────────────────────────────────────────────
 
 function EquipoPanel() {
+  const { cartera, envios, resultadosHoy } = useCobranza();
+  // Todo sale de la misma cartera que ven Supervisor y Agente.
+  const equipo = AGENTES.map((nombre) => {
+    const suyas = cartera.filter((c) => c.agente === nombre);
+    const vencidas = suyas.filter((c) => c.dias > 0);
+    return {
+      nombre,
+      cuentas: suyas.length,
+      cartera: suyas.reduce((s, c) => s + c.monto, 0),
+      porCobrar: suyas.reduce((s, c) => s + saldoDe(c), 0),
+      recuperado: suyas.reduce((s, c) => s + c.pagado, 0),
+      // Pendientes de hoy: el paso vigente del plan aún no tiene resultado.
+      pendientes: suyas.filter((c) => {
+        const act = planCuenta(c).actual;
+        return act && !c.resultados[act.id] && !envios[c.id] && !resultadosHoy[c.id];
+      }).length,
+      diasProm: vencidas.length ? Math.round(vencidas.reduce((s, c) => s + c.dias, 0) / vencidas.length) : 0,
+    };
+  });
   return (
     <div className="space-y-5">
       <Reveal>
@@ -1917,9 +1704,9 @@ function EquipoPanel() {
       </Reveal>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {MOCK.equipo.map((persona, i) => {
+        {equipo.map((persona, i) => {
           const pct = Math.round((persona.recuperado / persona.cartera) * 100);
-          const saturado = persona.pendientes >= 10;
+          const saturado = persona.pendientes >= 4;
           return (
             <Reveal key={persona.nombre} delay={0.06 + i * 0.06}>
               <article className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-6 space-y-5 h-full">
