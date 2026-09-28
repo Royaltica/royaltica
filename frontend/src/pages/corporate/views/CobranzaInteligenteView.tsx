@@ -1,11 +1,5 @@
 import React from 'react';
-import {
-  animate,
-  motion,
-  useMotionValue,
-  useReducedMotion,
-  useTransform,
-} from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -22,6 +16,13 @@ import {
   TrendingDown,
   TrendingUp,
 } from 'lucide-react';
+import { EASE, Reveal, Figure, Bar, Tag, BlockTitle, type FigureFormat } from './cobranza/primitives.tsx';
+import { RolSelector, type Rol } from './cobranza/RolSelector.tsx';
+import { AgenteVista } from './cobranza/AgenteVista.tsx';
+import { CampanasPanel } from './cobranza/CampanasPanel.tsx';
+import { PlantillasPanel } from './cobranza/PlantillasPanel.tsx';
+import { ReportesPanel } from './cobranza/ReportesPanel.tsx';
+import { DatosPagosPanel, AsignacionPanel, AvisoT1 } from './cobranza/DatosPagosPanel.tsx';
 import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
 
 /**
@@ -40,18 +41,49 @@ type Section =
   | 'prioridades'
   | 'alertas'
   | 'recordatorios'
+  | 'campanas'
+  | 'plantillas'
+  | 'reportes'
+  | 'datos'
   | 'estrategias'
-  | 'perfiles'
   | 'equipo';
 
-const sections: { id: Section; label: string }[] = [
-  { id: 'prioridades', label: 'Prioridades' },
-  { id: 'alertas', label: 'Alertas' },
-  { id: 'recordatorios', label: 'Recordatorios' },
-  { id: 'estrategias', label: 'Estrategias' },
-  { id: 'perfiles', label: 'Perfiles' },
-  { id: 'equipo', label: 'Equipo' },
-];
+const LABEL: Record<Section, string> = {
+  prioridades: 'Prioridades',
+  alertas: 'Alertas',
+  recordatorios: 'Recordatorios',
+  campanas: 'Campañas',
+  plantillas: 'Plantillas',
+  reportes: 'Reportes',
+  datos: 'Datos y pagos',
+  estrategias: 'Estrategias',
+  equipo: 'Equipo',
+};
+
+// Cada perfil ve solo sus pestañas, agrupadas en Operación y Configuración.
+// El Agente no tiene pestañas: una sola lista (ver AgenteVista).
+const SECCIONES_POR_ROL: Record<Exclude<Rol, 'agente'>, Section[][]> = {
+  admin: [
+    ['prioridades', 'alertas', 'recordatorios', 'campanas'],
+    ['plantillas', 'reportes', 'datos', 'estrategias', 'equipo'],
+  ],
+  supervisor: [['prioridades', 'recordatorios', 'campanas', 'equipo'], ['reportes']],
+};
+
+const ENCABEZADO: Record<Rol, { titulo: string; texto: string }> = {
+  admin: {
+    titulo: 'Control interno de cartera',
+    texto: 'Todo el módulo: cartera, campañas, plantillas, reportes y la base de datos.',
+  },
+  supervisor: {
+    titulo: 'Operación del equipo',
+    texto: 'Prioridades, campañas por bloque y la carga de trabajo de tu equipo.',
+  },
+  agente: {
+    titulo: 'Mis cuentas de hoy',
+    texto: 'A quién contactar, a qué número y qué decirle.',
+  },
+};
 
 // ─── Primitivas de movimiento ────────────────────────────────────────
 // Sistema de movimiento del módulo. Cada animación responde a una razón:
@@ -61,109 +93,6 @@ const sections: { id: Section; label: string }[] = [
 // Todo se degrada a estático bajo `prefers-reduced-motion`, y ninguna
 // animación toca layout: solo `transform` y `opacity`, más `width` en las
 // barras, que están aisladas y no reflowean el resto de la página.
-
-const EASE = [0.16, 1, 0.3, 1] as const;
-
-/** Entrada escalonada: ordena la lectura de arriba hacia abajo. */
-function Reveal({
-  children,
-  delay = 0,
-  className = '',
-}: {
-  // Convención del proyecto: un componente que recibe `key` debe declararla.
-  key?: string;
-  children: React.ReactNode;
-  delay?: number;
-  className?: string;
-}) {
-  const reduce = useReducedMotion();
-  return (
-    <motion.div
-      className={className}
-      initial={reduce ? false : { opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, delay: reduce ? 0 : delay, ease: EASE }}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
-type FigureFormat = 'entero' | 'moneda' | 'porcentaje' | 'dias';
-
-const FORMATTERS: Record<FigureFormat, (v: number) => string> = {
-  entero: (v) => String(Math.round(v)),
-  moneda: (v) => CURRENCY_FORMATTER.format(Math.round(v)),
-  porcentaje: (v) => `${Math.round(v)}%`,
-  dias: (v) => `${Math.round(v)}`,
-};
-
-/**
- * Cifra que transiciona al cambiar de valor. La animación comunica un
- * cambio de estado real (cambiaste de cuenta, moviste el simulador), no
- * es un adorno de carga: por eso solo corre cuando `value` cambia.
- */
-function Figure({
-  value,
-  format = 'entero',
-  className = '',
-}: {
-  value: number;
-  format?: FigureFormat;
-  className?: string;
-}) {
-  const reduce = useReducedMotion();
-  const mv = useMotionValue(value);
-  const text = useTransform(mv, FORMATTERS[format]);
-
-  React.useEffect(() => {
-    if (reduce) {
-      mv.set(value);
-      return;
-    }
-    const controls = animate(mv, value, { duration: 0.5, ease: EASE });
-    return () => controls.stop();
-  }, [value, reduce, mv]);
-
-  return (
-    <motion.span className={`tabular-nums ${className}`}>
-      {reduce ? FORMATTERS[format](value) : text}
-    </motion.span>
-  );
-}
-
-/**
- * Barra de proporción. Crece desde cero para que el ojo lea la magnitud
- * relativa antes que el número exacto.
- */
-function Bar({
-  value,
-  tone = 'ink',
-  delay = 0,
-}: {
-  value: number;
-  tone?: 'ink' | 'accent' | 'positivo' | 'negativo';
-  delay?: number;
-}) {
-  const reduce = useReducedMotion();
-  const fill = {
-    ink: 'bg-brand-ink/70',
-    accent: 'bg-brand-gold',
-    positivo: 'bg-emerald-600',
-    negativo: 'bg-rose-500',
-  }[tone];
-
-  return (
-    <div className="h-1 bg-brand-ink/8 rounded-full overflow-hidden">
-      <motion.div
-        className={`h-full rounded-full ${fill}`}
-        initial={reduce ? false : { width: 0 }}
-        animate={{ width: `${Math.min(100, Math.max(0, value))}%` }}
-        transition={{ duration: 0.7, delay: reduce ? 0 : delay, ease: EASE }}
-      />
-    </div>
-  );
-}
 
 // ─── Datos de ejemplo ────────────────────────────────────────────────
 // Reemplazar por llamadas reales al API cuando exista el Módulo 2.
@@ -481,76 +410,120 @@ const MOCK = {
 // ─── Vista principal ─────────────────────────────────────────────────
 
 export function CobranzaInteligenteView() {
+  const [rol, setRol] = React.useState<Rol>('admin');
   const [section, setSection] = React.useState<Section>('prioridades');
   const reduce = useReducedMotion();
+  const grupos = rol === 'agente' ? [] : SECCIONES_POR_ROL[rol];
+
+  const cambiarRol = (r: Rol) => {
+    setRol(r);
+    if (r !== 'agente' && !SECCIONES_POR_ROL[r].flat().includes(section)) setSection('prioridades');
+  };
 
   return (
     <div className="pb-12 max-w-[1400px]">
-      {/* Encabezado */}
+      {/* Encabezado + selector de perfil */}
       <Reveal>
-        <p className="text-[10px] uppercase tracking-[0.28em] font-semibold text-brand-ink/35">
-          Cobranza inteligente
-        </p>
-        <h2 className="text-[2.5rem] leading-[1.05] font-serif text-brand-ink mt-2">
-          Control interno de cartera
-        </h2>
-        <p className="text-sm text-brand-ink/55 max-w-[62ch] mt-3 leading-relaxed">
-          Analiza la cartera completa: a quién cobrar primero y por qué, qué cuentas se están
-          deteriorando y qué forma de contacto funciona con cada cliente.
-        </p>
+        <div className="flex flex-wrap items-end justify-between gap-6">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.28em] font-semibold text-brand-ink/35">
+              Cobranza inteligente
+            </p>
+            <h2 className="text-[2.5rem] leading-[1.05] font-serif text-brand-ink mt-2">
+              {ENCABEZADO[rol].titulo}
+            </h2>
+            <p className="text-sm text-brand-ink/55 max-w-[62ch] mt-3 leading-relaxed">
+              {ENCABEZADO[rol].texto}
+            </p>
+          </div>
+          <div className="w-full lg:w-auto lg:min-w-[560px]">
+            <RolSelector rol={rol} onChange={cambiarRol} />
+          </div>
+        </div>
       </Reveal>
 
-      {/* Navegación de secciones: una sola línea, con indicador deslizante.
-          El indicador se mueve entre pestañas (layoutId) en vez de aparecer
-          y desaparecer, para que la transición confirme el clic. */}
-      <Reveal delay={0.06}>
-        <nav
-          className="mt-8 border-b border-brand-ink/10 flex gap-1 overflow-x-auto scrollbar-custom"
-          aria-label="Secciones de cobranza"
-        >
-          {sections.map((s) => {
-            const activa = section === s.id;
-            return (
-              <button
-                key={s.id}
-                onClick={() => setSection(s.id)}
-                aria-current={activa ? 'page' : undefined}
-                className={`relative shrink-0 px-4 py-3 text-[13px] font-semibold transition-colors duration-200 ${
-                  activa ? 'text-brand-ink' : 'text-brand-ink/40 hover:text-brand-ink/70'
-                }`}
-              >
-                {s.label}
-                {activa && (
-                  <motion.span
-                    layoutId={reduce ? undefined : 'seccion-activa'}
-                    className="absolute left-3 right-3 -bottom-px h-0.5 bg-brand-gold rounded-full"
-                    transition={{ duration: 0.32, ease: EASE }}
-                  />
-                )}
-              </button>
-            );
-          })}
-        </nav>
-      </Reveal>
+      {rol !== 'agente' && (
+        <Reveal delay={0.06}>
+          {/* Pestañas del perfil: grupos separados por un divisor fino. El
+              indicador se desliza (layoutId) para confirmar el clic. */}
+          <nav
+            className="mt-8 border-b border-brand-ink/10 flex items-center gap-1 overflow-x-auto scrollbar-custom"
+            aria-label="Secciones de cobranza"
+          >
+            {grupos.map((grupo, gi) => (
+              <React.Fragment key={gi}>
+                {gi > 0 && <span className="w-px h-4 bg-brand-ink/12 mx-2 shrink-0" aria-hidden />}
+                {grupo.map((id) => {
+                  const activa = section === id;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => setSection(id)}
+                      aria-current={activa ? 'page' : undefined}
+                      className={`relative shrink-0 px-4 py-3 text-[13px] font-semibold transition-colors duration-200 ${
+                        activa ? 'text-brand-ink' : 'text-brand-ink/40 hover:text-brand-ink/70'
+                      }`}
+                    >
+                      {LABEL[id]}
+                      {activa && (
+                        <motion.span
+                          layoutId={reduce ? undefined : 'seccion-activa'}
+                          className="absolute left-3 right-3 -bottom-px h-0.5 bg-brand-gold rounded-full"
+                          transition={{ duration: 0.32, ease: EASE }}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </React.Fragment>
+            ))}
+          </nav>
+          <div className="mt-3">
+            <AvisoT1 onIr={rol === 'admin' ? () => setSection('datos') : undefined} />
+          </div>
+        </Reveal>
+      )}
 
       <Reveal delay={0.1}>
         <PrototypeNotice />
       </Reveal>
 
-      {/* El panel entra con un desplazamiento mínimo: confirma que el
-          contenido cambió sin hacer esperar a quien ya sabe a dónde va. */}
       <motion.div
-        key={section}
+        key={`${rol}-${section}`}
         initial={reduce ? false : { opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25, ease: EASE }}
       >
-        {section === 'prioridades' && <PrioridadesPanel />}
-        {section === 'alertas' && <AlertasPanel />}
-        {section === 'recordatorios' && <RecordatoriosPanel />}
-        {section === 'estrategias' && <EstrategiasPanel />}
-        {section === 'perfiles' && <PerfilesPanel />}
-        {section === 'equipo' && <EquipoPanel />}
+        {rol === 'agente' ? (
+          <AgenteVista />
+        ) : (
+          <>
+            {section === 'prioridades' && <PrioridadesPanel />}
+            {section === 'alertas' && <AlertasPanel />}
+            {section === 'recordatorios' && <RecordatoriosPanel />}
+            {section === 'campanas' && <CampanasPanel />}
+            {section === 'plantillas' && <PlantillasPanel />}
+            {section === 'reportes' && <ReportesPanel soloEquipo={rol === 'supervisor'} />}
+            {section === 'datos' && <DatosPagosPanel />}
+            {section === 'estrategias' && (
+              <div className="space-y-10">
+                <EstrategiasPanel />
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.16em] font-semibold text-brand-ink/40 mb-4">
+                    Perfiles de cliente
+                  </div>
+                  <PerfilesPanel />
+                </div>
+              </div>
+            )}
+            {section === 'equipo' && (
+              <>
+                <EquipoPanel />
+                <AsignacionPanel />
+              </>
+            )}
+          </>
+        )}
       </motion.div>
     </div>
   );
@@ -2110,25 +2083,6 @@ function TrendIcon({ tendencia }: { tendencia: 'sube' | 'baja' | 'estable' }) {
   if (tendencia === 'baja')
     return <TrendingDown size={13} className="text-emerald-600" aria-label="Riesgo a la baja" />;
   return <ArrowRight size={13} className="text-brand-ink/25" aria-label="Riesgo estable" />;
-}
-
-function Tag({ icon, text }: { icon: React.ReactNode; text: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-brand-bone border border-brand-ink/10 rounded-lg text-[11px] font-semibold text-brand-ink/70">
-      {icon}
-      {text}
-    </span>
-  );
-}
-
-/** Encabezado de bloque dentro de una tarjeta. */
-function BlockTitle({ icon, children }: { icon?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.16em] font-semibold text-brand-ink/40">
-      {icon}
-      {children}
-    </div>
-  );
 }
 
 function CompareRow({
