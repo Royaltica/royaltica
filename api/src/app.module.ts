@@ -20,6 +20,7 @@ import { CustomersModule } from './customers/customers.module';
 import { ReceivablesModule } from './receivables/receivables.module';
 import { CollectionPolicyModule } from './collection-policy/collection-policy.module';
 import { CollectionSequencesModule } from './collection-sequences/collection-sequences.module';
+import { AgentModule } from './agent/agent.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ReportsModule } from './reports/reports.module';
 import { GeminiModule } from './gemini/gemini.module';
@@ -111,6 +112,7 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     ReceivablesModule,
     CollectionPolicyModule,
     CollectionSequencesModule,
+    AgentModule,
     DashboardModule,
     ReportsModule,
     InvoicesModule,

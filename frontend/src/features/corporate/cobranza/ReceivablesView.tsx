@@ -29,6 +29,7 @@ import {
   type ReminderEffectiveness,
   type RankedCustomer,
   type AtRiskCustomer,
+  type ApiUserRow,
 } from '../../../services/apiClient.ts';
 import { getCurrencyFormatter, getDateFormatter } from '../../../utils/locale.ts';
 
@@ -563,10 +564,36 @@ function KpiTile({ icon, label, value, sub, tone }: { icon: React.ReactNode; lab
   );
 }
 
+/**
+ * Carga la lista de usuarios con perfil Agente/Ejecutivo, para que un
+ * Supervisor/Admin pueda asignarles cuentas (spec "Mejoras V1", sección 2).
+ * Si la llamada falla (ej. usuario sin permiso de configuración) se
+ * degrada a "sin agentes" en vez de romper el formulario de cliente.
+ */
+function useAgentOptions(): ApiUserRow[] {
+  const [agents, setAgents] = React.useState<ApiUserRow[]>([]);
+  React.useEffect(() => {
+    let alive = true;
+    api
+      .getUsers()
+      .then((rows) => {
+        if (alive) setAgents(rows.filter((u) => u.operationalProfile === 'AGENTE_EJECUTIVO' && u.status !== 'INACTIVE'));
+      })
+      .catch(() => {
+        /* sin permiso o error de red: el selector simplemente queda vacío */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return agents;
+}
+
 function NewCustomerForm({ onDone }: { onDone: () => void }) {
-  const [f, setF] = React.useState({ name: '', rfc: '', legalName: '', email: '', phone: '', creditLimitDays: '' });
+  const [f, setF] = React.useState({ name: '', rfc: '', legalName: '', email: '', phone: '', creditLimitDays: '', assignedAgentId: '' });
   const [err, setErr] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+  const agents = useAgentOptions();
 
   const submit = async () => {
     setErr(null);
@@ -579,6 +606,7 @@ function NewCustomerForm({ onDone }: { onDone: () => void }) {
         email: f.email || undefined,
         phone: f.phone || undefined,
         creditLimitDays: f.creditLimitDays ? Number(f.creditLimitDays) : undefined,
+        assignedAgentId: f.assignedAgentId || undefined,
       });
       onDone();
     } catch (e) {
@@ -599,6 +627,18 @@ function NewCustomerForm({ onDone }: { onDone: () => void }) {
         <input className={inp} placeholder="Correo (para cobranza)" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
         <input className={inp} placeholder="WhatsApp E.164 (+52...)" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
         <input className={inp} placeholder="Días de crédito" value={f.creditLimitDays} onChange={(e) => setF({ ...f, creditLimitDays: e.target.value })} />
+        <select
+          className={inp}
+          value={f.assignedAgentId}
+          onChange={(e) => setF({ ...f, assignedAgentId: e.target.value })}
+        >
+          <option value="">Sin agente asignado</option>
+          {agents.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
       </div>
       {err && <p className="text-[10px] font-bold text-red-600">{err}</p>}
       <button onClick={submit} disabled={saving || !f.name || !f.rfc} className="btn-primary disabled:opacity-50">

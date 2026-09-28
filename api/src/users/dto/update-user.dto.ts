@@ -7,8 +7,13 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import type { OperationalProfile } from '@prisma/client';
 import { ALL_AREAS } from '../../auth/constants/permissions';
-import { INVITABLE_ROLES, type InvitableRole } from './invite-user.dto';
+import {
+  INVITABLE_ROLES,
+  OPERATIONAL_PROFILES,
+  type InvitableRole,
+} from './invite-user.dto';
 
 /**
  * Edición de un usuario existente por el admin.
@@ -30,4 +35,9 @@ export class UpdateUserDto {
   @ArrayUnique()
   @IsIn(ALL_AREAS, { each: true })
   permissions?: string[];
+
+  /** Ver comentario en InviteUserDto.operationalProfile. */
+  @IsOptional()
+  @IsIn(OPERATIONAL_PROFILES)
+  operationalProfile?: OperationalProfile;
 }

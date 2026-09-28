@@ -32,6 +32,26 @@ enum UserRole {
   SUPERADMIN
 }
 
+// Perfil operativo dentro de un CORPORATE_USER/CORPORATE_ADMIN (Segregación
+// de Funciones — spec "Mejoras V1" de Paolo, sección 2). Es ortogonal a
+// UserRole: UserRole sigue gobernando acceso técnico (FULL_ACCESS_ROLES,
+// guards), mientras que operationalProfile solo etiqueta el perfil de
+// negocio para (a) decidir qué UI mostrar en el frontend (el AGENTE_EJECUTIVO
+// entra a una pantalla ultra-simplificada, no al portal completo) y (b)
+// prellenar el bundle de `permissions[]` sugerido al invitar. Nullable:
+// no rompe usuarios existentes, que simplemente no tienen perfil asignado.
+enum OperationalProfile {
+  // Control total y auditoría de integridad: carga masiva (CSV/API), logs,
+  // configuración de seguridad. En la práctica es un CORPORATE_ADMIN.
+  ADMINISTRADOR_DATA
+  // Orquestación de estrategias y reglas de negocio: buckets, simulaciones
+  // de quitas, análisis de KPIs.
+  SUPERVISOR_GERENTE
+  // Ejecución operativa y respuesta táctica: solo ve sus contactos
+  // asignados y actualiza su estatus de gestión. UI ultra-simplificada.
+  AGENTE_EJECUTIVO
+}
+
 enum UserStatus {
   INVITED
   ACTIVE
@@ -207,6 +227,10 @@ model User {
   // Áreas a las que el usuario tiene acceso (CORPORATE_USER).
   // CORPORATE_ADMIN ignora esto y ve todo. Ej: ["finanzas","factoraje"]
   permissions    String[]   @default([])
+  // Perfil operativo (Administrador/Data, Supervisor/Gerente,
+  // Agente/Ejecutivo). Null = cuenta sin perfil asignado (portal completo,
+  // comportamiento igual que antes de este campo).
+  operationalProfile OperationalProfile?
   invitedById    String?
   lastLoginAt    DateTime?
   supplierId     String?    @unique
@@ -229,9 +253,13 @@ model User {
   financialStatements FinancialStatement[] @relation("StatementCreator")
   activityLogs        ActivityLog[]
   notifications       Notification[]
+  // Cuentas (clientes CxC) asignadas a este usuario cuando su perfil es
+  // AGENTE_EJECUTIVO — ver Customer.assignedAgentId.
+  assignedCustomers   Customer[]           @relation("AssignedAgent")
 
   @@index([organizationId])
   @@index([role])
+  @@index([operationalProfile])
 }
 
 model Supplier {
@@ -299,11 +327,16 @@ model Customer {
   // externalId si vienen de sistemas distintos.
   externalId      String?
   isActive        Boolean   @default(true)
+  // Agente/Ejecutivo (User.operationalProfile = AGENTE_EJECUTIVO) responsable
+  // de gestionar este contacto. Null = sin asignar (no aparece en la bandeja
+  // de ningún agente; lo sigue viendo Supervisor/Admin normalmente).
+  assignedAgentId String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   deletedAt       DateTime?
 
   organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignedAgent  User?                  @relation("AssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
   invoices       Invoice[]
   portalAccesses CustomerPortalAccess[]
 
@@ -311,6 +344,7 @@ model Customer {
   @@unique([organizationId, externalId])
   @@index([organizationId])
   @@index([isActive])
+  @@index([assignedAgentId])
 }
 
 // Portal de autoservicio SIN CUENTA para clientes deudores (Tradespace,
@@ -798,6 +832,7 @@ model Sat69bEntry {
 enum UsageFeature {
   GEMINI_AUDIT // tokens de auditoría forense de facturas
   GEMINI_CHAT // tokens del asistente IA (/ai/chat)
+  GEMINI_WHATSAPP // tokens de redacción de alertas críticas por WhatsApp
   EMAIL_SENT // correos enviados vía Resend
   GCS_UPLOAD // bytes subidos a Google Cloud Storage
   SAT_QUERY // consultas al SAT (69-B / verificación CFDI)

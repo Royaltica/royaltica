@@ -121,6 +121,16 @@ async function uploadForm<T>(path: string, form: FormData): Promise<T> {
 
 // ── Tipos del backend (los campos que consumimos) ──────────
 
+/**
+ * Perfil operativo (Segregación de Funciones): Administrador/Data,
+ * Supervisor/Gerente, Agente/Ejecutivo. Null = cuenta sin perfil asignado
+ * (portal completo, comportamiento igual que antes de este campo).
+ */
+export type OperationalProfile =
+  | 'ADMINISTRADOR_DATA'
+  | 'SUPERVISOR_GERENTE'
+  | 'AGENTE_EJECUTIVO';
+
 export interface ApiUser {
   id: string;
   email: string;
@@ -131,6 +141,7 @@ export interface ApiUser {
   supplierId: string | null;
   avatarUrl: string | null;
   totpEnabled?: boolean;
+  operationalProfile?: OperationalProfile | null;
 }
 
 interface ApiAuthResult {
@@ -217,6 +228,8 @@ export interface CxcCustomer {
   creditLimitDays: number | null;
   isActive: boolean;
   invoicesCount?: number;
+  /** Agente/Ejecutivo (User.id) asignado a esta cuenta, si aplica. */
+  assignedAgentId?: string | null;
   sat69b?: { listed: boolean; status: string | null; rfcValid: boolean } | null;
   createdAt: string;
 }
@@ -782,6 +795,7 @@ export const api = {
     name: string;
     role?: 'CORPORATE_USER' | 'CORPORATE_ADMIN';
     permissions?: string[];
+    operationalProfile?: OperationalProfile;
   }): Promise<ApiUserRow & { inviteLink?: string | null }> {
     return request('POST', '/users/invite', payload);
   },
@@ -789,6 +803,38 @@ export const api = {
   /** Activa o desactiva un usuario (revocación inmediata de acceso). */
   async setUserStatus(id: string, isActive: boolean): Promise<ApiUserRow> {
     return request<ApiUserRow>('PATCH', `/users/${id}/status`, { isActive });
+  },
+
+  /** Edita nombre, rol, áreas y/o perfil operativo de un usuario. */
+  async updateUser(
+    id: string,
+    payload: {
+      name?: string;
+      role?: 'CORPORATE_USER' | 'CORPORATE_ADMIN';
+      permissions?: string[];
+      operationalProfile?: OperationalProfile;
+    },
+  ): Promise<ApiUserRow> {
+    return request<ApiUserRow>('PATCH', `/users/${id}`, payload);
+  },
+
+  // ── Perfil Agente/Ejecutivo (pantalla ultra-simplificada) ──
+
+  /** Cuentas asignadas al agente autenticado, con su contactabilidad (FR-01). */
+  async getMyAgentAccounts(): Promise<AgentAccountsResponse> {
+    return request<AgentAccountsResponse>('GET', '/agent/my-accounts');
+  },
+
+  /** Registra el estatus de gestión que dejó el agente sobre una cuenta. */
+  async updateAgentAccountStatus(
+    customerId: string,
+    status: AgentAccountStatus,
+    note?: string,
+  ): Promise<{ recorded: true }> {
+    return request('PATCH', `/agent/accounts/${customerId}/status`, {
+      status,
+      note,
+    });
   },
 
   // ── Factoraje corporativo (aprobar / rechazar / desembolsar) ──
@@ -1356,6 +1402,7 @@ export const api = {
     email?: string;
     phone?: string;
     creditLimitDays?: number;
+    assignedAgentId?: string;
   }): Promise<CxcCustomer> {
     return request<CxcCustomer>('POST', '/customers', payload);
   },
@@ -1367,6 +1414,7 @@ export const api = {
       email: string;
       phone: string;
       creditLimitDays: number;
+      assignedAgentId: string;
     }>,
   ): Promise<CxcCustomer> {
     return request<CxcCustomer>('PATCH', `/customers/${id}`, payload);
@@ -1812,6 +1860,34 @@ export interface StatementApi {
   };
 }
 
+/** Una cuenta en la bandeja del perfil Agente/Ejecutivo (GET /agent/my-accounts). */
+export interface AgentAccountItem {
+  customerId: string;
+  name: string;
+  balance: number;
+  currency: string;
+  invoiceCount: number;
+  daysOverdue: number;
+  canContactNow: boolean;
+  blockedReason: 'DO_NOT_CONTACT' | 'OUTSIDE_HOURS' | 'BLACKOUT_DATE' | null;
+  priorityChannel: string | null;
+  phone: string | null;
+  email: string | null;
+}
+
+export interface AgentAccountsResponse {
+  total: number;
+  contactableNow: number;
+  items: AgentAccountItem[];
+}
+
+export type AgentAccountStatus =
+  | 'CONTACTED'
+  | 'NO_ANSWER'
+  | 'PROMISE_TO_PAY'
+  | 'DISPUTE'
+  | 'ESCALATE_TO_SUPERVISOR';
+
 /** Un usuario de la organización (GET /users). */
 export interface ApiUserRow {
   id: string;
@@ -1820,6 +1896,7 @@ export interface ApiUserRow {
   role: string;
   status: string;
   permissions: string[];
+  operationalProfile?: OperationalProfile | null;
   lastLoginAt: string | null;
   createdAt: string;
 }

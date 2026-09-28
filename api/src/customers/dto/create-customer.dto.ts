@@ -3,6 +3,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   Min,
@@ -70,4 +71,12 @@ export class CreateCustomerDto {
   @IsInt()
   @Min(0)
   creditLimitDays?: number;
+
+  /**
+   * Agente/Ejecutivo (User.id) responsable de esta cuenta. Lo asigna un
+   * Supervisor/Admin — el agente solo ve/gestiona lo que se le asignó aquí.
+   */
+  @IsOptional()
+  @IsUUID()
+  assignedAgentId?: string;
 }

@@ -1,4 +1,4 @@
-import type { UserRole } from '@prisma/client';
+import type { OperationalProfile, UserRole } from '@prisma/client';
 
 /**
  * Usuario autenticado inyectado en `request.user` por la JwtStrategy.
@@ -12,4 +12,5 @@ export interface AuthenticatedUser {
   organizationId: string | null;
   permissions: string[];
   supplierId: string | null;
+  operationalProfile: OperationalProfile | null;
 }

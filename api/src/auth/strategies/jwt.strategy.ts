@@ -44,6 +44,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         supplierId: true,
         isActive: true,
         status: true,
+        operationalProfile: true,
       },
     });
 
@@ -63,6 +64,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       organizationId: user.organizationId,
       permissions: isFullAccess ? [WILDCARD_PERMISSION] : user.permissions,
       supplierId: user.supplierId,
+      operationalProfile: user.operationalProfile,
     };
   }
 }
