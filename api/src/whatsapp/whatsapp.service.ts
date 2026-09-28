@@ -78,6 +78,79 @@ export class WhatsappService implements OnModuleInit {
   }
 
   /**
+   * Envía una PLANTILLA de mensaje pre-aprobada por Meta (única forma válida
+   * de que la empresa inicie contacto con alguien que nunca le ha escrito —
+   * WhatsApp rechaza texto libre en ese caso con el error 131047, "más de 24h
+   * desde la última respuesta del cliente"). Es lo que debe usar el primer
+   * contacto de cada paso de cobranza; el texto libre (`sendMessage`) solo
+   * aplica DESPUÉS de que el cliente responde y se abre la ventana de 24h.
+   *
+   * Solo Meta soporta este formato tal cual (Twilio expone plantillas con
+   * otra forma de API, content SID en vez de name/language/components — no
+   * implementado aquí todavía porque hoy no se usa Twilio para plantillas).
+   */
+  async sendTemplate(
+    phone: string,
+    templateName: string,
+    languageCode = 'es_MX',
+    variables: string[] = [],
+  ): Promise<WhatsappSendResult> {
+    if (!this.isConfigured) {
+      this.logger.debug(
+        `[stub] Plantilla "${templateName}" NO enviada a ${phone} (variables: ${variables.join(', ')}).`,
+      );
+      return { sent: false, mode: 'stub' };
+    }
+    if (this.provider !== 'meta') {
+      this.logger.warn(
+        `sendTemplate solo está implementado para el proveedor "meta" (actual: "${this.provider}").`,
+      );
+      return { sent: false, mode: this.provider };
+    }
+    try {
+      const url = `https://graph.facebook.com/v21.0/${this.phoneId}/messages`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: this.normalize(phone),
+          type: 'template',
+          template: {
+            name: templateName,
+            language: { code: languageCode },
+            ...(variables.length > 0 && {
+              components: [
+                {
+                  type: 'body',
+                  parameters: variables.map((text) => ({ type: 'text', text })),
+                },
+              ],
+            }),
+          },
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`Meta API respondió ${res.status}: ${body}`);
+      }
+      const data = (await res.json()) as { messages?: { id?: string }[] };
+      return { sent: true, mode: 'meta', id: data.messages?.[0]?.id };
+    } catch (err) {
+      this.logger.warn(
+        `Fallo al enviar plantilla "${templateName}" a ${phone}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { sent: false, mode: this.provider };
+    }
+  }
+
+  /**
    * Alerta crítica a todos los admins de una organización que hicieron opt-in
    * y tienen teléfono. Fire-and-forget desde el llamador (`void`).
    */
