@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CustomersService } from './customers.service';
+import { CustomerScoringService } from './scoring/customer-scoring.service';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermissions } from '../auth/decorators/permissions.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -25,7 +26,10 @@ import { QueryCustomersDto } from './dto/query-customers.dto';
 @UseGuards(PermissionsGuard)
 @RequirePermissions(AREAS.CXC)
 export class CustomersController {
-  constructor(private readonly customers: CustomersService) {}
+  constructor(
+    private readonly customers: CustomersService,
+    private readonly scoring: CustomerScoringService,
+  ) {}
 
   @Post()
   create(
@@ -65,6 +69,17 @@ export class CustomersController {
     @Body() dto: UpdateCustomerDto,
   ) {
     return this.customers.update(user, id, dto);
+  }
+
+  /** Recalcula a demanda el score de puntualidad (FR-04). El cron diario ya lo
+   * recalcula para todos; este endpoint sirve para forzarlo tras registrar un
+   * pago o para pruebas. */
+  @Post(':id/score')
+  recomputeScore(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.scoring.recompute(user, id);
   }
 
   @Delete(':id')

@@ -230,6 +230,9 @@ export interface CxcCustomer {
   invoicesCount?: number;
   /** Agente/Ejecutivo (User.id) asignado a esta cuenta, si aplica. */
   assignedAgentId?: string | null;
+  /** Score de puntualidad 0-100 (FR-04). Null hasta el primer cálculo. */
+  score?: number | null;
+  scoreUpdatedAt?: string | null;
   sat69b?: { listed: boolean; status: string | null; rfcValid: boolean } | null;
   createdAt: string;
 }

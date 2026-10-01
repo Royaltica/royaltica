@@ -331,6 +331,15 @@ model Customer {
   // de gestionar este contacto. Null = sin asignar (no aparece en la bandeja
   // de ningún agente; lo sigue viendo Supervisor/Admin normalmente).
   assignedAgentId String?
+  // Score de puntualidad 0-100 (FR-04, spec "Mejoras V1"): % de facturas CxC
+  // pagadas en o antes de su vencimiento. Misma fórmula que
+  // DashboardService.computeCustomerStats (onTimePct), pero persistida para
+  // poder detectar caídas entre un cálculo y otro — el dashboard la calcula
+  // al vuelo y no tiene memoria del valor anterior. Null hasta el primer
+  // cálculo (CustomerScoringService, cron diario). >95 = "buen pagador":
+  // CollectionSequencesService lo excluye de pasos agresivos (FR-05).
+  score          Int?
+  scoreUpdatedAt DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   deletedAt       DateTime?
