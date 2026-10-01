@@ -31,6 +31,7 @@ const baseUser = (overrides: Partial<User> = {}): User =>
     invitedById: null,
     lastLoginAt: null,
     supplierId: null,
+    operationalProfile: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,

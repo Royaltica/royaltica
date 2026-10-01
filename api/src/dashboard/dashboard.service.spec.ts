@@ -11,6 +11,7 @@ const user: AuthenticatedUser = {
   organizationId: 'org-1',
   permissions: ['*'],
   supplierId: null,
+  operationalProfile: null,
 };
 
 describe('DashboardService — indicadores CxC', () => {

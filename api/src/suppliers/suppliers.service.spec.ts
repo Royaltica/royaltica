@@ -14,6 +14,7 @@ const admin: AuthenticatedUser = {
   organizationId: 'org-1',
   permissions: ['*'],
   supplierId: null,
+  operationalProfile: null,
 };
 
 describe('SuppliersService', () => {

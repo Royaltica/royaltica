@@ -16,6 +16,7 @@ const admin: AuthenticatedUser = {
   organizationId: 'org-1',
   permissions: ['*'],
   supplierId: null,
+  operationalProfile: null,
 };
 
 const noOrgUser: AuthenticatedUser = { ...admin, organizationId: null };
