@@ -62,6 +62,16 @@ export interface OrgSettings {
    * esquema/token porque aún no sabemos qué mecanismo usa el sistema externo.
    */
   externalSyncRestAuthHeader: string | null;
+  /**
+   * Datos bancarios PROPIOS de la organización para RECIBIR pagos de sus
+   * clientes (CxC) — distinto de `Supplier.clabeInterbancaria`, que es la
+   * cuenta del proveedor para que la organización le PAGUE (CxP). Se
+   * incluyen en el recordatorio T-3 (FR: "liga de pago + datos bancarios")
+   * junto con la liga del portal de autoservicio. Null = no configurados
+   * (el recordatorio se envía sin esta sección).
+   */
+  receivingBankName: string | null;
+  receivingClabe: string | null;
 }
 
 export const DEFAULT_SETTINGS: OrgSettings = {
@@ -79,6 +89,8 @@ export const DEFAULT_SETTINGS: OrgSettings = {
   externalSyncProvider: null,
   externalSyncRestBaseUrl: null,
   externalSyncRestAuthHeader: null,
+  receivingBankName: null,
+  receivingClabe: null,
 };
 
 /** ERPs soportados por los conectores (adaptadores). */
@@ -187,6 +199,10 @@ export class SettingsService {
         typeof s.externalSyncRestAuthHeader === 'string'
           ? s.externalSyncRestAuthHeader
           : null,
+      receivingBankName:
+        typeof s.receivingBankName === 'string' ? s.receivingBankName : null,
+      receivingClabe:
+        typeof s.receivingClabe === 'string' ? s.receivingClabe : null,
     };
   }
 
@@ -232,6 +248,16 @@ export class SettingsService {
       out.externalSyncRestBaseUrl = patch.externalSyncRestBaseUrl;
     if (patch.externalSyncRestAuthHeader !== undefined)
       out.externalSyncRestAuthHeader = patch.externalSyncRestAuthHeader;
+    if (patch.receivingBankName !== undefined)
+      out.receivingBankName = patch.receivingBankName;
+    if (patch.receivingClabe !== undefined) {
+      // Igual que Supplier.clabeInterbancaria: 18 dígitos o null (se permite
+      // guardar null para "borrar" la cuenta configurada).
+      out.receivingClabe =
+        patch.receivingClabe && /^\d{18}$/.test(patch.receivingClabe)
+          ? patch.receivingClabe
+          : null;
+    }
     return out;
   }
 

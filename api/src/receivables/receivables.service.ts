@@ -13,6 +13,8 @@ import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { WEBHOOK_EVENTS } from '../webhooks/webhook-events';
+import { CustomerPortalService } from '../customer-portal/customer-portal.service';
+import { SettingsService } from '../settings/settings.service';
 import {
   buildPaginated,
   type Paginated,
@@ -64,6 +66,8 @@ export class ReceivablesService {
     private readonly email: EmailService,
     private readonly whatsapp: WhatsappService,
     private readonly webhooks: WebhooksService,
+    private readonly customerPortal: CustomerPortalService,
+    private readonly settings: SettingsService,
   ) {}
 
   async create(user: AuthenticatedUser, dto: CreateReceivableDto) {
@@ -342,27 +346,43 @@ export class ReceivablesService {
         'El cliente no tiene teléfono ni correo para enviarle el recordatorio.',
       );
     }
-    return this.dispatchReminder(invoice, invoice.customer);
+    // Manual (botón del dashboard): siempre con la info completa (liga de
+    // pago + datos bancarios), igual que el recordatorio T-3 automático.
+    return this.dispatchReminder(invoice, invoice.customer, 'T3');
   }
 
   /**
-   * Escaneo del agente de cobranza: recorre las organizaciones activas y envía
-   * recordatorios de las facturas de venta pendientes que vencen pronto o ya
-   * vencieron y no han sido recordadas en las últimas 24 horas. Idempotente.
-   * Proceso de sistema (no viene de un request de usuario): consulta directa
-   * cruzando organizaciones, mismo patrón que JobsService (sin withOrg).
+   * Escaneo del agente de cobranza. Dos etapas (spec "Mejoras V1"):
+   *  - 'T14': preventivo, ~14 días ANTES del vencimiento — tono informativo,
+   *    sin presión ni datos de pago, solo para que el cliente lo programe.
+   *  - 'T3' (default, comportamiento histórico): facturas que vencen en los
+   *    próximos 3 días o que ya vencieron — incluye liga de pago del portal
+   *    de autoservicio y, si están configurados, los datos bancarios de la
+   *    organización para transferencia.
+   * Ambas etapas comparten `lastReminderSentAt` para el dedupe de 24h: no se
+   * pisan porque sus ventanas de fecha de vencimiento no se traslapan.
+   * Idempotente. Proceso de sistema (no viene de un request de usuario):
+   * consulta directa cruzando organizaciones, mismo patrón que JobsService
+   * (sin withOrg).
    */
-  async runReminderScan(upcomingDays = 3): Promise<{ sent: number }> {
+  async runReminderScan(stage: 'T14' | 'T3' = 'T3'): Promise<{ sent: number }> {
     const now = new Date();
-    const dueLimit = new Date(now.getTime() + upcomingDays * 86_400_000);
     const staleBefore = new Date(now.getTime() - 86_400_000);
+
+    const dueDate =
+      stage === 'T14'
+        ? {
+            gte: new Date(now.getTime() + 13 * 86_400_000),
+            lte: new Date(now.getTime() + 15 * 86_400_000),
+          }
+        : { lte: new Date(now.getTime() + 3 * 86_400_000) };
 
     const invoices = await this.prisma.invoice.findMany({
       where: {
         direction: 'RECEIVABLE',
         deletedAt: null,
         status: InvoiceStatus.PENDING,
-        dueDate: { not: null, lte: dueLimit },
+        dueDate,
         OR: [
           { lastReminderSentAt: null },
           { lastReminderSentAt: { lt: staleBefore } },
@@ -377,10 +397,10 @@ export class ReceivablesService {
       // Sin canal de contacto no hay a quién recordarle: se salta para no
       // "consumir" el recordatorio (marcar lastReminderSentAt) en vano.
       if (!inv.customer || (!inv.customer.phone && !inv.customer.email)) continue;
-      const res = await this.dispatchReminder(inv, inv.customer);
+      const res = await this.dispatchReminder(inv, inv.customer, stage);
       if (res.emailSent || res.whatsappSent) sent += 1;
     }
-    this.logger.log(`receivable-reminder: ${sent} recordatorio(s) enviados.`);
+    this.logger.log(`receivable-reminder (${stage}): ${sent} recordatorio(s) enviados.`);
     return { sent };
   }
 
@@ -527,6 +547,7 @@ export class ReceivablesService {
       email: string | null;
       phone: string | null;
     },
+    stage: 'T14' | 'T3' = 'T3',
   ): Promise<{ emailSent: boolean; whatsappSent: boolean }> {
     // Locale/moneda del tenant (fallback a es-MX/MXN si aún no están
     // configurados, para no cambiar el comportamiento de orgs existentes).
@@ -540,7 +561,21 @@ export class ReceivablesService {
     const total = money(Number(invoice.total), locale);
     const due = (invoice.dueDate ?? invoice.date).toLocaleDateString(locale);
     const folio = invoice.folio ?? invoice.cfdiUuid.slice(0, 8);
-    const text = `Hola ${customer.name}, tu factura ${folio} por $${total} ${currency} vence el ${due}. Por favor confirma tu pago o contáctanos si necesitas apoyo. Gracias.`;
+
+    const paymentInfo =
+      stage === 'T3'
+        ? await this.getPaymentInfo(invoice.organizationId, customer.id)
+        : {};
+
+    const text = this.buildReminderText(
+      stage,
+      customer.name,
+      folio,
+      total,
+      currency,
+      due,
+      paymentInfo,
+    );
 
     let whatsappSent = false;
     if (customer.phone) {
@@ -558,6 +593,7 @@ export class ReceivablesService {
         due,
         invoice.organizationId,
         currency,
+        paymentInfo,
       );
       emailSent = res.sent;
     }
@@ -577,6 +613,7 @@ export class ReceivablesService {
         invoiceId: invoice.id,
         action: 'REMINDER_SENT',
         metadata: {
+          stage,
           channels: { whatsapp: whatsappSent, email: emailSent },
         } as Prisma.InputJsonValue,
       },
@@ -593,6 +630,76 @@ export class ReceivablesService {
     );
 
     return { emailSent, whatsappSent };
+  }
+
+  /**
+   * Liga de pago (portal de autoservicio) + datos bancarios de la
+   * organización, SOLO para la etapa T-3 (FR: "liga de pago + datos
+   * bancarios al T-3"). Best effort: si el portal falla o la organización no
+   * configuró cuenta receptora, se devuelven campos vacíos — el recordatorio
+   * base se manda igual, nunca se bloquea el envío por esto.
+   */
+  private async getPaymentInfo(
+    organizationId: string,
+    customerId: string,
+  ): Promise<{ paymentLink?: string; bankName?: string; clabe?: string }> {
+    const info: { paymentLink?: string; bankName?: string; clabe?: string } = {};
+
+    try {
+      const paymentLink = await this.customerPortal.issuePortalLink(customerId);
+      if (paymentLink) info.paymentLink = paymentLink;
+    } catch (err) {
+      this.logger.warn(
+        `No se pudo generar la liga de pago para el cliente ${customerId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    try {
+      const orgSettings = await this.settings.get(organizationId);
+      if (orgSettings?.receivingClabe) {
+        info.clabe = orgSettings.receivingClabe;
+        if (orgSettings.receivingBankName) info.bankName = orgSettings.receivingBankName;
+      }
+    } catch (err) {
+      this.logger.warn(
+        `No se pudieron leer los datos bancarios de la organización ${organizationId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    return info;
+  }
+
+  /**
+   * Arma el texto (WhatsApp) del recordatorio según la etapa. T-14 es solo
+   * informativo (sin presión, sin datos de pago: todavía falta tiempo). T-3
+   * añade la liga del portal de autoservicio y, si están configurados, los
+   * datos bancarios de la organización para transferencia directa.
+   */
+  private buildReminderText(
+    stage: 'T14' | 'T3',
+    customerName: string,
+    folio: string,
+    total: string,
+    currency: string,
+    due: string,
+    paymentInfo: { paymentLink?: string; bankName?: string; clabe?: string },
+  ): string {
+    if (stage === 'T14') {
+      return `Hola ${customerName}, te recordamos con anticipación que tu factura ${folio} por $${total} ${currency} vence el ${due}. Te lo compartimos con tiempo para que puedas programar tu pago. Cualquier duda, contáctanos.`;
+    }
+
+    let text = `Hola ${customerName}, tu factura ${folio} por $${total} ${currency} vence el ${due}. Por favor confirma tu pago o contáctanos si necesitas apoyo. Gracias.`;
+    if (paymentInfo.paymentLink) text += ` Paga en línea aquí: ${paymentInfo.paymentLink}`;
+    if (paymentInfo.clabe) {
+      text += ` También puedes transferir a${
+        paymentInfo.bankName ? ` ${paymentInfo.bankName}` : ' nuestra cuenta'
+      }, CLABE ${paymentInfo.clabe}.`;
+    }
+    return text;
   }
 
   private async getOwnedTx(

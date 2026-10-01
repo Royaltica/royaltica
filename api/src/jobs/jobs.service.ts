@@ -173,7 +173,14 @@ export class JobsService {
   @Cron(CronExpression.EVERY_DAY_AT_10AM, { name: 'receivable-reminder' })
   async receivableReminders(): Promise<{ sent: number }> {
     if (!this.enabled) return { sent: 0 };
-    return this.receivables.runReminderScan();
+    // T-14 (preventivo) y T-3 (urgente, con liga de pago + datos bancarios)
+    // corren en el mismo pase diario: sus ventanas de vencimiento no se
+    // traslapan, así que nunca compiten por el mismo recordatorio.
+    const [t14, t3] = await Promise.all([
+      this.receivables.runReminderScan('T14'),
+      this.receivables.runReminderScan('T3'),
+    ]);
+    return { sent: t14.sent + t3.sent };
   }
 
   // ── Motor de escalamiento de cobranza multi-paso (Tradespace) ──
