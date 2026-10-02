@@ -37,7 +37,13 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Unit tests
-        run: npx jest --ci --forceExit --passWithNoTests
+        # --experimental-vm-modules: requerido por @react-email/render (hace
+        # un import() dinámico internamente). El script "test" de package.json
+        # ya lo incluye (node --experimental-vm-modules .../jest); aquí se
+        # invoca jest directo, así que hay que pasarlo explícito o los specs
+        # de email/templates/*.spec.ts truenan con "A dynamic import callback
+        # was invoked without --experimental-vm-modules" (ver CI #25-#36).
+        run: node --experimental-vm-modules node_modules/.bin/jest --ci --forceExit --passWithNoTests
         env:
           NODE_ENV: test
           PORT: 8080
