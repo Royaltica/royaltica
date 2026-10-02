@@ -13,6 +13,7 @@ import {
 import { PrismaService } from '../common/prisma/prisma.service';
 import { localHour, isBlackoutDate } from '../common/timezone.util';
 import { renderMessageTemplate } from '../common/message-template.util';
+import { assertLegalTemplateCompliant } from '../common/legal-template-guard';
 import { ActivityLogService } from '../activity/activity-log.service';
 import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
@@ -73,6 +74,9 @@ export class CollectionSequencesService {
   ) {
     const organizationId = this.requireOrg(user);
     await this.getOwnedPolicy(organizationId, policyId);
+    // FR-10 (spec "Mejoras V1"): el motor de plantillas rechaza variables no
+    // aprobadas y lenguaje de alto riesgo legal antes de persistir.
+    assertLegalTemplateCompliant(dto.messageTemplate);
 
     const step = await this.prisma.withOrg(organizationId, (tx) =>
       tx.collectionSequenceStep.create({
@@ -131,6 +135,11 @@ export class CollectionSequencesService {
   ) {
     const organizationId = this.requireOrg(user);
     await this.getOwnedPolicy(organizationId, policyId);
+    // FR-10: misma validación que en createStep, solo si viene messageTemplate
+    // en el PATCH (campo opcional).
+    if (dto.messageTemplate !== undefined) {
+      assertLegalTemplateCompliant(dto.messageTemplate);
+    }
 
     const updated = await this.prisma.withOrg(organizationId, async (tx) => {
       const existing = await tx.collectionSequenceStep.findFirst({

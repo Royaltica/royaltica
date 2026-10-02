@@ -24,11 +24,35 @@ const VALID_STATUSES: BankTransactionMatchStatus[] = [
   'AMBIGUOUS',
 ];
 
+/**
+ * FR-07 (spec "Mejoras V1"): el banco reporta el movimiento con un desfase
+ * de compensación — el dinero no está realmente disponible el mismo día que
+ * aparece en el estado de cuenta. Se asume T+1 día natural como ventana de
+ * liquidación (simplificación conservadora: no distingue fines de semana ni
+ * días festivos bancarios, pero nunca subestima el desfase).
+ */
+const SETTLEMENT_DELAY_DAYS = 1;
+
+const addDays = (date: Date, days: number): Date => {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+};
+
 /** BankTransaction serializado para la API (Decimal/bigint → number). */
-const serializeTransaction = (t: BankTransactionRow) => ({
-  ...t,
-  amount: Number(t.amount),
-});
+const serializeTransaction = (t: BankTransactionRow) => {
+  const settlementAvailableAt = addDays(t.transactionDate, SETTLEMENT_DELAY_DAYS);
+  return {
+    ...t,
+    amount: Number(t.amount),
+    // FR-07: el tablero de "dos botones" debe mostrar al usuario contable si
+    // el banco ya liquidó los fondos (T+1) o si el reporte es todavía
+    // provisional — confirmar un match ANTES de T+1 es válido pero el
+    // frontend puede advertirlo con este flag.
+    settlementAvailableAt,
+    fundsSettled: Date.now() >= settlementAvailableAt.getTime(),
+  };
+};
 
 /**
  * Orquesta la conciliación bancaria: resuelve el mapeo de columnas de la
