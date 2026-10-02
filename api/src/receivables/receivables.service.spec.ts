@@ -23,7 +23,7 @@ const user: AuthenticatedUser = {
 describe('ReceivablesService', () => {
   let service: ReceivablesService;
   let prisma: {
-    customer: { findFirst: jest.Mock };
+    customer: { findFirst: jest.Mock; findMany: jest.Mock; update: jest.Mock };
     organization: { findUnique: jest.Mock };
     invoice: {
       findUnique: jest.Mock;
@@ -35,15 +35,15 @@ describe('ReceivablesService', () => {
     invoiceAuditLog: { create: jest.Mock };
     withOrg: jest.Mock;
   };
-  let email: { sendCollectionReminder: jest.Mock };
-  let whatsapp: { sendMessage: jest.Mock };
+  let email: { sendCollectionReminder: jest.Mock; sendServiceMessage: jest.Mock };
+  let whatsapp: { sendMessage: jest.Mock; sendForOrg: jest.Mock };
   let webhooks: { dispatch: jest.Mock };
   let customerPortal: { issuePortalLink: jest.Mock };
   let settings: { get: jest.Mock };
 
   beforeEach(() => {
     prisma = {
-      customer: { findFirst: jest.fn() },
+      customer: { findFirst: jest.fn(), findMany: jest.fn(), update: jest.fn() },
       organization: {
         findUnique: jest.fn().mockResolvedValue({ rfc: 'RDE240101AA1' }),
       },
@@ -62,8 +62,14 @@ describe('ReceivablesService', () => {
     prisma.withOrg.mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) =>
       fn(prisma),
     );
-    email = { sendCollectionReminder: jest.fn().mockResolvedValue({ sent: true }) };
-    whatsapp = { sendMessage: jest.fn().mockResolvedValue({ sent: true }) };
+    email = {
+      sendCollectionReminder: jest.fn().mockResolvedValue({ sent: true }),
+      sendServiceMessage: jest.fn().mockResolvedValue({ sent: true }),
+    };
+    whatsapp = {
+      sendMessage: jest.fn().mockResolvedValue({ sent: true }),
+      sendForOrg: jest.fn().mockResolvedValue({ sent: true }),
+    };
     webhooks = { dispatch: jest.fn().mockResolvedValue(undefined) };
     customerPortal = {
       issuePortalLink: jest.fn().mockResolvedValue('https://app.royaltica.com/portal-cliente/tok123'),
@@ -249,7 +255,7 @@ describe('ReceivablesService', () => {
 
     const res = await service.sendReminder(user, 'inv-1');
 
-    expect(whatsapp.sendMessage).toHaveBeenCalled();
+    expect(whatsapp.sendForOrg).toHaveBeenCalled();
     expect(email.sendCollectionReminder).toHaveBeenCalled();
     expect(prisma.invoice.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { lastReminderSentAt: expect.any(Date) } }),
@@ -280,7 +286,7 @@ describe('ReceivablesService', () => {
     await expect(service.sendReminder(user, 'inv-1')).rejects.toThrow(
       ConflictException,
     );
-    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
+    expect(whatsapp.sendForOrg).not.toHaveBeenCalled();
   });
 
   it('sendReminder (T-3) incluye la liga de pago y los datos bancarios en WhatsApp y correo', async () => {
@@ -304,11 +310,13 @@ describe('ReceivablesService', () => {
     await service.sendReminder(user, 'inv-1');
 
     expect(customerPortal.issuePortalLink).toHaveBeenCalledWith('c-1');
-    expect(whatsapp.sendMessage).toHaveBeenCalledWith(
+    expect(whatsapp.sendForOrg).toHaveBeenCalledWith(
+      'org-1',
       '+5215512345678',
       expect.stringContaining('tok123'),
     );
-    expect(whatsapp.sendMessage).toHaveBeenCalledWith(
+    expect(whatsapp.sendForOrg).toHaveBeenCalledWith(
+      'org-1',
       '+5215512345678',
       expect.stringContaining('012345678901234567'),
     );
@@ -363,6 +371,46 @@ describe('ReceivablesService', () => {
       'MXN',
       {},
     );
+    expect(res).toEqual({ sent: 1 });
+  });
+
+  it('runServiceMessageScan (FR-06) manda el mensaje de mantenimiento a buenos pagadores sin mencionar deuda', async () => {
+    prisma.customer.findMany.mockResolvedValue([
+      {
+        id: 'c-3',
+        organizationId: 'org-1',
+        name: 'Buen Pagador SA',
+        email: 'buen@pagador.mx',
+        phone: '+5215599999999',
+        score: 98,
+        financeContactName: null,
+        financeContactEmail: null,
+        financeContactPhone: null,
+      },
+    ]);
+    prisma.customer.update.mockResolvedValue({});
+
+    const res = await service.runServiceMessageScan();
+
+    expect(prisma.customer.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ score: { gt: 95 } }),
+      }),
+    );
+    expect(whatsapp.sendForOrg).toHaveBeenCalledWith(
+      'org-1',
+      '+5215599999999',
+      expect.not.stringContaining('deuda'),
+    );
+    expect(email.sendServiceMessage).toHaveBeenCalledWith(
+      'buen@pagador.mx',
+      'Buen Pagador SA',
+      'org-1',
+    );
+    expect(prisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 'c-3' },
+      data: { lastServiceMessageAt: expect.any(Date) },
+    });
     expect(res).toEqual({ sent: 1 });
   });
 });

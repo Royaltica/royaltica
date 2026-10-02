@@ -277,6 +277,35 @@ export class EmailService implements OnModuleInit {
     });
   }
 
+  /**
+   * FR-06 (spec "Mejoras V1"): mensaje de "mantenimiento de datos" para
+   * buenos pagadores (score > 95), cada ~6 meses (ReceivablesService.
+   * runServiceMessageScan). A PROPÓSITO no menciona deuda, facturas ni
+   * montos — el objetivo es validar que los datos de contacto siguen
+   * vigentes y fortalecer la relación comercial, no cobrar.
+   */
+  async sendServiceMessage(
+    to: string,
+    customerName: string,
+    organizationId?: string,
+  ): Promise<{ sent: boolean; id?: string }> {
+    return this.send({
+      to,
+      organizationId,
+      subject: 'Confirmación de datos de contacto',
+      html: this.wrap(
+        `<h2>Hola, ${customerName}</h2>
+         <p>Queremos confirmar que seguimos teniendo tus datos de contacto
+         correctos. Gracias por ser un cliente puntual.</p>
+         <p>Si algo cambió — teléfono, correo o la persona responsable de
+         pagos — avísanos respondiendo este correo para mantener todo al
+         día.</p>
+         <p style="color:#667085;font-size:13px;">Un gusto trabajar contigo.</p>`,
+      ),
+      text: `Hola ${customerName}, queremos confirmar que seguimos teniendo tus datos de contacto correctos. Gracias por ser un cliente puntual. Si algo cambió, avísanos respondiendo este correo.`,
+    });
+  }
+
   /** Envoltura HTML consistente para todos los correos. */
   private wrap(inner: string): string {
     return `<div style="font-family:Inter,Arial,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#101828;">

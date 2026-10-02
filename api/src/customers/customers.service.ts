@@ -62,6 +62,9 @@ export class CustomersService {
           category: dto.category,
           creditLimitDays: dto.creditLimitDays,
           assignedAgentId: dto.assignedAgentId,
+          financeContactName: dto.financeContactName,
+          financeContactEmail: dto.financeContactEmail,
+          financeContactPhone: dto.financeContactPhone,
         },
       });
     });

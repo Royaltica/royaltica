@@ -10,6 +10,7 @@ import type Stripe from 'stripe';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { ActivityLogService } from '../activity/activity-log.service';
 import { StripeService } from '../stripe/stripe.service';
+import { SettingsService } from '../settings/settings.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
 
@@ -33,7 +34,127 @@ export class BillingService {
     private readonly stripe: StripeService,
     private readonly activity: ActivityLogService,
     private readonly config: ConfigService<Env, true>,
+    private readonly settings: SettingsService,
   ) {}
+
+  /**
+   * Estimado del costo del mes en curso para la organización, según el
+   * `billingModel` configurado (spec "Mejoras V1", sección 5 — 4 esquemas).
+   * No es una factura: es una proyección para que el corporativo entienda
+   * qué le costaría el mes bajo el esquema elegido.
+   *  - SUBSCRIPTION: solo `subscriptionFeeMxn` (cuota fija).
+   *  - VOLUMETRIC: mensajes de cobranza enviados este mes × `messageRateMxn`.
+   *    Un "mensaje" = un canal (WhatsApp o correo) de un recordatorio
+   *    (ReceivablesService.dispatchReminder ya audita cada envío en
+   *    InvoiceAuditLog con action=REMINDER_SENT y metadata.channels).
+   *  - RECOVERY: % (`recoveryFeePercent`) sobre el monto de facturas CxC
+   *    cobradas este mes cuyo total sea >= `recoveryFeeMinInvoiceMxn`
+   *    ("únicamente cuentas grandes de cartera", spec).
+   *  - HYBRID: `subscriptionFeeMxn` (mínima) + el componente VOLUMETRIC.
+   */
+  async estimateMonthlyCost(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const orgSettings = await this.settings.get(organizationId);
+
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth(), 1);
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    const [messageCount, recoveredInvoices] = await Promise.all([
+      this.countBillableMessages(organizationId, from, to),
+      orgSettings.billingModel === 'RECOVERY'
+        ? this.sumLargeRecoveredInvoices(
+            organizationId,
+            from,
+            to,
+            orgSettings.recoveryFeeMinInvoiceMxn,
+          )
+        : Promise.resolve({ count: 0, amount: 0 }),
+    ]);
+
+    const volumetricCostMxn =
+      Math.round(messageCount * orgSettings.messageRateMxn * 100) / 100;
+    const recoveryCostMxn =
+      Math.round(
+        recoveredInvoices.amount * (orgSettings.recoveryFeePercent / 100) * 100,
+      ) / 100;
+
+    let totalMxn = 0;
+    if (orgSettings.billingModel === 'SUBSCRIPTION') {
+      totalMxn = orgSettings.subscriptionFeeMxn;
+    } else if (orgSettings.billingModel === 'VOLUMETRIC') {
+      totalMxn = volumetricCostMxn;
+    } else if (orgSettings.billingModel === 'RECOVERY') {
+      totalMxn = recoveryCostMxn;
+    } else {
+      totalMxn = orgSettings.subscriptionFeeMxn + volumetricCostMxn;
+    }
+
+    return {
+      billingModel: orgSettings.billingModel,
+      period: { from: from.toISOString(), to: to.toISOString() },
+      volumetric: {
+        messageCount,
+        rateMxn: orgSettings.messageRateMxn,
+        costMxn: volumetricCostMxn,
+      },
+      recovery: {
+        invoiceCount: recoveredInvoices.count,
+        recoveredAmountMxn: recoveredInvoices.amount,
+        feePercent: orgSettings.recoveryFeePercent,
+        minInvoiceMxn: orgSettings.recoveryFeeMinInvoiceMxn,
+        costMxn: recoveryCostMxn,
+      },
+      subscriptionFeeMxn: orgSettings.subscriptionFeeMxn,
+      estimatedTotalMxn: Math.round(totalMxn * 100) / 100,
+      generatedAt: now.toISOString(),
+    };
+  }
+
+  /** Cuenta canales (WhatsApp + correo) de recordatorios enviados en el período, vía InvoiceAuditLog. */
+  private async countBillableMessages(
+    organizationId: string,
+    from: Date,
+    to: Date,
+  ): Promise<number> {
+    const logs = await this.prisma.invoiceAuditLog.findMany({
+      where: {
+        action: 'REMINDER_SENT',
+        createdAt: { gte: from, lt: to },
+        invoice: { organizationId },
+      },
+      select: { metadata: true },
+    });
+    return logs.reduce((acc, log) => {
+      const channels = (log.metadata as { channels?: { whatsapp?: boolean; email?: boolean } } | null)
+        ?.channels;
+      return acc + (channels?.whatsapp ? 1 : 0) + (channels?.email ? 1 : 0);
+    }, 0);
+  }
+
+  /** Suma de facturas CxC cobradas este mes que superan el umbral de "cuenta grande" (modelo RECOVERY). */
+  private async sumLargeRecoveredInvoices(
+    organizationId: string,
+    from: Date,
+    to: Date,
+    minInvoiceMxn: number,
+  ): Promise<{ count: number; amount: number }> {
+    const invoices = await this.prisma.invoice.findMany({
+      where: {
+        organizationId,
+        direction: 'RECEIVABLE',
+        status: 'PAID',
+        deletedAt: null,
+        paidDate: { gte: from, lt: to },
+        total: { gte: minInvoiceMxn },
+      },
+      select: { total: true },
+    });
+    return {
+      count: invoices.length,
+      amount: invoices.reduce((acc, i) => acc + Number(i.total), 0),
+    };
+  }
 
   // ─── Checkout / Portal (front-end del corporativo) ──────────
 

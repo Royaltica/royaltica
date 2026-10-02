@@ -72,6 +72,25 @@ export interface OrgSettings {
    */
   receivingBankName: string | null;
   receivingClabe: string | null;
+  /**
+   * Modelo de tarificación de Royáltica hacia ESTA organización (spec
+   * "Mejoras V1", sección 5 — 4 esquemas): SUBSCRIPTION (solo la cuota fija
+   * de `subscriptionFeeMxn`), VOLUMETRIC (solo mensajes de cobranza
+   * enviados × `messageRateMxn`), RECOVERY (% sobre lo efectivamente
+   * cobrado en facturas grandes, `recoveryFeePercent`/`recoveryFeeMinInvoiceMxn`
+   * — "únicamente para cuentas grandes de cartera"), HYBRID (cuota mínima +
+   * tarifa por mensaje). BillingService.estimateMonthlyCost calcula el
+   * estimado del mes según este modelo.
+   */
+  billingModel: 'SUBSCRIPTION' | 'VOLUMETRIC' | 'RECOVERY' | 'HYBRID';
+  /** Tarifa por mensaje de cobranza enviado (WhatsApp o correo), en MXN. Rango del spec: $0.30–$10.00. */
+  messageRateMxn: number;
+  /** % sobre el monto recuperado, modelo RECOVERY (solo cuentas grandes). */
+  recoveryFeePercent: number;
+  /** Monto mínimo de factura (MXN) para que cuente como "cuenta grande" en el modelo RECOVERY. */
+  recoveryFeeMinInvoiceMxn: number;
+  /** Cuota fija/mínima mensual, modelos SUBSCRIPTION e HYBRID. */
+  subscriptionFeeMxn: number;
 }
 
 export const DEFAULT_SETTINGS: OrgSettings = {
@@ -91,7 +110,23 @@ export const DEFAULT_SETTINGS: OrgSettings = {
   externalSyncRestAuthHeader: null,
   receivingBankName: null,
   receivingClabe: null,
+  billingModel: 'SUBSCRIPTION',
+  messageRateMxn: 1,
+  recoveryFeePercent: 0,
+  recoveryFeeMinInvoiceMxn: 50000,
+  subscriptionFeeMxn: 0,
 };
+
+/** Modelos de tarificación soportados (spec "Mejoras V1", sección 5). */
+export const BILLING_MODELS = [
+  'SUBSCRIPTION',
+  'VOLUMETRIC',
+  'RECOVERY',
+  'HYBRID',
+] as const;
+/** Rango de tarifa por mensaje que define el spec: $0.30–$10.00 MXN. */
+export const MESSAGE_RATE_MIN_MXN = 0.3;
+export const MESSAGE_RATE_MAX_MXN = 10;
 
 /** ERPs soportados por los conectores (adaptadores). */
 export const SUPPORTED_ERPS = ['aspel', 'bind', 'odoo'] as const;
@@ -203,6 +238,24 @@ export class SettingsService {
         typeof s.receivingBankName === 'string' ? s.receivingBankName : null,
       receivingClabe:
         typeof s.receivingClabe === 'string' ? s.receivingClabe : null,
+      billingModel:
+        typeof s.billingModel === 'string' &&
+        BILLING_MODELS.includes(s.billingModel as (typeof BILLING_MODELS)[number])
+          ? (s.billingModel as OrgSettings['billingModel'])
+          : DEFAULT_SETTINGS.billingModel,
+      messageRateMxn: this.numOr(s.messageRateMxn, DEFAULT_SETTINGS.messageRateMxn),
+      recoveryFeePercent: this.numOr(
+        s.recoveryFeePercent,
+        DEFAULT_SETTINGS.recoveryFeePercent,
+      ),
+      recoveryFeeMinInvoiceMxn: this.numOr(
+        s.recoveryFeeMinInvoiceMxn,
+        DEFAULT_SETTINGS.recoveryFeeMinInvoiceMxn,
+      ),
+      subscriptionFeeMxn: this.numOr(
+        s.subscriptionFeeMxn,
+        DEFAULT_SETTINGS.subscriptionFeeMxn,
+      ),
     };
   }
 
@@ -258,6 +311,25 @@ export class SettingsService {
           ? patch.receivingClabe
           : null;
     }
+    if (patch.billingModel !== undefined) {
+      out.billingModel = BILLING_MODELS.includes(
+        patch.billingModel as (typeof BILLING_MODELS)[number],
+      )
+        ? patch.billingModel
+        : DEFAULT_SETTINGS.billingModel;
+    }
+    if (patch.messageRateMxn !== undefined) {
+      out.messageRateMxn = Math.min(
+        MESSAGE_RATE_MAX_MXN,
+        Math.max(MESSAGE_RATE_MIN_MXN, Number(patch.messageRateMxn)),
+      );
+    }
+    if (patch.recoveryFeePercent !== undefined)
+      out.recoveryFeePercent = Math.min(100, Math.max(0, Number(patch.recoveryFeePercent)));
+    if (patch.recoveryFeeMinInvoiceMxn !== undefined)
+      out.recoveryFeeMinInvoiceMxn = Math.max(0, Number(patch.recoveryFeeMinInvoiceMxn));
+    if (patch.subscriptionFeeMxn !== undefined)
+      out.subscriptionFeeMxn = Math.max(0, Number(patch.subscriptionFeeMxn));
     return out;
   }
 

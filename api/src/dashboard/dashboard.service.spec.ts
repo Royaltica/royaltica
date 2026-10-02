@@ -19,12 +19,16 @@ describe('DashboardService — indicadores CxC', () => {
   let prisma: {
     invoice: { findMany: jest.Mock };
     customer: { findMany: jest.Mock };
+    activityLog: { findMany: jest.Mock };
+    user: { findMany: jest.Mock };
   };
 
   beforeEach(() => {
     prisma = {
       invoice: { findMany: jest.fn() },
       customer: { findMany: jest.fn() },
+      activityLog: { findMany: jest.fn().mockResolvedValue([]) },
+      user: { findMany: jest.fn().mockResolvedValue([]) },
     };
     service = new DashboardService(
       prisma as unknown as PrismaService,
@@ -94,6 +98,86 @@ describe('DashboardService — indicadores CxC', () => {
       const res = await service.getAtRiskCustomers(user);
       expect(res.count).toBe(1);
       expect(res.customers[0].reason).toMatch(/16|17|18|19|20 días|días de atraso/);
+    });
+  });
+
+  describe('getChannelEffectiveness (BI, spec "Mejoras V1")', () => {
+    it('calcula la tasa de pago entre clientes con liga de pago emitida', async () => {
+      prisma.activityLog.findMany.mockImplementation(({ where }: { where: { action: string } }) =>
+        Promise.resolve(
+          where.action === 'CUSTOMER_PORTAL_LINK_ISSUED'
+            ? [{ entityId: 'c-1' }, { entityId: 'c-2' }]
+            : [{ entityId: 'inv-9' }],
+        ),
+      );
+      prisma.invoice.findMany.mockImplementation(({ where }: { where: { customerId?: unknown } }) =>
+        Promise.resolve(
+          where.customerId
+            ? [{ status: 'PAID' }, { status: 'PENDING' }]
+            : [{ status: 'PAID' }],
+        ),
+      );
+
+      const res = await service.getChannelEffectiveness(user);
+
+      expect(res.paymentLink.sampleSize).toBe(2);
+      expect(res.paymentLink.effectivenessRate).toBe(0.5);
+      expect(res.paymentLink.referenceRate).toBe(0.81);
+      expect(res.installmentPlan.sampleSize).toBe(1);
+      expect(res.installmentPlan.effectivenessRate).toBe(1);
+      expect(res.installmentPlan.referenceRate).toBe(0.74);
+    });
+
+    it('sin actividad registrada, devuelve effectivenessRate null (no 0 engañoso)', async () => {
+      const res = await service.getChannelEffectiveness(user);
+      expect(res.paymentLink.effectivenessRate).toBeNull();
+      expect(res.installmentPlan.effectivenessRate).toBeNull();
+    });
+  });
+
+  describe('getAgentProductivity (BI, spec "Mejoras V1")', () => {
+    it('clasifica cuentas recuperadas vs. abandonadas por agente', async () => {
+      prisma.user.findMany.mockResolvedValue([{ id: 'agent-1', name: 'Ana' }]);
+      prisma.customer.findMany.mockResolvedValue([{ id: 'c-1' }, { id: 'c-2' }]);
+      prisma.invoice.findMany.mockResolvedValue([
+        { customerId: 'c-1', status: 'PAID', date: new Date(), dueDate: new Date(), lastReminderSentAt: null },
+        {
+          customerId: 'c-2',
+          status: 'PENDING',
+          date: new Date(Date.now() - 60 * 86_400_000),
+          dueDate: new Date(Date.now() - 45 * 86_400_000),
+          lastReminderSentAt: null,
+        },
+      ]);
+
+      const res = await service.getAgentProductivity(user);
+
+      expect(res.agents).toEqual([
+        {
+          agentId: 'agent-1',
+          agentName: 'Ana',
+          assignedCustomers: 2,
+          recoveredCustomers: 1,
+          abandonedCustomers: 1,
+        },
+      ]);
+    });
+
+    it('agente sin clientes asignados no cuenta como abandono', async () => {
+      prisma.user.findMany.mockResolvedValue([{ id: 'agent-2', name: 'Beto' }]);
+      prisma.customer.findMany.mockResolvedValue([]);
+
+      const res = await service.getAgentProductivity(user);
+
+      expect(res.agents).toEqual([
+        {
+          agentId: 'agent-2',
+          agentName: 'Beto',
+          assignedCustomers: 0,
+          recoveredCustomers: 0,
+          abandonedCustomers: 0,
+        },
+      ]);
     });
   });
 });

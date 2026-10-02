@@ -79,4 +79,27 @@ export class CreateCustomerDto {
   @IsOptional()
   @IsUUID()
   assignedAgentId?: string;
+
+  /**
+   * Contacto de Finanzas/Tesorería del cliente (FR-02, spec "Mejoras V1"):
+   * el sistema prioriza este contacto sobre `contact`/`email`/`phone`
+   * (que suelen ser Dirección General o ventas) al mandar recordatorios de
+   * cobro, porque es quien realmente ejecuta la firma o la transferencia.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  financeContactName?: string;
+
+  @IsOptional()
+  @IsEmail({}, { message: 'Email de Finanzas/Tesorería inválido.' })
+  financeContactEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(E164_REGEX, {
+    message:
+      'El teléfono de Finanzas/Tesorería debe estar en formato E.164 (ej. +5215512345678).',
+  })
+  financeContactPhone?: string;
 }

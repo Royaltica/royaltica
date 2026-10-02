@@ -183,6 +183,16 @@ export class JobsService {
     return { sent: t14.sent + t3.sent };
   }
 
+  // ── FR-06: mantenimiento de datos para buenos pagadores (cada ~6 meses) ──
+  // Corre diario (barato: la mayoría de los días no encuentra a nadie que
+  // cruce el umbral de 182 días) para no depender de un cron mensual que
+  // podría desfasarse del aniversario exacto de cada cliente.
+  @Cron(CronExpression.EVERY_DAY_AT_11AM, { name: 'customer-service-message' })
+  async customerServiceMessage(): Promise<{ sent: number }> {
+    if (!this.enabled) return { sent: 0 };
+    return this.receivables.runServiceMessageScan();
+  }
+
   // ── Motor de escalamiento de cobranza multi-paso (Tradespace) ──
   // Corre después del recordatorio de un solo paso (10am): avanza cada
   // CollectionSequenceRun activa/por iniciar según la CollectionPolicy de

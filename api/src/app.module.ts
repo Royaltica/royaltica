@@ -19,6 +19,8 @@ import { SuppliersModule } from './suppliers/suppliers.module';
 import { CustomersModule } from './customers/customers.module';
 import { ReceivablesModule } from './receivables/receivables.module';
 import { CollectionPolicyModule } from './collection-policy/collection-policy.module';
+import { VirtualNumbersModule } from './virtual-numbers/virtual-numbers.module';
+import { DiscountSimulatorModule } from './discount-simulator/discount-simulator.module';
 import { CollectionSequencesModule } from './collection-sequences/collection-sequences.module';
 import { AgentModule } from './agent/agent.module';
 import { DashboardModule } from './dashboard/dashboard.module';
@@ -111,6 +113,8 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     CustomersModule,
     ReceivablesModule,
     CollectionPolicyModule,
+    VirtualNumbersModule,
+    DiscountSimulatorModule,
     CollectionSequencesModule,
     AgentModule,
     DashboardModule,

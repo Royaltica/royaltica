@@ -15,6 +15,7 @@ import { WebhooksService } from '../webhooks/webhooks.service';
 import { WEBHOOK_EVENTS } from '../webhooks/webhook-events';
 import { CustomerPortalService } from '../customer-portal/customer-portal.service';
 import { SettingsService } from '../settings/settings.service';
+import { GOOD_PAYER_SCORE_THRESHOLD } from '../customers/scoring/customer-scoring.constants';
 import {
   buildPaginated,
   type Paginated,
@@ -341,7 +342,7 @@ export class ReceivablesService {
     if (!invoice.customer) {
       throw new ConflictException('La factura no tiene un cliente asociado.');
     }
-    if (!invoice.customer.phone && !invoice.customer.email) {
+    if (!this.hasContactChannel(invoice.customer)) {
       throw new ConflictException(
         'El cliente no tiene teléfono ni correo para enviarle el recordatorio.',
       );
@@ -349,6 +350,21 @@ export class ReceivablesService {
     // Manual (botón del dashboard): siempre con la info completa (liga de
     // pago + datos bancarios), igual que el recordatorio T-3 automático.
     return this.dispatchReminder(invoice, invoice.customer, 'T3');
+  }
+
+  /** true si hay ALGÚN canal de contacto, de Finanzas/Tesorería o genérico. */
+  private hasContactChannel(customer: {
+    phone: string | null;
+    email: string | null;
+    financeContactPhone?: string | null;
+    financeContactEmail?: string | null;
+  }): boolean {
+    return Boolean(
+      customer.phone ||
+        customer.email ||
+        customer.financeContactPhone ||
+        customer.financeContactEmail,
+    );
   }
 
   /**
@@ -396,12 +412,98 @@ export class ReceivablesService {
     for (const inv of invoices) {
       // Sin canal de contacto no hay a quién recordarle: se salta para no
       // "consumir" el recordatorio (marcar lastReminderSentAt) en vano.
-      if (!inv.customer || (!inv.customer.phone && !inv.customer.email)) continue;
+      if (!inv.customer || !this.hasContactChannel(inv.customer)) continue;
       const res = await this.dispatchReminder(inv, inv.customer, stage);
       if (res.emailSent || res.whatsappSent) sent += 1;
     }
     this.logger.log(`receivable-reminder (${stage}): ${sent} recordatorio(s) enviados.`);
     return { sent };
+  }
+
+  /** Cada cuánto se reenvía el mensaje de mantenimiento de datos (FR-06): ~6 meses. */
+  private static readonly SERVICE_MESSAGE_INTERVAL_DAYS = 182;
+
+  /**
+   * FR-06 (spec "Mejoras V1"): para "buenos pagadores" (score >
+   * GOOD_PAYER_SCORE_THRESHOLD), manda cada ~6 meses un mensaje de SERVICIO
+   * — validar que sus datos de contacto siguen vigentes y agradecer su
+   * puntualidad — que a propósito NUNCA menciona deuda ni facturas
+   * pendientes (objetivo del spec: fortalecer la relación comercial, no
+   * cobrar). Comparte el pool de números virtuales (FR-08) pero NO comparte
+   * `lastReminderSentAt` con los recordatorios de cobro — tiene su propio
+   * campo `lastServiceMessageAt` y su propia cadencia de 6 meses, no de 24h.
+   */
+  async runServiceMessageScan(): Promise<{ sent: number }> {
+    const staleBefore = new Date(
+      Date.now() - ReceivablesService.SERVICE_MESSAGE_INTERVAL_DAYS * 86_400_000,
+    );
+
+    const customers = await this.prisma.customer.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+        doNotContact: false,
+        score: { gt: GOOD_PAYER_SCORE_THRESHOLD },
+        OR: [
+          { lastServiceMessageAt: null },
+          { lastServiceMessageAt: { lt: staleBefore } },
+        ],
+        organization: { isActive: true, deletedAt: null },
+      },
+    });
+
+    let sent = 0;
+    for (const customer of customers) {
+      if (!this.hasContactChannel(customer)) continue;
+      const ok = await this.dispatchServiceMessage(customer);
+      if (ok) sent += 1;
+    }
+    this.logger.log(
+      `customer-service-message: ${sent} mensaje(s) de mantenimiento enviados.`,
+    );
+    return { sent };
+  }
+
+  /** Envía el mensaje de mantenimiento (FR-06) y marca lastServiceMessageAt. */
+  private async dispatchServiceMessage(customer: {
+    id: string;
+    organizationId: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
+    financeContactName?: string | null;
+    financeContactEmail?: string | null;
+    financeContactPhone?: string | null;
+  }): Promise<boolean> {
+    const contactName = customer.financeContactName || customer.name;
+    const contactPhone = customer.financeContactPhone || customer.phone;
+    const contactEmail = customer.financeContactEmail || customer.email;
+    const text = `Hola ${contactName}, queremos confirmar que seguimos teniendo tus datos de contacto correctos. Gracias por ser un cliente puntual — si algo cambió (teléfono, correo o persona de contacto), avísanos para mantener todo al día.`;
+
+    let sent = false;
+    if (contactPhone) {
+      const res = await this.whatsapp.sendForOrg(
+        customer.organizationId,
+        contactPhone,
+        text,
+      );
+      sent = sent || res.sent;
+    }
+    if (contactEmail) {
+      const res = await this.email.sendServiceMessage(
+        contactEmail,
+        contactName,
+        customer.organizationId,
+      );
+      sent = sent || res.sent;
+    }
+
+    await this.prisma.customer.update({
+      where: { id: customer.id },
+      data: { lastServiceMessageAt: new Date() },
+    });
+
+    return sent;
   }
 
   /**
@@ -546,6 +648,9 @@ export class ReceivablesService {
       name: string;
       email: string | null;
       phone: string | null;
+      financeContactName?: string | null;
+      financeContactEmail?: string | null;
+      financeContactPhone?: string | null;
     },
     stage: 'T14' | 'T3' = 'T3',
   ): Promise<{ emailSent: boolean; whatsappSent: boolean }> {
@@ -562,6 +667,16 @@ export class ReceivablesService {
     const due = (invoice.dueDate ?? invoice.date).toLocaleDateString(locale);
     const folio = invoice.folio ?? invoice.cfdiUuid.slice(0, 8);
 
+    // FR-02 (spec "Mejoras V1"): priorizar el contacto de Finanzas/Tesorería
+    // sobre el genérico (que en la práctica suele ser Dirección General o
+    // ventas) — el área de Finanzas es quien de verdad ejecuta la firma o la
+    // transferencia, el Director solo autoriza. Si no hay contacto de
+    // Finanzas capturado, se usa el genérico como antes (sin cambio de
+    // comportamiento para clientes que no lo configuraron).
+    const contactName = customer.financeContactName || customer.name;
+    const contactPhone = customer.financeContactPhone || customer.phone;
+    const contactEmail = customer.financeContactEmail || customer.email;
+
     const paymentInfo =
       stage === 'T3'
         ? await this.getPaymentInfo(invoice.organizationId, customer.id)
@@ -569,7 +684,7 @@ export class ReceivablesService {
 
     const text = this.buildReminderText(
       stage,
-      customer.name,
+      contactName,
       folio,
       total,
       currency,
@@ -578,16 +693,22 @@ export class ReceivablesService {
     );
 
     let whatsappSent = false;
-    if (customer.phone) {
-      const res = await this.whatsapp.sendMessage(customer.phone, text);
+    if (contactPhone) {
+      // FR-08: usa el pool de números virtuales propios de la organización
+      // si configuró alguno (protege la línea comercial del cliente).
+      const res = await this.whatsapp.sendForOrg(
+        invoice.organizationId,
+        contactPhone,
+        text,
+      );
       whatsappSent = res.sent;
     }
 
     let emailSent = false;
-    if (customer.email) {
+    if (contactEmail) {
       const res = await this.email.sendCollectionReminder(
-        customer.email,
-        customer.name,
+        contactEmail,
+        contactName,
         folio,
         total,
         due,
