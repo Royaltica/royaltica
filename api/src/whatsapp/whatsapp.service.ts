@@ -67,15 +67,19 @@ export class WhatsappService implements OnModuleInit {
    * Envía un mensaje a un teléfono (E.164). Nunca lanza: si no está
    * configurado o falla, lo registra y devuelve `{ sent: false }`.
    */
-  async sendMessage(phone: string, text: string): Promise<WhatsappSendResult> {
+  async sendMessage(
+    phone: string,
+    text: string,
+    fromOverride?: string,
+  ): Promise<WhatsappSendResult> {
     if (!this.isConfigured) {
       this.logger.debug(`[stub] WhatsApp NO enviado a ${phone}: "${text}".`);
       return { sent: false, mode: 'stub' };
     }
     try {
       return this.provider === 'meta'
-        ? await this.sendViaMeta(phone, text)
-        : await this.sendViaTwilio(phone, text);
+        ? await this.sendViaMeta(phone, text, fromOverride)
+        : await this.sendViaTwilio(phone, text, fromOverride);
     } catch (err) {
       this.logger.warn(
         `Fallo al enviar WhatsApp a ${phone}: ${
@@ -157,6 +161,41 @@ export class WhatsappService implements OnModuleInit {
       );
       return { sent: false, mode: this.provider };
     }
+  }
+
+  /**
+   * FR-08 (spec "Mejoras V1"): envía usando el POOL de números virtuales
+   * PROPIOS de la organización (VirtualNumber), si configuró alguno,
+   * rotando round-robin (el menos usado recientemente) para no concentrar
+   * todo el volumen de cobranza en un solo número y arriesgar que lo
+   * reporten como spam. Sin números configurados, cae exactamente al
+   * comportamiento previo (sendMessage con el número global único) — no
+   * rompe nada para orgs que no configuraron el pool.
+   */
+  async sendForOrg(
+    organizationId: string,
+    phone: string,
+    text: string,
+  ): Promise<WhatsappSendResult> {
+    const next = await this.prisma.virtualNumber.findFirst({
+      where: { organizationId, isActive: true },
+      orderBy: [{ lastUsedAt: 'asc' }],
+    });
+    if (!next) return this.sendMessage(phone, text);
+
+    const res = await this.sendMessage(phone, text, next.phoneId);
+    // Best-effort: si falla el update de lastUsedAt no vale la pena tumbar
+    // el envío — la rotación se desbalancea un poco pero sigue funcionando.
+    this.prisma.virtualNumber
+      .update({ where: { id: next.id }, data: { lastUsedAt: new Date() } })
+      .catch((err: unknown) =>
+        this.logger.warn(
+          `No se pudo actualizar lastUsedAt de VirtualNumber ${next.id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+    return res;
   }
 
   /**
@@ -249,8 +288,9 @@ ${rawText}
   private async sendViaMeta(
     phone: string,
     text: string,
+    phoneIdOverride?: string,
   ): Promise<WhatsappSendResult> {
-    const url = `https://graph.facebook.com/v21.0/${this.phoneId}/messages`;
+    const url = `https://graph.facebook.com/v21.0/${phoneIdOverride || this.phoneId}/messages`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -276,12 +316,13 @@ ${rawText}
   private async sendViaTwilio(
     phone: string,
     text: string,
+    fromOverride?: string,
   ): Promise<WhatsappSendResult> {
     // El token de Twilio se espera como "AccountSid:AuthToken".
     const [accountSid] = this.token.split(':');
     const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
     const body = new URLSearchParams({
-      From: `whatsapp:${this.from}`,
+      From: `whatsapp:${fromOverride || this.from}`,
       To: `whatsapp:${this.normalize(phone)}`,
       Body: text,
     });

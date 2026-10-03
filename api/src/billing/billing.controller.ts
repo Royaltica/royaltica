@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { IsIn } from 'class-validator';
 import { BillingService, type PaidPlan } from './billing.service';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
@@ -31,5 +31,15 @@ export class BillingController {
   @Post('portal-session')
   createPortalSession(@CurrentUser() user: AuthenticatedUser) {
     return this.billing.createPortalSession(user);
+  }
+
+  /**
+   * Estimado del costo del mes en curso según el modelo de tarificación
+   * configurado (spec "Mejoras V1", sección 5: SUBSCRIPTION/VOLUMETRIC/
+   * RECOVERY/HYBRID). No es una factura, es una proyección informativa.
+   */
+  @Get('estimate')
+  estimateMonthlyCost(@CurrentUser() user: AuthenticatedUser) {
+    return this.billing.estimateMonthlyCost(user);
   }
 }

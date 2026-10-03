@@ -204,11 +204,32 @@ export class EmailService implements OnModuleInit {
     organizationId?: string,
     // Moneda del tenant (default MXN para no romper orgs existentes).
     currency = 'MXN',
+    // Liga de pago del portal de autoservicio y/o datos bancarios de la
+    // organización (T-3, ver ReceivablesService.buildReminderText). Ambos
+    // opcionales: si no vienen, el correo se manda igual que antes.
+    paymentInfo?: { paymentLink?: string; bankName?: string; clabe?: string },
   ): Promise<{ sent: boolean; id?: string }> {
     // Reply-To dedicado a cobranza: si el cliente responde este correo, la
     // respuesta debe llegar al webhook de correo entrante (ver
     // api/docs/cloudflare-email-worker/), no a no-reply@.
     const replyTo = this.config.get('COLLECTIONS_REPLY_TO', { infer: true });
+
+    const paymentHtml = paymentInfo?.paymentLink
+      ? `<p><a href="${paymentInfo.paymentLink}" style="color:#155EEF;">Pagar en línea</a></p>`
+      : '';
+    const bankHtml = paymentInfo?.clabe
+      ? `<p>También puedes transferir${
+          paymentInfo.bankName ? ` a ${paymentInfo.bankName}` : ''
+        }, CLABE <strong>${paymentInfo.clabe}</strong>.</p>`
+      : '';
+    const paymentText = paymentInfo?.paymentLink
+      ? ` Paga en línea aquí: ${paymentInfo.paymentLink}.`
+      : '';
+    const bankText = paymentInfo?.clabe
+      ? ` También puedes transferir a${
+          paymentInfo.bankName ? ` ${paymentInfo.bankName}` : ' nuestra cuenta'
+        }, CLABE ${paymentInfo.clabe}.`
+      : '';
 
     return this.send({
       to,
@@ -219,11 +240,12 @@ export class EmailService implements OnModuleInit {
         `<h2>Hola, ${customerName}</h2>
          <p>Te recordamos que tu factura <strong>${folio}</strong> por
          <strong>$${total} ${currency}</strong> vence el <strong>${dueDate}</strong>.</p>
+         ${paymentHtml}${bankHtml}
          <p>Si ya realizaste el pago, ignora este mensaje. Si necesitas apoyo o
          un comprobante, responde a este correo y con gusto te ayudamos.</p>
          <p style="color:#667085;font-size:13px;">Gracias por tu preferencia.</p>`,
       ),
-      text: `Hola ${customerName}, tu factura ${folio} por $${total} ${currency} vence el ${dueDate}. Si ya pagaste, ignora este mensaje. Gracias.`,
+      text: `Hola ${customerName}, tu factura ${folio} por $${total} ${currency} vence el ${dueDate}.${paymentText}${bankText} Si ya pagaste, ignora este mensaje. Gracias.`,
     });
   }
 
@@ -252,6 +274,35 @@ export class EmailService implements OnModuleInit {
          <p style="white-space:pre-line;">${body}</p>`,
       ),
       text: body,
+    });
+  }
+
+  /**
+   * FR-06 (spec "Mejoras V1"): mensaje de "mantenimiento de datos" para
+   * buenos pagadores (score > 95), cada ~6 meses (ReceivablesService.
+   * runServiceMessageScan). A PROPÓSITO no menciona deuda, facturas ni
+   * montos — el objetivo es validar que los datos de contacto siguen
+   * vigentes y fortalecer la relación comercial, no cobrar.
+   */
+  async sendServiceMessage(
+    to: string,
+    customerName: string,
+    organizationId?: string,
+  ): Promise<{ sent: boolean; id?: string }> {
+    return this.send({
+      to,
+      organizationId,
+      subject: 'Confirmación de datos de contacto',
+      html: this.wrap(
+        `<h2>Hola, ${customerName}</h2>
+         <p>Queremos confirmar que seguimos teniendo tus datos de contacto
+         correctos. Gracias por ser un cliente puntual.</p>
+         <p>Si algo cambió — teléfono, correo o la persona responsable de
+         pagos — avísanos respondiendo este correo para mantener todo al
+         día.</p>
+         <p style="color:#667085;font-size:13px;">Un gusto trabajar contigo.</p>`,
+      ),
+      text: `Hola ${customerName}, queremos confirmar que seguimos teniendo tus datos de contacto correctos. Gracias por ser un cliente puntual. Si algo cambió, avísanos respondiendo este correo.`,
     });
   }
 

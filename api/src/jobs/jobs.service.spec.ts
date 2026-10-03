@@ -9,6 +9,7 @@ import { ReceivablesService } from '../receivables/receivables.service';
 import { DashboardService } from '../dashboard/dashboard.service';
 import { ReportsService } from '../reports/reports.service';
 import { CollectionSequencesService } from '../collection-sequences/collection-sequences.service';
+import { CustomerScoringService } from '../customers/scoring/customer-scoring.service';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.validation';
 
@@ -67,6 +68,7 @@ describe('JobsService — weeklyCollectionDigest', () => {
       dashboard as unknown as DashboardService,
       reports as unknown as ReportsService,
       { runEngineScan: jest.fn() } as unknown as CollectionSequencesService,
+      {} as CustomerScoringService,
       { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
     );
   });
@@ -197,6 +199,7 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
       {} as DashboardService,
       {} as ReportsService,
       {} as CollectionSequencesService,
+      {} as CustomerScoringService,
       { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
     );
   });
@@ -246,6 +249,7 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
       {} as DashboardService,
       {} as ReportsService,
       {} as CollectionSequencesService,
+      {} as CustomerScoringService,
       { get: jest.fn().mockReturnValue('false') } as unknown as ConfigService<Env, true>,
     );
 

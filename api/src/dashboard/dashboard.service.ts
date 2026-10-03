@@ -11,6 +11,40 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 
 const num = (v: Prisma.Decimal | null): number => (v ? Number(v) : 0);
 
+/**
+ * Baldes de antigüedad FINOS, alineados a los ejemplos del spec "Mejoras V1"
+ * (sección 3: "1-7 días, 8-15 días, >300 días"). Se agregan COMO CAMPO
+ * ADICIONAL (`detailedBuckets`) junto al `buckets` de 4 rangos ya existente
+ * — ese otro es un contrato estable que ya consumen el reporte PDF
+ * (ReportsService), el asistente de IA (AiToolsService) y el frontend,
+ * así que no se toca para no romperlos; esto solo lo complementa.
+ */
+const emptyDetailedBuckets = () => ({
+  current: { label: 'Vigente', count: 0, amount: 0 },
+  d1_7: { label: '1-7 días', count: 0, amount: 0 },
+  d8_15: { label: '8-15 días', count: 0, amount: 0 },
+  d16_30: { label: '16-30 días', count: 0, amount: 0 },
+  d31_60: { label: '31-60 días', count: 0, amount: 0 },
+  d61_90: { label: '61-90 días', count: 0, amount: 0 },
+  d91_180: { label: '91-180 días', count: 0, amount: 0 },
+  d181_300: { label: '181-300 días', count: 0, amount: 0 },
+  d300_plus: { label: '>300 días', count: 0, amount: 0 },
+});
+
+type DetailedBuckets = ReturnType<typeof emptyDetailedBuckets>;
+
+const detailedBucketKey = (daysOverdue: number): keyof DetailedBuckets => {
+  if (daysOverdue <= 0) return 'current';
+  if (daysOverdue <= 7) return 'd1_7';
+  if (daysOverdue <= 15) return 'd8_15';
+  if (daysOverdue <= 30) return 'd16_30';
+  if (daysOverdue <= 60) return 'd31_60';
+  if (daysOverdue <= 90) return 'd61_90';
+  if (daysOverdue <= 180) return 'd91_180';
+  if (daysOverdue <= 300) return 'd181_300';
+  return 'd300_plus';
+};
+
 @Injectable()
 export class DashboardService {
   constructor(
@@ -202,6 +236,7 @@ export class DashboardService {
       d61_90: { label: '61-90 días', count: 0, amount: 0 },
       d90_plus: { label: '90+ días', count: 0, amount: 0 },
     };
+    const detailedBuckets = emptyDetailedBuckets();
     const bySupplier = new Map<
       string,
       { supplierId: string; name: string; amount: number; overdue: number }
@@ -228,6 +263,9 @@ export class DashboardService {
                 : buckets.d90_plus;
       bucket.count += 1;
       bucket.amount += amount;
+      const fineBucket = detailedBuckets[detailedBucketKey(daysOverdue)];
+      fineBucket.count += 1;
+      fineBucket.amount += amount;
       if (daysOverdue > 0) totalOverdue += amount;
 
       if (!inv.supplierId) continue;
@@ -249,6 +287,7 @@ export class DashboardService {
         invoices: invoices.length,
       },
       buckets,
+      detailedBuckets,
       bySupplier: [...bySupplier.values()].sort((a, b) => b.amount - a.amount),
       generatedAt: new Date().toISOString(),
     };
@@ -489,6 +528,7 @@ export class DashboardService {
       d61_90: { label: '61-90 días', count: 0, amount: 0 },
       d90_plus: { label: '90+ días', count: 0, amount: 0 },
     };
+    const detailedBuckets = emptyDetailedBuckets();
     const byCustomer = new Map<
       string,
       { customerId: string; name: string; amount: number; overdue: number }
@@ -515,6 +555,9 @@ export class DashboardService {
                 : buckets.d90_plus;
       bucket.count += 1;
       bucket.amount += amount;
+      const fineBucket = detailedBuckets[detailedBucketKey(daysOverdue)];
+      fineBucket.count += 1;
+      fineBucket.amount += amount;
       if (daysOverdue > 0) totalOverdue += amount;
 
       if (!inv.customerId) continue;
@@ -536,6 +579,7 @@ export class DashboardService {
         invoices: invoices.length,
       },
       buckets,
+      detailedBuckets,
       byCustomer: [...byCustomer.values()].sort((a, b) => b.amount - a.amount),
       generatedAt: new Date().toISOString(),
     };
@@ -1016,5 +1060,177 @@ export class DashboardService {
       avgDelayDays: a.late > 0 ? Math.round(a.totalDelay / a.late) : 0,
       volume: a.volume,
     }));
+  }
+
+  /**
+   * BI (spec "Mejoras V1", sección 5): efectividad por canal de cobro —
+   * liga de pago (portal de autoservicio) vs. plan de parcialidades
+   * (promesa de pago capturada en el portal). El spec da cifras de
+   * referencia (81% liga de pago, 74% parcialidades) como benchmark de
+   * industria; aquí se calcula la tasa REAL de la organización para
+   * compararla contra esas referencias.
+   *  - Liga de pago: de las facturas RECEIVABLE de clientes a quienes se
+   *    les emitió un enlace del portal (CUSTOMER_PORTAL_LINK_ISSUED), % que
+   *    terminó PAID.
+   *  - Parcialidades: de las facturas con una promesa de pago capturada
+   *    (CUSTOMER_PROMISED_PAYMENT), % que terminó PAID.
+   */
+  async getChannelEffectiveness(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+
+    const [portalLinkLogs, promiseLogs] = await Promise.all([
+      this.prisma.activityLog.findMany({
+        where: {
+          organizationId,
+          action: 'CUSTOMER_PORTAL_LINK_ISSUED',
+          entityType: 'Customer',
+        },
+        select: { entityId: true },
+      }),
+      this.prisma.activityLog.findMany({
+        where: {
+          organizationId,
+          action: 'CUSTOMER_PROMISED_PAYMENT',
+          entityType: 'Invoice',
+        },
+        select: { entityId: true },
+      }),
+    ]);
+
+    const customerIdsWithLink = [
+      ...new Set(portalLinkLogs.map((l) => l.entityId).filter((id): id is string => !!id)),
+    ];
+    const invoiceIdsWithPromise = [
+      ...new Set(promiseLogs.map((l) => l.entityId).filter((id): id is string => !!id)),
+    ];
+
+    const [linkInvoices, promiseInvoices] = await Promise.all([
+      customerIdsWithLink.length
+        ? this.prisma.invoice.findMany({
+            where: {
+              organizationId,
+              direction: 'RECEIVABLE',
+              deletedAt: null,
+              customerId: { in: customerIdsWithLink },
+            },
+            select: { status: true },
+          })
+        : Promise.resolve([]),
+      invoiceIdsWithPromise.length
+        ? this.prisma.invoice.findMany({
+            where: { organizationId, id: { in: invoiceIdsWithPromise } },
+            select: { status: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const rate = (invs: { status: InvoiceStatus }[]) =>
+      invs.length
+        ? Math.round((invs.filter((i) => i.status === InvoiceStatus.PAID).length / invs.length) * 1000) /
+          1000
+        : null;
+
+    return {
+      paymentLink: {
+        sampleSize: linkInvoices.length,
+        paid: linkInvoices.filter((i) => i.status === InvoiceStatus.PAID).length,
+        effectivenessRate: rate(linkInvoices),
+        referenceRate: 0.81,
+      },
+      installmentPlan: {
+        sampleSize: promiseInvoices.length,
+        paid: promiseInvoices.filter((i) => i.status === InvoiceStatus.PAID).length,
+        effectivenessRate: rate(promiseInvoices),
+        referenceRate: 0.74,
+      },
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * BI (spec "Mejoras V1", sección 5): productividad del agente de
+   * cobranza — Cuentas Abandonadas vs. Cuentas Recuperadas, para detectar
+   * cuellos de botella en la gestión humana.
+   *  - Recuperada: el cliente tiene ≥1 factura RECEIVABLE ya PAID.
+   *  - Abandonada: el cliente tiene ≥1 factura RECEIVABLE PENDING vencida
+   *    hace más de 30 días SIN recordatorio en los últimos 30 días (ni
+   *    nunca) — indicio de que el agente dejó de darle seguimiento.
+   * Una cuenta puede contar en ambas categorías si tiene unas facturas
+   * cobradas y otras abandonadas.
+   */
+  async getAgentProductivity(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const DAY = 86_400_000;
+    const now = Date.now();
+    const staleBefore = now - 30 * DAY;
+
+    const agents = await this.prisma.user.findMany({
+      where: { organizationId, operationalProfile: 'AGENTE_EJECUTIVO', isActive: true },
+      select: { id: true, name: true },
+    });
+
+    const results = [];
+    for (const agent of agents) {
+      const customers = await this.prisma.customer.findMany({
+        where: { organizationId, assignedAgentId: agent.id, deletedAt: null },
+        select: { id: true },
+      });
+      const customerIds = customers.map((c) => c.id);
+      if (customerIds.length === 0) {
+        results.push({
+          agentId: agent.id,
+          agentName: agent.name,
+          assignedCustomers: 0,
+          recoveredCustomers: 0,
+          abandonedCustomers: 0,
+        });
+        continue;
+      }
+
+      const invoices = await this.prisma.invoice.findMany({
+        where: {
+          organizationId,
+          direction: 'RECEIVABLE',
+          deletedAt: null,
+          customerId: { in: customerIds },
+        },
+        select: {
+          customerId: true,
+          status: true,
+          date: true,
+          dueDate: true,
+          lastReminderSentAt: true,
+        },
+      });
+
+      const recovered = new Set<string>();
+      const abandoned = new Set<string>();
+      for (const inv of invoices) {
+        if (!inv.customerId) continue;
+        if (inv.status === InvoiceStatus.PAID) {
+          recovered.add(inv.customerId);
+          continue;
+        }
+        if (inv.status !== InvoiceStatus.PENDING) continue;
+        const reference = (inv.dueDate ?? inv.date).getTime();
+        const daysOverdue = Math.floor((now - reference) / DAY);
+        const stale =
+          !inv.lastReminderSentAt || inv.lastReminderSentAt.getTime() < staleBefore;
+        if (daysOverdue > 30 && stale) abandoned.add(inv.customerId);
+      }
+
+      results.push({
+        agentId: agent.id,
+        agentName: agent.name,
+        assignedCustomers: customerIds.length,
+        recoveredCustomers: recovered.size,
+        abandonedCustomers: abandoned.size,
+      });
+    }
+
+    return {
+      agents: results.sort((a, b) => b.recoveredCustomers - a.recoveredCustomers),
+      generatedAt: new Date().toISOString(),
+    };
   }
 }

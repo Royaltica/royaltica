@@ -15,6 +15,7 @@ const user: AuthenticatedUser = {
   organizationId: 'org-1',
   permissions: ['*'],
   supplierId: null,
+  operationalProfile: null,
 };
 
 function buildInvoice(overrides: Record<string, unknown> = {}) {

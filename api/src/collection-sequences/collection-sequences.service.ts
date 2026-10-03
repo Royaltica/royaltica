@@ -13,10 +13,12 @@ import {
 import { PrismaService } from '../common/prisma/prisma.service';
 import { localHour, isBlackoutDate } from '../common/timezone.util';
 import { renderMessageTemplate } from '../common/message-template.util';
+import { assertLegalTemplateCompliant } from '../common/legal-template-guard';
 import { ActivityLogService } from '../activity/activity-log.service';
 import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { GOOD_PAYER_SCORE_THRESHOLD } from '../customers/scoring/customer-scoring.constants';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateSequenceStepDto } from './dto/create-sequence-step.dto';
 import { UpdateSequenceStepDto } from './dto/update-sequence-step.dto';
@@ -72,6 +74,9 @@ export class CollectionSequencesService {
   ) {
     const organizationId = this.requireOrg(user);
     await this.getOwnedPolicy(organizationId, policyId);
+    // FR-10 (spec "Mejoras V1"): el motor de plantillas rechaza variables no
+    // aprobadas y lenguaje de alto riesgo legal antes de persistir.
+    assertLegalTemplateCompliant(dto.messageTemplate);
 
     const step = await this.prisma.withOrg(organizationId, (tx) =>
       tx.collectionSequenceStep.create({
@@ -130,6 +135,11 @@ export class CollectionSequencesService {
   ) {
     const organizationId = this.requireOrg(user);
     await this.getOwnedPolicy(organizationId, policyId);
+    // FR-10: misma validación que en createStep, solo si viene messageTemplate
+    // en el PATCH (campo opcional).
+    if (dto.messageTemplate !== undefined) {
+      assertLegalTemplateCompliant(dto.messageTemplate);
+    }
 
     const updated = await this.prisma.withOrg(organizationId, async (tx) => {
       const existing = await tx.collectionSequenceStep.findFirst({
@@ -508,6 +518,24 @@ export class CollectionSequencesService {
         reason: 'customer-do-not-contact',
       });
       return { outcome: 'skipped', reason: 'customer-do-not-contact' };
+    }
+
+    // FR-05 (spec "Mejoras V1"): clientes "buenos pagadores" (score de
+    // puntualidad > 95, FR-04) se excluyen de los pasos agresivos (tono FIRM
+    // o URGENT, o que escalan a un humano) — siguen recibiendo los pasos
+    // GENTLE/STANDARD normales, solo se les ahorra la presión innecesaria.
+    const isAggressiveStep =
+      nextStep.tone === 'FIRM' || nextStep.tone === 'URGENT' || nextStep.escalatesToHuman;
+    if (
+      isAggressiveStep &&
+      invoice.customer.score != null &&
+      invoice.customer.score > GOOD_PAYER_SCORE_THRESHOLD
+    ) {
+      await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_STEP_SKIPPED', {
+        reason: 'good-payer-exempt',
+        score: invoice.customer.score,
+      });
+      return { outcome: 'skipped', reason: 'good-payer-exempt' };
     }
 
     if (isBlackoutDate(now, policy.blackoutDates, policy.timezone)) {

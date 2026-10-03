@@ -62,6 +62,35 @@ export interface OrgSettings {
    * esquema/token porque aún no sabemos qué mecanismo usa el sistema externo.
    */
   externalSyncRestAuthHeader: string | null;
+  /**
+   * Datos bancarios PROPIOS de la organización para RECIBIR pagos de sus
+   * clientes (CxC) — distinto de `Supplier.clabeInterbancaria`, que es la
+   * cuenta del proveedor para que la organización le PAGUE (CxP). Se
+   * incluyen en el recordatorio T-3 (FR: "liga de pago + datos bancarios")
+   * junto con la liga del portal de autoservicio. Null = no configurados
+   * (el recordatorio se envía sin esta sección).
+   */
+  receivingBankName: string | null;
+  receivingClabe: string | null;
+  /**
+   * Modelo de tarificación de Royáltica hacia ESTA organización (spec
+   * "Mejoras V1", sección 5 — 4 esquemas): SUBSCRIPTION (solo la cuota fija
+   * de `subscriptionFeeMxn`), VOLUMETRIC (solo mensajes de cobranza
+   * enviados × `messageRateMxn`), RECOVERY (% sobre lo efectivamente
+   * cobrado en facturas grandes, `recoveryFeePercent`/`recoveryFeeMinInvoiceMxn`
+   * — "únicamente para cuentas grandes de cartera"), HYBRID (cuota mínima +
+   * tarifa por mensaje). BillingService.estimateMonthlyCost calcula el
+   * estimado del mes según este modelo.
+   */
+  billingModel: 'SUBSCRIPTION' | 'VOLUMETRIC' | 'RECOVERY' | 'HYBRID';
+  /** Tarifa por mensaje de cobranza enviado (WhatsApp o correo), en MXN. Rango del spec: $0.30–$10.00. */
+  messageRateMxn: number;
+  /** % sobre el monto recuperado, modelo RECOVERY (solo cuentas grandes). */
+  recoveryFeePercent: number;
+  /** Monto mínimo de factura (MXN) para que cuente como "cuenta grande" en el modelo RECOVERY. */
+  recoveryFeeMinInvoiceMxn: number;
+  /** Cuota fija/mínima mensual, modelos SUBSCRIPTION e HYBRID. */
+  subscriptionFeeMxn: number;
 }
 
 export const DEFAULT_SETTINGS: OrgSettings = {
@@ -79,7 +108,25 @@ export const DEFAULT_SETTINGS: OrgSettings = {
   externalSyncProvider: null,
   externalSyncRestBaseUrl: null,
   externalSyncRestAuthHeader: null,
+  receivingBankName: null,
+  receivingClabe: null,
+  billingModel: 'SUBSCRIPTION',
+  messageRateMxn: 1,
+  recoveryFeePercent: 0,
+  recoveryFeeMinInvoiceMxn: 50000,
+  subscriptionFeeMxn: 0,
 };
+
+/** Modelos de tarificación soportados (spec "Mejoras V1", sección 5). */
+export const BILLING_MODELS = [
+  'SUBSCRIPTION',
+  'VOLUMETRIC',
+  'RECOVERY',
+  'HYBRID',
+] as const;
+/** Rango de tarifa por mensaje que define el spec: $0.30–$10.00 MXN. */
+export const MESSAGE_RATE_MIN_MXN = 0.3;
+export const MESSAGE_RATE_MAX_MXN = 10;
 
 /** ERPs soportados por los conectores (adaptadores). */
 export const SUPPORTED_ERPS = ['aspel', 'bind', 'odoo'] as const;
@@ -187,6 +234,28 @@ export class SettingsService {
         typeof s.externalSyncRestAuthHeader === 'string'
           ? s.externalSyncRestAuthHeader
           : null,
+      receivingBankName:
+        typeof s.receivingBankName === 'string' ? s.receivingBankName : null,
+      receivingClabe:
+        typeof s.receivingClabe === 'string' ? s.receivingClabe : null,
+      billingModel:
+        typeof s.billingModel === 'string' &&
+        BILLING_MODELS.includes(s.billingModel as (typeof BILLING_MODELS)[number])
+          ? (s.billingModel as OrgSettings['billingModel'])
+          : DEFAULT_SETTINGS.billingModel,
+      messageRateMxn: this.numOr(s.messageRateMxn, DEFAULT_SETTINGS.messageRateMxn),
+      recoveryFeePercent: this.numOr(
+        s.recoveryFeePercent,
+        DEFAULT_SETTINGS.recoveryFeePercent,
+      ),
+      recoveryFeeMinInvoiceMxn: this.numOr(
+        s.recoveryFeeMinInvoiceMxn,
+        DEFAULT_SETTINGS.recoveryFeeMinInvoiceMxn,
+      ),
+      subscriptionFeeMxn: this.numOr(
+        s.subscriptionFeeMxn,
+        DEFAULT_SETTINGS.subscriptionFeeMxn,
+      ),
     };
   }
 
@@ -232,6 +301,35 @@ export class SettingsService {
       out.externalSyncRestBaseUrl = patch.externalSyncRestBaseUrl;
     if (patch.externalSyncRestAuthHeader !== undefined)
       out.externalSyncRestAuthHeader = patch.externalSyncRestAuthHeader;
+    if (patch.receivingBankName !== undefined)
+      out.receivingBankName = patch.receivingBankName;
+    if (patch.receivingClabe !== undefined) {
+      // Igual que Supplier.clabeInterbancaria: 18 dígitos o null (se permite
+      // guardar null para "borrar" la cuenta configurada).
+      out.receivingClabe =
+        patch.receivingClabe && /^\d{18}$/.test(patch.receivingClabe)
+          ? patch.receivingClabe
+          : null;
+    }
+    if (patch.billingModel !== undefined) {
+      out.billingModel = BILLING_MODELS.includes(
+        patch.billingModel as (typeof BILLING_MODELS)[number],
+      )
+        ? patch.billingModel
+        : DEFAULT_SETTINGS.billingModel;
+    }
+    if (patch.messageRateMxn !== undefined) {
+      out.messageRateMxn = Math.min(
+        MESSAGE_RATE_MAX_MXN,
+        Math.max(MESSAGE_RATE_MIN_MXN, Number(patch.messageRateMxn)),
+      );
+    }
+    if (patch.recoveryFeePercent !== undefined)
+      out.recoveryFeePercent = Math.min(100, Math.max(0, Number(patch.recoveryFeePercent)));
+    if (patch.recoveryFeeMinInvoiceMxn !== undefined)
+      out.recoveryFeeMinInvoiceMxn = Math.max(0, Number(patch.recoveryFeeMinInvoiceMxn));
+    if (patch.subscriptionFeeMxn !== undefined)
+      out.subscriptionFeeMxn = Math.max(0, Number(patch.subscriptionFeeMxn));
     return out;
   }
 

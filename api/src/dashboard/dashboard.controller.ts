@@ -73,4 +73,16 @@ export class DashboardController {
   cashConversionCycle(@CurrentUser() user: AuthenticatedUser) {
     return this.dashboard.getCashConversionCycle(user);
   }
+
+  /** BI: efectividad de liga de pago vs. plan de parcialidades (spec "Mejoras V1"). */
+  @Get('receivables/channel-effectiveness')
+  channelEffectiveness(@CurrentUser() user: AuthenticatedUser) {
+    return this.dashboard.getChannelEffectiveness(user);
+  }
+
+  /** BI: productividad por agente — cuentas abandonadas vs. recuperadas. */
+  @Get('receivables/agent-productivity')
+  agentProductivity(@CurrentUser() user: AuthenticatedUser) {
+    return this.dashboard.getAgentProductivity(user);
+  }
 }

@@ -210,8 +210,35 @@ model Organization {
   externalSyncFieldMappings ExternalSyncFieldMapping[]
   bankStatementImports      BankStatementImport[]
   bankTransactions          BankTransaction[]
+  virtualNumbers            VirtualNumber[]
 
   @@index([isActive])
+}
+
+// FR-08 (spec "Mejoras V1"): pool de números virtuales PROPIOS de Royáltica
+// (no la línea comercial del cliente) para enviar WhatsApp de cobranza.
+// Justificación del spec: una sola línea de alto volumen se arriesga a ser
+// reportada como spam/bloqueada; un pool permite rotar el envío entre varios
+// números y proteger la reputación de cada uno. WhatsappService.sendForOrg
+// rota round-robin sobre los números activos de la organización; si no hay
+// ninguno configurado, cae al número global (WHATSAPP_PHONE_ID) sin romper
+// nada (comportamiento previo a FR-08).
+model VirtualNumber {
+  id             String    @id @default(uuid())
+  organizationId String
+  // ID del número en el proveedor (Meta Cloud API phone_number_id, o el
+  // "From" de Twilio). Opaco: no se valida formato porque depende del
+  // proveedor configurado en WHATSAPP_PROVIDER.
+  phoneId        String
+  label          String?
+  isActive       Boolean   @default(true)
+  lastUsedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, phoneId])
+  @@index([organizationId, isActive])
 }
 
 model User {
@@ -331,6 +358,29 @@ model Customer {
   // de gestionar este contacto. Null = sin asignar (no aparece en la bandeja
   // de ningún agente; lo sigue viendo Supervisor/Admin normalmente).
   assignedAgentId String?
+  // Score de puntualidad 0-100 (FR-04, spec "Mejoras V1"): % de facturas CxC
+  // pagadas en o antes de su vencimiento. Misma fórmula que
+  // DashboardService.computeCustomerStats (onTimePct), pero persistida para
+  // poder detectar caídas entre un cálculo y otro — el dashboard la calcula
+  // al vuelo y no tiene memoria del valor anterior. Null hasta el primer
+  // cálculo (CustomerScoringService, cron diario). >95 = "buen pagador":
+  // CollectionSequencesService lo excluye de pasos agresivos (FR-05).
+  score          Int?
+  scoreUpdatedAt DateTime?
+  // FR-02 (spec "Mejoras V1"): el sistema debe priorizar el contacto con
+  // Finanzas/Tesorería sobre el Director General, porque ese es quien
+  // realmente ejecuta la firma o la transferencia. Si están capturados,
+  // ReceivablesService.dispatchReminder los usa EN VEZ de phone/email
+  // (que suelen apuntar al contacto comercial/dirección general). Null =
+  // no se capturó un contacto de Finanzas/Tesorería; se usa el genérico.
+  financeContactName  String?
+  financeContactEmail String?
+  financeContactPhone String?
+  // FR-06 (spec "Mejoras V1"): última vez que se le mandó el mensaje de
+  // "mantenimiento de datos" (validar vigencia de contacto, SIN mencionar
+  // deuda) a un cliente con score > GOOD_PAYER_SCORE_THRESHOLD. Null =
+  // nunca se le ha mandado. JobsService lo reenvía cada ~6 meses.
+  lastServiceMessageAt DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   deletedAt       DateTime?

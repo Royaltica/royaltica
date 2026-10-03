@@ -157,4 +157,59 @@ describe('WhatsappService', () => {
       'Factura FAC-1 bloqueada.',
     );
   });
+
+  describe('sendForOrg (FR-08: pool de números virtuales)', () => {
+    it('sin números configurados, cae a sendMessage (comportamiento previo)', async () => {
+      const prisma = { virtualNumber: { findFirst: jest.fn().mockResolvedValue(null) } };
+      const service = new WhatsappService(
+        makeConfig({ WHATSAPP_PROVIDER: 'meta', WHATSAPP_TOKEN: 'tok', WHATSAPP_PHONE_ID: 'pid-global' }),
+        prisma as unknown as PrismaService,
+        makeGemini(),
+      );
+      service.onModuleInit();
+      jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ sent: true, mode: 'meta' });
+
+      await service.sendForOrg('org-1', '+5215511112222', 'hola');
+
+      expect(prisma.virtualNumber.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { organizationId: 'org-1', isActive: true } }),
+      );
+      expect(service.sendMessage).toHaveBeenCalledWith('+5215511112222', 'hola');
+    });
+
+    it('con un número activo, envía con ese phoneId y actualiza lastUsedAt', async () => {
+      const prisma = {
+        virtualNumber: {
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ id: 'vn-1', phoneId: 'pid-pool-1' }),
+          update: jest.fn().mockResolvedValue({}),
+        },
+      };
+      const service = new WhatsappService(
+        makeConfig({ WHATSAPP_PROVIDER: 'meta', WHATSAPP_TOKEN: 'tok', WHATSAPP_PHONE_ID: 'pid-global' }),
+        prisma as unknown as PrismaService,
+        makeGemini(),
+      );
+      service.onModuleInit();
+      jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ sent: true, mode: 'meta' });
+
+      const res = await service.sendForOrg('org-1', '+5215511112222', 'hola');
+
+      expect(service.sendMessage).toHaveBeenCalledWith(
+        '+5215511112222',
+        'hola',
+        'pid-pool-1',
+      );
+      expect(prisma.virtualNumber.update).toHaveBeenCalledWith({
+        where: { id: 'vn-1' },
+        data: { lastUsedAt: expect.any(Date) },
+      });
+      expect(res).toEqual({ sent: true, mode: 'meta' });
+    });
+  });
 });

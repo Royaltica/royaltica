@@ -12,6 +12,7 @@ import { ReceivablesService } from '../receivables/receivables.service';
 import { DashboardService } from '../dashboard/dashboard.service';
 import { ReportsService } from '../reports/reports.service';
 import { CollectionSequencesService } from '../collection-sequences/collection-sequences.service';
+import { CustomerScoringService } from '../customers/scoring/customer-scoring.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
 import {
@@ -47,6 +48,7 @@ export class JobsService {
     private readonly dashboard: DashboardService,
     private readonly reports: ReportsService,
     private readonly collectionSequences: CollectionSequencesService,
+    private readonly customerScoring: CustomerScoringService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -171,7 +173,24 @@ export class JobsService {
   @Cron(CronExpression.EVERY_DAY_AT_10AM, { name: 'receivable-reminder' })
   async receivableReminders(): Promise<{ sent: number }> {
     if (!this.enabled) return { sent: 0 };
-    return this.receivables.runReminderScan();
+    // T-14 (preventivo) y T-3 (urgente, con liga de pago + datos bancarios)
+    // corren en el mismo pase diario: sus ventanas de vencimiento no se
+    // traslapan, así que nunca compiten por el mismo recordatorio.
+    const [t14, t3] = await Promise.all([
+      this.receivables.runReminderScan('T14'),
+      this.receivables.runReminderScan('T3'),
+    ]);
+    return { sent: t14.sent + t3.sent };
+  }
+
+  // ── FR-06: mantenimiento de datos para buenos pagadores (cada ~6 meses) ──
+  // Corre diario (barato: la mayoría de los días no encuentra a nadie que
+  // cruce el umbral de 182 días) para no depender de un cron mensual que
+  // podría desfasarse del aniversario exacto de cada cliente.
+  @Cron(CronExpression.EVERY_DAY_AT_11AM, { name: 'customer-service-message' })
+  async customerServiceMessage(): Promise<{ sent: number }> {
+    if (!this.enabled) return { sent: 0 };
+    return this.receivables.runServiceMessageScan();
   }
 
   // ── Motor de escalamiento de cobranza multi-paso (Tradespace) ──
@@ -345,6 +364,64 @@ export class JobsService {
 
     this.logger.log(`weekly-collection-digest: ${sent} organización(es) notificada(s).`);
     return { sent };
+  }
+
+  // ── Score de puntualidad por cliente (FR-04/FR-05, spec "Mejoras V1") ──
+  // Recalcula el score de TODO cliente CxC con al menos una factura, y si
+  // cayó significativamente (ver SCORE_DROP_ALERT_THRESHOLD) alerta a los
+  // admins sugiriendo intervención humana — tal cual pide el ejemplo de la
+  // especificación (93% -> 61%). Corre después del motor de secuencias
+  // (11am) para que el guardrail de FR-05 (excluir a buenos pagadores de
+  // pasos agresivos) ya haya usado el score del día anterior esa mañana; el
+  // valor fresco de hoy se usará mañana.
+  @Cron('30 11 * * *', { name: 'customer-score-recompute' })
+  async customerScoreRecompute(): Promise<{ recomputed: number; alerted: number }> {
+    if (!this.enabled) return { recomputed: 0, alerted: 0 };
+    let recomputed = 0;
+    let alerted = 0;
+    const orgs = await this.activeOrganizations();
+
+    for (const org of orgs) {
+      const customers = await this.prisma.customer.findMany({
+        where: {
+          organizationId: org.id,
+          deletedAt: null,
+          invoices: { some: { direction: 'RECEIVABLE', deletedAt: null } },
+        },
+        select: { id: true, name: true, score: true },
+      });
+      if (customers.length === 0) continue;
+
+      const admins = await this.orgAdmins(org.id);
+      for (const customer of customers) {
+        const result = await this.customerScoring.recomputeOne(
+          customer.id,
+          customer.score,
+        );
+        recomputed += 1;
+        if (result.droppedSignificantly) {
+          await this.fanOut(
+            org.id,
+            admins,
+            {
+              type: 'CUSTOMER_SCORE_DROP',
+              title: 'Riesgo alto: puntualidad en caída',
+              body:
+                `El score de puntualidad de ${customer.name} cayó de ` +
+                `${result.previousScore}% a ${result.score}%. Se sugiere ` +
+                'intervención humana inmediata.',
+            },
+            true, // crítico: también dispara WhatsApp a admins con opt-in
+          );
+          alerted += 1;
+        }
+      }
+    }
+
+    this.logger.log(
+      `customer-score-recompute: ${recomputed} recalculado(s), ${alerted} alerta(s).`,
+    );
+    return { recomputed, alerted };
   }
 
   // ── helpers ───────────────────────────────────────────────

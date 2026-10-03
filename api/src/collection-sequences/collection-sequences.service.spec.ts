@@ -64,6 +64,11 @@ describe('CollectionSequencesService', () => {
       updateMany: jest.Mock;
     };
     organization: { findUnique: jest.Mock; findMany: jest.Mock };
+    collectionSequenceStep: {
+      create: jest.Mock;
+      findFirst: jest.Mock;
+      update: jest.Mock;
+    };
     activityLog: { count: jest.Mock };
     withOrg: jest.Mock;
   };
@@ -97,6 +102,11 @@ describe('CollectionSequencesService', () => {
       organization: {
         findUnique: jest.fn().mockResolvedValue({ locale: 'en-CA', currency: 'CAD' }),
         findMany: jest.fn().mockResolvedValue([]),
+      },
+      collectionSequenceStep: {
+        create: jest.fn().mockImplementation(({ data }) => ({ id: 'step-new', ...data })),
+        findFirst: jest.fn().mockResolvedValue(step1),
+        update: jest.fn().mockImplementation(({ data }) => ({ ...step1, ...data })),
       },
       activityLog: { count: jest.fn().mockResolvedValue(0) },
       withOrg: jest.fn(),
@@ -400,6 +410,56 @@ describe('CollectionSequencesService', () => {
     expect(prisma.collectionSequenceRun.findMany).toHaveBeenCalledWith({
       where: { organizationId: 'org-2' },
       orderBy: { updatedAt: 'desc' },
+    });
+  });
+
+  describe('createStep / updateStep — FR-10 (regulación jurídica de plantillas)', () => {
+    const user = { id: 'u-1', organizationId: 'org-1' } as never;
+    const validDtoObj = {
+      stepOrder: 2,
+      daysAfterDue: 5,
+      channel: 'EMAIL',
+      messageTemplate: 'Hola {{customerName}}, tu saldo {{amount}} venció el {{dueDate}}.',
+    };
+
+    it('crea el paso cuando la plantilla usa solo variables aprobadas', async () => {
+      await service.createStep(user, 'pol-1', validDtoObj as never);
+      expect(prisma.collectionSequenceStep.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('rechaza el paso si la plantilla usa una variable no aprobada', async () => {
+      const dto = {
+        ...validDtoObj,
+        messageTemplate: 'Hola {{customerName}}, tu RFC es {{taxId}}.',
+      };
+
+      await expect(service.createStep(user, 'pol-1', dto as never)).rejects.toThrow(
+        /no cumple con la regulación jurídica/,
+      );
+      expect(prisma.collectionSequenceStep.create).not.toHaveBeenCalled();
+    });
+
+    it('rechaza el paso si la plantilla amenaza con acción penal por una deuda civil', async () => {
+      const dto = {
+        ...validDtoObj,
+        messageTemplate: 'Paga {{amount}} o vas a la cárcel, {{customerName}}.',
+      };
+
+      await expect(service.createStep(user, 'pol-1', dto as never)).rejects.toThrow(
+        /no cumple con la regulación jurídica/,
+      );
+    });
+
+    it('updateStep valida la plantilla solo si viene en el PATCH', async () => {
+      await service.updateStep(user, 'pol-1', 'step-1', {} as never);
+      expect(prisma.collectionSequenceStep.update).toHaveBeenCalledTimes(1);
+
+      const badDto = {
+        messageTemplate: 'Le avisaremos a tu jefe que debes {{amount}}.',
+      } as never;
+      await expect(
+        service.updateStep(user, 'pol-1', 'step-1', badDto),
+      ).rejects.toThrow(/no cumple con la regulación jurídica/);
     });
   });
 });

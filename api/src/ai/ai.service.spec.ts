@@ -28,6 +28,7 @@ function makeUser(overrides: Partial<AuthenticatedUser> = {}): AuthenticatedUser
     organizationId: 'org-1',
     permissions: [],
     supplierId: null,
+    operationalProfile: null,
     ...overrides,
   };
 }

@@ -5,6 +5,7 @@ import { BillingService } from './billing.service';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { StripeService } from '../stripe/stripe.service';
 import { ActivityLogService } from '../activity/activity-log.service';
+import { SettingsService } from '../settings/settings.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
 
@@ -16,6 +17,7 @@ const admin: AuthenticatedUser = {
   organizationId: 'org-1',
   permissions: ['*'],
   supplierId: null,
+  operationalProfile: null,
 };
 
 const noOrgUser: AuthenticatedUser = { ...admin, organizationId: null };
@@ -28,6 +30,8 @@ describe('BillingService', () => {
       findUnique: jest.Mock;
       update: jest.Mock;
     };
+    invoiceAuditLog: { findMany: jest.Mock };
+    invoice: { findMany: jest.Mock };
   };
   let stripe: {
     createCustomer: jest.Mock;
@@ -35,6 +39,7 @@ describe('BillingService', () => {
     createBillingPortalSession: jest.Mock;
   };
   let activity: { record: jest.Mock };
+  let settings: { get: jest.Mock };
 
   const ENV_DEFAULTS: Record<string, string> = {
     FRONTEND_URL: 'https://app.royaltica.com',
@@ -49,6 +54,8 @@ describe('BillingService', () => {
         findUnique: jest.fn(),
         update: jest.fn(),
       },
+      invoiceAuditLog: { findMany: jest.fn().mockResolvedValue([]) },
+      invoice: { findMany: jest.fn().mockResolvedValue([]) },
     };
     stripe = {
       createCustomer: jest.fn(),
@@ -56,6 +63,15 @@ describe('BillingService', () => {
       createBillingPortalSession: jest.fn(),
     };
     activity = { record: jest.fn().mockResolvedValue(undefined) };
+    settings = {
+      get: jest.fn().mockResolvedValue({
+        billingModel: 'SUBSCRIPTION',
+        messageRateMxn: 1,
+        recoveryFeePercent: 0,
+        recoveryFeeMinInvoiceMxn: 50000,
+        subscriptionFeeMxn: 0,
+      }),
+    };
     const config = { get: jest.fn((key: string) => ENV_DEFAULTS[key] ?? '') };
 
     service = new BillingService(
@@ -63,6 +79,7 @@ describe('BillingService', () => {
       stripe as unknown as StripeService,
       activity as unknown as ActivityLogService,
       config as unknown as ConfigService<Env, true>,
+      settings as unknown as SettingsService,
     );
   });
 
@@ -85,6 +102,7 @@ describe('BillingService', () => {
         stripe as unknown as StripeService,
         activity as unknown as ActivityLogService,
         configSinPrecios as unknown as ConfigService<Env, true>,
+        settings as unknown as SettingsService,
       );
       await expect(svc.createCheckoutSession(admin, 'PRO')).rejects.toThrow(
         BadRequestException,
@@ -241,6 +259,89 @@ describe('BillingService', () => {
         where: { id: 'org-1' },
         data: { subscriptionStatus: 'past_due' },
       });
+    });
+  });
+
+  describe('estimateMonthlyCost (sección 5 del spec "Mejoras V1")', () => {
+    it('SUBSCRIPTION: solo cobra la cuota fija, sin importar los mensajes enviados', async () => {
+      settings.get.mockResolvedValue({
+        billingModel: 'SUBSCRIPTION',
+        messageRateMxn: 1,
+        recoveryFeePercent: 0,
+        recoveryFeeMinInvoiceMxn: 50000,
+        subscriptionFeeMxn: 2000,
+      });
+      prisma.invoiceAuditLog.findMany.mockResolvedValue([
+        { metadata: { channels: { whatsapp: true, email: true } } },
+      ]);
+
+      const res = await service.estimateMonthlyCost(admin);
+
+      expect(res.billingModel).toBe('SUBSCRIPTION');
+      expect(res.estimatedTotalMxn).toBe(2000);
+    });
+
+    it('VOLUMETRIC: cuenta un mensaje por cada canal enviado y lo multiplica por la tarifa', async () => {
+      settings.get.mockResolvedValue({
+        billingModel: 'VOLUMETRIC',
+        messageRateMxn: 2,
+        recoveryFeePercent: 0,
+        recoveryFeeMinInvoiceMxn: 50000,
+        subscriptionFeeMxn: 0,
+      });
+      prisma.invoiceAuditLog.findMany.mockResolvedValue([
+        { metadata: { channels: { whatsapp: true, email: true } } }, // 2 canales
+        { metadata: { channels: { whatsapp: true, email: false } } }, // 1 canal
+      ]);
+
+      const res = await service.estimateMonthlyCost(admin);
+
+      expect(res.volumetric.messageCount).toBe(3);
+      expect(res.estimatedTotalMxn).toBe(6); // 3 mensajes x $2
+    });
+
+    it('RECOVERY: solo cobra % sobre facturas grandes cobradas este mes', async () => {
+      settings.get.mockResolvedValue({
+        billingModel: 'RECOVERY',
+        messageRateMxn: 1,
+        recoveryFeePercent: 10,
+        recoveryFeeMinInvoiceMxn: 50000,
+        subscriptionFeeMxn: 0,
+      });
+      prisma.invoice.findMany.mockResolvedValue([
+        { total: 100000 }, // cuenta grande: cuenta
+      ]);
+
+      const res = await service.estimateMonthlyCost(admin);
+
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            direction: 'RECEIVABLE',
+            status: 'PAID',
+            total: { gte: 50000 },
+          }),
+        }),
+      );
+      expect(res.recovery.recoveredAmountMxn).toBe(100000);
+      expect(res.estimatedTotalMxn).toBe(10000); // 10% de 100,000
+    });
+
+    it('HYBRID: suma la cuota mínima + el componente volumétrico', async () => {
+      settings.get.mockResolvedValue({
+        billingModel: 'HYBRID',
+        messageRateMxn: 1.5,
+        recoveryFeePercent: 0,
+        recoveryFeeMinInvoiceMxn: 50000,
+        subscriptionFeeMxn: 500,
+      });
+      prisma.invoiceAuditLog.findMany.mockResolvedValue([
+        { metadata: { channels: { whatsapp: true, email: false } } },
+      ]);
+
+      const res = await service.estimateMonthlyCost(admin);
+
+      expect(res.estimatedTotalMxn).toBe(501.5); // 500 + 1 x $1.5
     });
   });
 });
