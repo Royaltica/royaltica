@@ -1,6 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { CalendarClock, Scale, UserCog } from 'lucide-react';
+import { CalendarClock, ChevronDown, Scale, UserCog } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { EASE, Reveal, BlockTitle, Figure, Bar, Tag } from './primitives.tsx';
 import { SEGMENTOS, diagnosticoAnterior, saldoDe, type Segmento } from './mockV1.ts';
@@ -46,20 +46,16 @@ const ORDEN: Segmento[] = ['puntual', 'tardio', 'olvidadizo', 'nuevo', 'deterior
  */
 export function SegmentosPanel() {
   const reduce = useReducedMotion();
-  const { cartera, cambiarSegmento, cambiosSegmento } = useCobranza();
-  const [sel, setSel] = React.useState<Segmento | null>(null);
-  const [editando, setEditando] = React.useState<string | null>(null);
-  const [nuevo, setNuevo] = React.useState<Segmento>('olvidadizo');
-  const [motivo, setMotivo] = React.useState('');
-
-  const guardar = (id: string) => {
-    if (!motivo.trim()) return;
-    cambiarSegmento(id, nuevo, motivo.trim());
-    setEditando(null);
-    setMotivo('');
-  };
-
-  const lista = sel ? cartera.filter((c) => c.segmento === sel) : [];
+  const { cartera, cambiosSegmento } = useCobranza();
+  // Varios recuadros pueden estar abiertos a la vez.
+  const [abiertos, setAbiertos] = React.useState<Set<Segmento>>(new Set());
+  const alternar = (id: Segmento) =>
+    setAbiertos((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   return (
     <div className="space-y-5">
@@ -71,7 +67,8 @@ export function SegmentosPanel() {
         </p>
       </Reveal>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* items-start: abrir un recuadro no estira al de al lado */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         {ORDEN.map((id, i) => {
           const s = SEGMENTOS[id];
           const suyas = cartera.filter((c) => c.segmento === id);
@@ -79,172 +76,191 @@ export function SegmentosPanel() {
           const entraron = cartera.filter(
             (c) => c.diagnostico.segmento === id && c.historial.length > 3 && diagnosticoAnterior(c).segmento !== id,
           );
-          const activo = sel === id;
+          const abierto = abiertos.has(id);
           return (
             <Reveal key={id} delay={0.04 + i * 0.04}>
-              <motion.button
-                onClick={() => setSel(activo ? null : id)}
-                whileHover={reduce ? undefined : { y: -3 }}
-                transition={{ duration: 0.25, ease: EASE }}
-                aria-expanded={activo}
-                className={`w-full text-left bg-brand-paper border rounded-3xl p-6 space-y-5 h-full transition-colors ${
-                  activo ? 'border-brand-gold/60 shadow-sm' : 'border-brand-ink/10'
+              <div
+                className={`bg-brand-paper border rounded-3xl overflow-hidden transition-colors ${
+                  abierto ? 'border-brand-gold/60 shadow-sm' : 'border-brand-ink/10 hover:border-brand-ink/20'
                 }`}
               >
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h4 className="flex items-center gap-2 text-xl font-serif text-brand-ink">
-                      <span className={`w-2 h-2 rounded-full ${s.punto}`} />
-                      {s.nombre}
-                    </h4>
-                    <p className="text-xs text-brand-ink/50 mt-1.5 leading-relaxed max-w-[40ch]">{s.trato}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <div className="text-3xl font-serif text-brand-ink leading-none">
-                      <Figure value={suyas.length} />
+                <button onClick={() => alternar(id)} aria-expanded={abierto} className="w-full text-left p-6 space-y-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h4 className="flex items-center gap-2 text-xl font-serif text-brand-ink">
+                        <span className={`w-2 h-2 rounded-full ${s.punto}`} />
+                        {s.nombre}
+                      </h4>
+                      <p className="text-xs text-brand-ink/50 mt-1.5 leading-relaxed max-w-[40ch]">{s.trato}</p>
                     </div>
-                    <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35 mt-1.5">clientes</div>
-                    <div className="text-[11px] text-brand-ink/50 tabular-nums mt-1">
-                      {CURRENCY_FORMATTER.format(suyas.reduce((a, c) => a + saldoDe(c), 0))}
+                    <div className="text-right shrink-0">
+                      <div className="text-3xl font-serif text-brand-ink leading-none">
+                        <Figure value={suyas.length} />
+                      </div>
+                      <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35 mt-1.5">clientes</div>
+                      <div className="text-[11px] text-brand-ink/50 tabular-nums mt-1">
+                        {CURRENCY_FORMATTER.format(suyas.reduce((a, c) => a + saldoDe(c), 0))}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="flex flex-wrap gap-2">
-                  <Tag icon={<CalendarClock size={11} />} text={s.calendario} />
-                  {s.tono !== '—' && <Tag icon={<Scale size={11} />} text={`Tono ${s.tono}`} />}
-                </div>
-
-                {id === 'nuevo' ? (
-                  <p className="text-[12px] text-brand-ink/45">Sin historial de pagos todavía.</p>
-                ) : (
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1">
-                      <Bar value={aTiempo} tone="accent" delay={0.2 + i * 0.04} />
-                    </div>
-                    <span className="text-sm font-semibold text-brand-ink tabular-nums shrink-0">
-                      <Figure value={aTiempo} format="porcentaje" /> pagado a tiempo
-                    </span>
+                  <div className="flex flex-wrap gap-2">
+                    <Tag icon={<CalendarClock size={11} />} text={s.calendario} />
+                    {s.tono !== '—' && <Tag icon={<Scale size={11} />} text={`Tono ${s.tono}`} />}
                   </div>
-                )}
 
-                {entraron.length > 0 && (
-                  <p className="text-[11px] text-brand-ink/55 pt-3 border-t border-brand-ink/8">
-                    Entraron este mes: <span className="font-semibold text-brand-ink/75">{entraron.map((c) => c.cliente).join(', ')}</span>
-                  </p>
-                )}
-              </motion.button>
+                  {id === 'nuevo' ? (
+                    <p className="text-[12px] text-brand-ink/45">Sin historial de pagos todavía.</p>
+                  ) : (
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1">
+                        <Bar value={aTiempo} tone="accent" delay={0.2 + i * 0.04} />
+                      </div>
+                      <span className="text-sm font-semibold text-brand-ink tabular-nums shrink-0">
+                        <Figure value={aTiempo} format="porcentaje" /> pagado a tiempo
+                      </span>
+                    </div>
+                  )}
+
+                  {entraron.length > 0 && (
+                    <p className="text-[11px] text-brand-ink/55">
+                      Entraron este mes: <span className="font-semibold text-brand-ink/75">{entraron.map((c) => c.cliente).join(', ')}</span>
+                    </p>
+                  )}
+
+                  <span className="flex items-center gap-1 text-[12px] font-semibold text-brand-ink/55">
+                    {abierto ? 'Ocultar clientes' : `Ver ${suyas.length === 1 ? 'el cliente' : `los ${suyas.length} clientes`}`}
+                    <ChevronDown size={14} className={`transition-transform duration-200 ${abierto ? 'rotate-180' : ''}`} />
+                  </span>
+                </button>
+
+                <AnimatePresence initial={false}>
+                  {abierto && (
+                    <motion.div
+                      initial={reduce ? false : { height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={reduce ? undefined : { height: 0, opacity: 0 }}
+                      transition={{ duration: 0.25, ease: EASE }}
+                      className="overflow-hidden border-t border-brand-ink/8"
+                    >
+                      <ClientesSegmento lista={suyas} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </Reveal>
           );
         })}
       </div>
 
-      {/* Lista del segmento seleccionado */}
-      <AnimatePresence>
-        {sel && (
-          <motion.div
-            key={sel}
-            initial={reduce ? false : { opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={reduce ? undefined : { opacity: 0 }}
-            transition={{ duration: 0.25, ease: EASE }}
-            className="bg-brand-paper border border-brand-gold/40 rounded-3xl overflow-hidden"
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-brand-ink/8">
-              <BlockTitle>{SEGMENTOS[sel].nombre} · {lista.length} {lista.length === 1 ? 'cliente' : 'clientes'}</BlockTitle>
-              <button onClick={() => setSel(null)} className="text-[11px] font-semibold text-brand-ink/45 hover:text-brand-ink">
-                Cerrar
+      {cambiosSegmento.length > 0 && (
+        <Reveal>
+          <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl px-6 py-4">
+            <BlockTitle>Cambios manuales</BlockTitle>
+            <ul className="mt-2 space-y-1 text-[12px] text-brand-ink/60">
+              {cambiosSegmento.map((m, i) => (
+                <li key={i}>
+                  {m.cliente}: {SEGMENTOS[m.de].nombre} → {SEGMENTOS[m.a].nombre} · {m.hora} · <span className="italic">{m.motivo}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Reveal>
+      )}
+    </div>
+  );
+}
+
+/** Clientes de un segmento, con su porqué y el cambio manual (motivo obligatorio). */
+function ClientesSegmento({ lista }: { lista: CuentaViva[] }) {
+  const { cambiarSegmento } = useCobranza();
+  const [editando, setEditando] = React.useState<string | null>(null);
+  const [nuevo, setNuevo] = React.useState<Segmento>('olvidadizo');
+  const [motivo, setMotivo] = React.useState('');
+
+  const guardar = (id: string) => {
+    if (!motivo.trim()) return;
+    cambiarSegmento(id, nuevo, motivo.trim());
+    setEditando(null);
+    setMotivo('');
+  };
+
+  if (!lista.length) return <p className="px-6 py-4 text-sm text-brand-ink/45">Ningún cliente en este segmento.</p>;
+
+  return (
+    <ul className="divide-y divide-brand-ink/6">
+      {lista.map((c) => (
+        <li key={c.id} className="px-6 py-3.5">
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-brand-ink">
+                {c.cliente}
+                {c.saldada && <span className="ml-2 audit-badge bg-emerald-50 text-emerald-700">Saldada</span>}
+              </div>
+              <div className="text-[11px] text-brand-ink/40 mt-0.5">
+                {CURRENCY_FORMATTER.format(saldoDe(c))} por cobrar · {c.agente}
+              </div>
+              <div className="text-[12px] text-brand-ink/60 mt-1 leading-relaxed">
+                {c.segmentoManual ? `Cambiado a mano: ${c.segmentoManual.motivo}` : c.diagnostico.porque}
+              </div>
+            </div>
+            {editando !== c.id && (
+              <button
+                onClick={() => {
+                  setEditando(c.id);
+                  setNuevo(c.segmento);
+                }}
+                className="text-[11px] font-semibold text-brand-ink/50 hover:text-brand-ink"
+              >
+                Cambiar
+              </button>
+            )}
+          </div>
+          {editando === c.id && (
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              <select
+                value={nuevo}
+                onChange={(e) => setNuevo(e.target.value as Segmento)}
+                className="px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-bone/50 text-[12px] font-semibold outline-none focus:border-brand-gold/60"
+              >
+                {ORDEN.map((x) => (
+                  <option key={x} value={x}>
+                    {SEGMENTOS[x].nombre}
+                  </option>
+                ))}
+              </select>
+              <input
+                autoFocus
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                placeholder="Motivo (obligatorio)"
+                className="flex-1 min-w-[160px] px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-bone/50 text-[12px] outline-none focus:border-brand-gold/60"
+              />
+              <button
+                onClick={() => guardar(c.id)}
+                disabled={!motivo.trim()}
+                className="px-3 py-2 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold disabled:opacity-40"
+              >
+                Guardar
+              </button>
+              {c.segmentoManual && (
+                <button
+                  onClick={() => {
+                    cambiarSegmento(c.id, null, '');
+                    setEditando(null);
+                  }}
+                  className="px-3 py-2 rounded-xl border border-brand-ink/12 text-[12px] font-semibold text-brand-ink/60"
+                >
+                  Volver al calculado
+                </button>
+              )}
+              <button onClick={() => setEditando(null)} className="px-2 text-[12px] text-brand-ink/45">
+                Cancelar
               </button>
             </div>
-            <div className="divide-y divide-brand-ink/6">
-              {lista.map((c) => (
-                <div key={c.id} className="px-6 py-3.5">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-brand-ink">
-                        {c.cliente}
-                        <span className="ml-2 font-normal text-[11px] text-brand-ink/40">
-                          {CURRENCY_FORMATTER.format(saldoDe(c))} · {c.agente}
-                        </span>
-                      </div>
-                      <div className="text-[12px] text-brand-ink/55 mt-0.5 leading-relaxed">
-                        {c.segmentoManual ? `Cambiado a mano: ${c.segmentoManual.motivo}` : c.diagnostico.porque}
-                      </div>
-                    </div>
-                    {editando !== c.id && (
-                      <button
-                        onClick={() => {
-                          setEditando(c.id);
-                          setNuevo(c.segmento);
-                        }}
-                        className="text-[11px] font-semibold text-brand-ink/50 hover:text-brand-ink"
-                      >
-                        Cambiar segmento
-                      </button>
-                    )}
-                  </div>
-                  {editando === c.id && (
-                    <div className="mt-2.5 flex flex-wrap gap-2">
-                      <select
-                        value={nuevo}
-                        onChange={(e) => setNuevo(e.target.value as Segmento)}
-                        className="px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-bone/50 text-[12px] font-semibold outline-none focus:border-brand-gold/60"
-                      >
-                        {ORDEN.map((x) => (
-                          <option key={x} value={x}>
-                            {SEGMENTOS[x].nombre}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        autoFocus
-                        value={motivo}
-                        onChange={(e) => setMotivo(e.target.value)}
-                        placeholder="Motivo (obligatorio)"
-                        className="flex-1 min-w-[180px] px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-bone/50 text-[12px] outline-none focus:border-brand-gold/60"
-                      />
-                      <button
-                        onClick={() => guardar(c.id)}
-                        disabled={!motivo.trim()}
-                        className="px-3 py-2 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold disabled:opacity-40"
-                      >
-                        Guardar
-                      </button>
-                      {c.segmentoManual && (
-                        <button
-                          onClick={() => {
-                            cambiarSegmento(c.id, null, '');
-                            setEditando(null);
-                          }}
-                          className="px-3 py-2 rounded-xl border border-brand-ink/12 text-[12px] font-semibold text-brand-ink/60"
-                        >
-                          Volver al calculado
-                        </button>
-                      )}
-                      <button onClick={() => setEditando(null)} className="px-2 text-[12px] text-brand-ink/45">
-                        Cancelar
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
-              {lista.length === 0 && <p className="px-6 py-5 text-sm text-brand-ink/45">Ningún cliente en este segmento.</p>}
-            </div>
-            {cambiosSegmento.length > 0 && (
-              <div className="px-6 py-4 border-t border-brand-ink/8 bg-brand-bone/40">
-                <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40 mb-1.5">Cambios manuales</div>
-                <ul className="space-y-1 text-[12px] text-brand-ink/60">
-                  {cambiosSegmento.map((m, i) => (
-                    <li key={i}>
-                      {m.cliente}: {SEGMENTOS[m.de].nombre} → {SEGMENTOS[m.a].nombre} · {m.hora} · <span className="italic">{m.motivo}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }

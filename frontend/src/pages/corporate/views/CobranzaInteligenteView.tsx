@@ -9,7 +9,6 @@ import {
   Link2,
   MessageSquare,
   Scale,
-  Sparkles,
   TrendingDown,
   TrendingUp,
 } from 'lucide-react';
@@ -47,7 +46,6 @@ import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
  */
 
 type Section =
-  | 'prioridades'
   | 'alertas'
   | 'recordatorios'
   | 'campanas'
@@ -60,7 +58,6 @@ type Section =
   | 'equipo';
 
 const LABEL: Record<Section, string> = {
-  prioridades: 'Prioridades',
   alertas: 'Alertas',
   recordatorios: 'Recordatorios',
   campanas: 'Campañas',
@@ -77,10 +74,10 @@ const LABEL: Record<Section, string> = {
 // El Agente no tiene pestañas: una sola lista (ver AgenteVista).
 const SECCIONES_POR_ROL: Record<Exclude<Rol, 'agente'>, Section[][]> = {
   admin: [
-    ['prioridades', 'alertas', 'recordatorios', 'campanas', 'pagos'],
+    ['recordatorios', 'alertas', 'campanas', 'pagos'],
     ['segmentos', 'plantillas', 'reportes', 'datos', 'estrategias', 'equipo'],
   ],
-  supervisor: [['prioridades', 'recordatorios', 'campanas', 'pagos', 'equipo'], ['segmentos', 'reportes']],
+  supervisor: [['recordatorios', 'campanas', 'pagos', 'equipo'], ['segmentos', 'reportes']],
 };
 
 const ENCABEZADO: Record<Rol, { titulo: string; texto: string }> = {
@@ -388,13 +385,13 @@ export function CobranzaInteligenteView() {
 
 function CobranzaIA() {
   const [rol, setRol] = React.useState<Rol>('admin');
-  const [section, setSection] = React.useState<Section>('prioridades');
+  const [section, setSection] = React.useState<Section>('recordatorios');
   const reduce = useReducedMotion();
   const grupos = rol === 'agente' ? [] : SECCIONES_POR_ROL[rol];
 
   const cambiarRol = (r: Rol) => {
     setRol(r);
-    if (r !== 'agente' && !SECCIONES_POR_ROL[r].flat().includes(section)) setSection('prioridades');
+    if (r !== 'agente' && !SECCIONES_POR_ROL[r].flat().includes(section)) setSection('recordatorios');
   };
 
   return (
@@ -461,6 +458,14 @@ function CobranzaIA() {
         </Reveal>
       )}
 
+      {rol !== 'agente' && (
+        <Reveal delay={0.08}>
+          <div className="mt-6">
+            <ResumenHoy />
+          </div>
+        </Reveal>
+      )}
+
       <Reveal delay={0.1}>
         <PrototypeNotice />
       </Reveal>
@@ -475,7 +480,6 @@ function CobranzaIA() {
           <AgenteVista />
         ) : (
           <>
-            {section === 'prioridades' && <PrioridadesPanel />}
             {section === 'alertas' && <AlertasPanel />}
             {section === 'recordatorios' && <RecordatoriosPanel />}
             {section === 'campanas' && <CampanasPanel />}
@@ -544,142 +548,39 @@ function cuentaDe(cliente: string): CarteraItem | undefined {
   return MOCK.cartera.find((c) => c.cliente === cliente);
 }
 
-function PrioridadesPanel() {
-  const reduce = useReducedMotion();
-  const { cartera: viva } = useCobranza();
-  const total = MOCK.cartera.reduce((sum, c) => sum + c.monto, 0);
-  const requierenHumano = MOCK.cartera.filter((c) => c.urgencia === 'alta').length;
-  const riesgoProm = Math.round(
-    MOCK.cartera.reduce((sum, c) => sum + scoreOf(c.factores), 0) / MOCK.cartera.length,
-  );
+/**
+ * Resumen del día (Administrador y Supervisor). Sale de la misma cartera que
+ * ven los agentes, así que cambia en vivo: si un agente envía o un pago salda
+ * una factura, el número de hoy baja.
+ */
+function ResumenHoy() {
+  const { cartera, resultadosHoy } = useCobranza();
+  const abiertas = cartera.filter((c) => !c.saldada);
+  // "Para atender hoy": el paso vigente del plan todavía no tiene resultado.
+  const hoy = abiertas
+    .map((c) => ({ c, paso: planCuenta(c).actual }))
+    .filter(({ c, paso }) => paso && !c.resultados[paso.id] && !resultadosHoy[c.id]);
+  const montoHoy = hoy.reduce((a, { c }) => a + saldoDe(c), 0);
+  const porCobrar = abiertas.reduce((a, c) => a + saldoDe(c), 0);
+  const vencida = abiertas.filter((c) => c.dias > 0).reduce((a, c) => a + saldoDe(c), 0);
+  const humano = hoy.filter(({ paso }) => paso!.canal === 'Llamada').length;
 
   return (
-    <div className="space-y-6">
-      <Reveal>
-        <StatRow>
-          <MiniStat
-            label="En la lista de hoy"
-            value=""
-            numeric={MOCK.cartera.length}
-            sub="cuentas priorizadas"
-          />
-          <MiniStat
-            label="Monto en juego"
-            value=""
-            numeric={total}
-            format="moneda"
-            sub="suma de las cuentas listadas"
-          />
-          <MiniStat
-            label="Riesgo promedio"
-            value=""
-            numeric={riesgoProm}
-            sub="score compuesto de la lista"
-          />
-          <MiniStat
-            label="Requieren humano"
-            value=""
-            numeric={requierenHumano}
-            sub="el agente no las trabaja solo"
-            accent
-          />
-        </StatRow>
-      </Reveal>
-
-      <Reveal delay={0.08}>
-        <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden">
-          <div className="px-6 py-4 flex items-center gap-2 border-b border-brand-ink/8">
-            <Sparkles size={14} className="text-brand-gold" />
-            <BlockTitle>Orden sugerido de trabajo</BlockTitle>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left min-w-[1000px]">
-              <thead>
-                <tr>
-                  {['Cliente', 'Monto', 'Vencido', 'Riesgo', 'Por qué está aquí', 'Acción'].map(
-                    (h) => (
-                      <th
-                        key={h}
-                        className="px-6 py-3 text-[10px] uppercase tracking-[0.14em] font-semibold text-brand-ink/35 border-b border-brand-ink/8"
-                      >
-                        {h}
-                      </th>
-                    ),
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {MOCK.cartera.map((c, i) => {
-                  const score = scoreOf(c.factores);
-                  return (
-                    <motion.tr
-                      key={c.folio}
-                      initial={reduce ? false : { opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{
-                        duration: 0.3,
-                        delay: reduce ? 0 : 0.12 + i * 0.05,
-                        ease: EASE,
-                      }}
-                      className="group border-b border-brand-ink/6 last:border-0 hover:bg-brand-cream/60 transition-colors"
-                    >
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="text-[11px] tabular-nums text-brand-ink/25 w-3">
-                            {i + 1}
-                          </span>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold text-brand-ink whitespace-nowrap">
-                                {c.cliente}
-                              </span>
-                              <SegmentoChip cuenta={viva.find((v) => v.cliente === c.cliente)!} />
-                            </div>
-                            <div className="text-[10px] text-brand-ink/35 font-mono mt-0.5">
-                              {c.folio}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-base font-serif text-brand-ink tabular-nums whitespace-nowrap">
-                        {CURRENCY_FORMATTER.format(c.monto)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className="text-base font-serif text-brand-ink tabular-nums">
-                          {c.diasVencido}
-                        </span>
-                        <span className="text-[11px] text-brand-ink/40 ml-1.5">días</span>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <TrendIcon tendencia={c.tendencia} />
-                          <RiskChip score={score} />
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 min-w-[240px] max-w-[300px]">
-                        <p className="text-xs text-brand-ink/55 leading-relaxed">{c.razon}</p>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span
-                          className={`audit-badge whitespace-nowrap ${URGENCIA_STYLES[c.urgencia]}`}
-                        >
-                          {c.accion}
-                        </span>
-                      </td>
-                    </motion.tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </Reveal>
-    </div>
+    <StatRow>
+      <MiniStat label="Para atender hoy" value="" numeric={hoy.length} sub="clientes con un paso que toca hoy" />
+      <MiniStat label="Monto en juego" value="" numeric={montoHoy} format="moneda" sub="saldo de los clientes de hoy" />
+      <MiniStat
+        label="Cartera vencida"
+        value=""
+        numeric={vencida}
+        format="moneda"
+        sub={`${porCobrar ? Math.round((vencida / porCobrar) * 100) : 0}% de lo que está por cobrar`}
+      />
+      <MiniStat label="Requieren humano" value="" numeric={humano} sub="hoy toca llamada, no mensaje" accent />
+    </StatRow>
   );
 }
 
-// ─── 2 · Alertas ─────────────────────────────────────────────────────
 
 const SEVERIDAD = {
   critica: { rail: 'bg-rose-500', chip: 'bg-rose-50 text-rose-700', label: 'Crítica' },
@@ -1710,7 +1611,7 @@ function MiniStat({
   numeric?: number;
 }) {
   return (
-    <div className="px-5 py-4 first:pl-0">
+    <div className="px-5 py-4">
       <div className="text-[10px] uppercase tracking-[0.16em] font-semibold text-brand-ink/35">
         {label}
       </div>
@@ -1755,14 +1656,6 @@ function RiskChip({ score }: { score: number }) {
       {score}
     </span>
   );
-}
-
-function TrendIcon({ tendencia }: { tendencia: 'sube' | 'baja' | 'estable' }) {
-  if (tendencia === 'sube')
-    return <TrendingUp size={13} className="text-rose-500" aria-label="Riesgo al alza" />;
-  if (tendencia === 'baja')
-    return <TrendingDown size={13} className="text-emerald-600" aria-label="Riesgo a la baja" />;
-  return <ArrowRight size={13} className="text-brand-ink/25" aria-label="Riesgo estable" />;
 }
 
 function CompareRow({
