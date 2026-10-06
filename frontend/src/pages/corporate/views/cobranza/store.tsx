@@ -8,6 +8,9 @@ import {
   PASOS_CAMPANA,
   RESPUESTAS_SIM,
   TOQUES_INICIALES,
+  PAGOS_INICIALES,
+  SYNC_ERP_SIM,
+  ZIP_REP_SIM,
   audiencia,
   diagnosticoDe,
   gestion,
@@ -17,6 +20,7 @@ import {
   type CuentaCartera,
   type Diagnostico,
   type Gestion,
+  type Pago,
   type PasoId,
   type Resultado,
   type Segmento,
@@ -36,10 +40,12 @@ export const HORA_ACTUAL = '11:24';
 type Envio = { paso: PasoId; canal: string; origen: string; hora: string };
 export type Toque = { campanaId: string; campana: string; plantilla: string; hora: string; respuesta?: string };
 export type Tarea = { campana: string; motivo: string };
+export type NoReconocido = { uuid: string; rfc: string; nombre: string; monto: number; fecha: string };
 export type CambioSegmento = { cliente: string; de: Segmento; a: Segmento; motivo: string; hora: string };
 
 /** Cuenta tal como la ven los 3 perfiles: con segmento, agente y lo hecho hoy. */
 export type CuentaViva = CuentaCartera & {
+  saldada: boolean;
   segmento: Segmento;
   diagnostico: Diagnostico;
   segmentoManual?: { motivo: string };
@@ -54,6 +60,16 @@ type Store = {
   toques: Record<string, Toque[]>;
   tareas: Record<string, Tarea>;
   cambiosSegmento: CambioSegmento[];
+  pagos: Pago[];
+  noReconocidos: NoReconocido[];
+  erp: { ultima: string; sincronizado: boolean };
+  zipCargado: boolean;
+  sincronizarErp: () => string;
+  subirRep: () => string;
+  resolverDiscrepancia: (id: string, usar: 'ERP' | 'REP') => void;
+  avisarRep: (id: string) => void;
+  marcarEnErp: (id: string) => void;
+  descartarNoReconocido: (uuid: string) => void;
   reasignar: (id: string, agente: Agente) => void;
   agregarContacto: (id: string, f: NonNullable<CuentaCartera['finanzas']>) => void;
   cambiarSegmento: (id: string, segmento: Segmento | null, motivo: string) => void;
@@ -84,6 +100,10 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   const [tareas, setTareas] = React.useState<Record<string, Tarea>>({});
   const [campanas, setCampanas] = React.useState<Campana[]>(CAMPANAS);
   const [bitacora, setBitacora] = React.useState<Gestion[]>([]);
+  const [pagos, setPagos] = React.useState<Pago[]>(PAGOS_INICIALES);
+  const [noReconocidos, setNoReconocidos] = React.useState<NoReconocido[]>([]);
+  const [erp, setErp] = React.useState({ ultima: 'hoy 06:00', sincronizado: false });
+  const [zipCargado, setZipCargado] = React.useState(false);
 
   const cartera: CuentaViva[] = React.useMemo(
     () =>
@@ -98,8 +118,12 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
           const actual = construirPlan(planConfig(c, segmento)).actual;
           if (actual) res[actual.id] = resultadosHoy[c.id];
         }
+        // El saldo sale de sumar los pagos aplicados (ERP y/o REP).
+        const pagado = pagos.filter((p) => p.cuentaId === c.id).reduce((a, p) => a + p.monto, 0);
         return {
           ...c,
+          pagado,
+          saldada: c.monto - pagado <= 1, // tolerancia de centavos
           agente: agentes[c.id] ?? c.agente,
           finanzas: contactos[c.id] ?? c.finanzas,
           resultados: res,
@@ -108,11 +132,11 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
           segmentoManual: manual ? { motivo: manual.motivo } : undefined,
         };
       }),
-    [agentes, contactos, segManual, envios, resultadosHoy],
+    [agentes, contactos, segManual, envios, resultadosHoy, pagos],
   );
 
-  const anotar = (c: CuentaViva, r: Resultado) =>
-    setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, r), agente: c.agente }]);
+  const anotar = (c: CuentaViva, r: Resultado, monto?: number) =>
+    setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, r, monto), agente: c.agente }]);
 
   // Lanzar hoy: a cada cuenta contactable de la audiencia se le manda el
   // nivel/etapa elegido en la campaña (y queda marcado en su plan).
@@ -146,6 +170,62 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
 
   const value: Store = {
     cartera,
+    pagos,
+    noReconocidos,
+    erp,
+    zipCargado,
+    // Sincronización del ERP: compara saldos y registra la diferencia como pago.
+    sincronizarErp: () => {
+      setErp({ ultima: `hoy ${HORA_ACTUAL}`, sincronizado: true });
+      if (erp.sincronizado) return 'Sin cambios: ningún saldo se movió desde la última sincronización.';
+      setPagos((ps) => [SYNC_ERP_SIM, ...ps]);
+      const c = cartera.find((x) => x.id === SYNC_ERP_SIM.cuentaId)!;
+      anotar(c, 'Pagó', SYNC_ERP_SIM.monto);
+      return `1 pago nuevo: ${c.cliente} pagó $60,000. Queda saldo de $66,300 y la cobranza sigue sobre eso.`;
+    },
+    // ZIP de REP: cada complemento se empata por UUID con su factura.
+    subirRep: () => {
+      if (zipCargado) return 'Ese ZIP ya se había procesado: no se duplicó ningún pago.';
+      setZipCargado(true);
+      const z = ZIP_REP_SIM;
+      const lumen = cartera.find((x) => x.id === z.nuevo.cuentaId)!;
+      setPagos((ps) => [
+        {
+          id: 'p7', cuentaId: z.nuevo.cuentaId, monto: z.nuevo.monto, fechaPago: z.nuevo.fechaPago, metodo: 'PPD', estado: 'solo_rep', parcialidad: 1,
+          nota: 'El ERP todavía no lo refleja: se avisó a contabilidad para aplicarlo en Odoo.',
+          evidencias: [{ fuente: 'REP', fecha: `hoy ${HORA_ACTUAL}`, texto: `REP ${z.nuevo.uuid} · liquida la factura · vigente en el SAT` }],
+        },
+        ...ps.map((p): Pago => {
+          if (p.cuentaId === z.confirma.cuentaId && p.estado === 'solo_erp')
+            return { ...p, estado: 'confirmado', limiteRep: undefined, evidencias: [...p.evidencias, { fuente: 'REP', fecha: `hoy ${HORA_ACTUAL}`, texto: `REP ${z.confirma.uuid} · parcialidad 1 · coincide con el ERP` }] };
+          if (p.cuentaId === z.discrepa.cuentaId && p.estado === 'solo_erp')
+            return { ...p, estado: 'discrepancia', montoRep: z.discrepa.monto, limiteRep: undefined, evidencias: [...p.evidencias, { fuente: 'REP', fecha: `hoy ${HORA_ACTUAL}`, texto: `REP ${z.discrepa.uuid} · dice $78,000 y el ERP $78,100` }] };
+          return p;
+        }),
+      ]);
+      setNoReconocidos((n) => [...n, z.desconocido]);
+      anotar(lumen, 'Pagó', z.nuevo.monto);
+      return '4 REP leídos: 1 confirmó un pago, 1 liquidó una factura que el ERP aún no tenía, 1 no cuadra y 1 no corresponde a ninguna factura.';
+    },
+    resolverDiscrepancia: (id, usar) =>
+      setPagos((ps) =>
+        ps.map((p) =>
+          p.id === id
+            ? { ...p, estado: 'confirmado', monto: usar === 'REP' ? (p.montoRep ?? p.monto) : p.monto, nota: usar === 'REP' ? 'Se usó el monto del REP; el saldo de la factura se ajustó.' : 'Se mantuvo el monto del ERP; contabilidad corregirá el REP.' }
+            : p,
+        ),
+      ),
+    avisarRep: (id) => setPagos((ps) => ps.map((p) => (p.id === id ? { ...p, avisado: true } : p))),
+    // Contabilidad registró en el ERP un pago que solo conocíamos por su REP.
+    marcarEnErp: (id) =>
+      setPagos((ps) =>
+        ps.map((p) =>
+          p.id === id
+            ? { ...p, estado: 'confirmado', nota: undefined, evidencias: [...p.evidencias, { fuente: 'ERP', fecha: `hoy ${HORA_ACTUAL}`, texto: 'Contabilidad lo aplicó en el ERP: ya coinciden' }] }
+            : p,
+        ),
+      ),
+    descartarNoReconocido: (uuid) => setNoReconocidos((n) => n.filter((x) => x.uuid !== uuid)),
     campanas,
     gestiones: [...GESTIONES, ...bitacora],
     envios,

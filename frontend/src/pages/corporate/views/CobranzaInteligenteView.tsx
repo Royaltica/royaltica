@@ -30,7 +30,8 @@ import { AgenteVista } from './cobranza/AgenteVista.tsx';
 import { CampanasPanel } from './cobranza/CampanasPanel.tsx';
 import { PlantillasPanel } from './cobranza/PlantillasPanel.tsx';
 import { ReportesPanel } from './cobranza/ReportesPanel.tsx';
-import { DatosPagosPanel, AsignacionPanel, AvisoT1 } from './cobranza/DatosPagosPanel.tsx';
+import { DatosPagosPanel, AsignacionPanel } from './cobranza/DatosPagosPanel.tsx';
+import { PagosPanel, AvisoPagos } from './cobranza/PagosPanel.tsx';
 import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
 
 /**
@@ -53,6 +54,7 @@ type Section =
   | 'plantillas'
   | 'reportes'
   | 'datos'
+  | 'pagos'
   | 'estrategias'
   | 'segmentos'
   | 'equipo';
@@ -64,7 +66,8 @@ const LABEL: Record<Section, string> = {
   campanas: 'Campañas',
   plantillas: 'Plantillas',
   reportes: 'Reportes',
-  datos: 'Datos y pagos',
+  datos: 'Datos',
+  pagos: 'Pagos',
   estrategias: 'Estrategias',
   segmentos: 'Segmentos',
   equipo: 'Equipo',
@@ -74,10 +77,10 @@ const LABEL: Record<Section, string> = {
 // El Agente no tiene pestañas: una sola lista (ver AgenteVista).
 const SECCIONES_POR_ROL: Record<Exclude<Rol, 'agente'>, Section[][]> = {
   admin: [
-    ['prioridades', 'alertas', 'recordatorios', 'campanas'],
+    ['prioridades', 'alertas', 'recordatorios', 'campanas', 'pagos'],
     ['segmentos', 'plantillas', 'reportes', 'datos', 'estrategias', 'equipo'],
   ],
-  supervisor: [['prioridades', 'recordatorios', 'campanas', 'equipo'], ['segmentos', 'reportes']],
+  supervisor: [['prioridades', 'recordatorios', 'campanas', 'pagos', 'equipo'], ['segmentos', 'reportes']],
 };
 
 const ENCABEZADO: Record<Rol, { titulo: string; texto: string }> = {
@@ -453,7 +456,7 @@ function CobranzaIA() {
             ))}
           </nav>
           <div className="mt-3">
-            <AvisoT1 onIr={rol === 'admin' ? () => setSection('datos') : undefined} />
+            <AvisoPagos onIr={() => setSection('pagos')} />
           </div>
         </Reveal>
       )}
@@ -479,6 +482,7 @@ function CobranzaIA() {
             {section === 'plantillas' && <PlantillasPanel />}
             {section === 'reportes' && <ReportesPanel soloEquipo={rol === 'supervisor'} />}
             {section === 'datos' && <DatosPagosPanel />}
+            {section === 'pagos' && <PagosPanel soloLectura={rol === 'supervisor'} />}
             {section === 'estrategias' && <EstrategiasPanel />}
             {section === 'segmentos' && <SegmentosPanel />}
             {section === 'equipo' && (
@@ -813,6 +817,9 @@ function RecordatoriosPanel() {
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-sm font-semibold text-brand-ink truncate">{r.cliente}</span>
                         <SegmentoChip cuenta={cartera.find((c) => c.cliente === r.cliente)!} />
+                        {cartera.find((c) => c.cliente === r.cliente)!.saldada && (
+                          <span className="audit-badge bg-emerald-50 text-emerald-700">Saldada</span>
+                        )}
                       </div>
                       {pasoActual && (
                         <div className="flex items-center gap-1.5 mt-1.5">

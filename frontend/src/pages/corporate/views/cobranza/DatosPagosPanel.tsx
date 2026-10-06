@@ -1,157 +1,20 @@
 import React from 'react';
-import { AlertTriangle, Check, Database, Upload, X } from 'lucide-react';
+import { AlertTriangle, Check, Database, Upload } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { Reveal, BlockTitle } from './primitives.tsx';
-import { MOVIMIENTOS, AGENTES, saldoDe, type Agente } from './mockV1.ts';
+import { AGENTES, saldoDe, type Agente } from './mockV1.ts';
 import { useCobranza } from './store.tsx';
 
 /**
- * Administrador / Data: cargar y administrar la base, validar pagos y
- * asegurar el contacto de finanzas de cada cliente.
+ * Administrador / Data: cargar y administrar la base y asegurar el contacto
+ * de finanzas de cada cliente. Los pagos viven en la pestaña Pagos.
  */
 export function DatosPagosPanel() {
   return (
-    <div className="space-y-5">
-      <PagosT1 />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        <CargaCartera />
-        <ContactosFinanzas />
-      </div>
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <CargaCartera />
+      <ContactosFinanzas />
     </div>
-  );
-}
-
-// ── Pagos: esquema T+1 y validación manual ─────────────────────────────
-
-/** Franja compacta para el encabezado: cuándo se actualizaron los pagos. */
-export function AvisoT1({ onIr }: { onIr?: () => void }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-brand-ink/55">
-      <span className="flex items-center gap-1.5">
-        <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-        Pagos al corte de ayer (T+1)
-      </span>
-      <span className="text-brand-ink/35">Sin conexión bancaria directa</span>
-      {onIr && (
-        <button onClick={onIr} className="font-semibold text-brand-ink/70 hover:text-brand-ink underline-offset-2 hover:underline">
-          Validar movimientos de hoy →
-        </button>
-      )}
-    </div>
-  );
-}
-
-function PagosT1() {
-  const [pendientes, setPendientes] = React.useState(MOVIMIENTOS);
-  const [aplicados, setAplicados] = React.useState<string[]>([]);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-
-  const resolver = (id: string, aplicar: boolean) => {
-    const m = pendientes.find((x) => x.id === id);
-    setPendientes((p) => p.filter((x) => x.id !== id));
-    if (aplicar && m) setAplicados((a) => [`${m.sugerencia ?? m.referencia} · ${CURRENCY_FORMATTER.format(m.monto)}`, ...a]);
-  };
-
-  return (
-    <Reveal>
-      <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="max-w-[62ch]">
-            <BlockTitle>Actualización de pagos</BlockTitle>
-            <p className="text-sm text-brand-ink/65 leading-relaxed mt-2">
-              Sin conexión bancaria directa, los pagos se reflejan <span className="font-semibold text-brand-ink">al día hábil siguiente (T+1)</span>, cuando el banco entrega el estado de cuenta. Para no esperar, el área contable puede cargar los movimientos de hoy y validarlos aquí.
-            </p>
-          </div>
-          <div className="flex gap-2 shrink-0">
-            <button
-              disabled
-              title="Próximamente"
-              className="px-3 py-2 rounded-xl border border-brand-ink/12 text-[12px] font-semibold text-brand-ink/40 cursor-not-allowed"
-            >
-              Conectar banco
-            </button>
-            <button
-              onClick={() => inputRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold hover:bg-brand-ink/85 transition-colors"
-            >
-              <Upload size={13} /> Cargar movimientos
-            </button>
-            <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={() => {}} />
-          </div>
-        </div>
-
-        {/* Línea de tiempo del T+1 */}
-        <div className="grid grid-cols-3 gap-2 mt-5">
-          {[
-            ['Día 0', 'El cliente paga'],
-            ['Día 1', 'El banco lo reporta'],
-            ['Día 1', 'Royáltica lo concilia'],
-          ].map(([d, t], i) => (
-            <div key={i} className="rounded-2xl bg-brand-bone/60 border border-brand-ink/6 px-4 py-3">
-              <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40">{d}</div>
-              <div className="text-[13px] font-semibold text-brand-ink mt-0.5">{t}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-5">
-          <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40 mb-2">
-            Movimientos por validar · {pendientes.length}
-          </div>
-          <div className="divide-y divide-brand-ink/6 border border-brand-ink/8 rounded-2xl overflow-hidden">
-            {pendientes.map((m) => (
-              <div key={m.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="text-[12px] font-mono text-brand-ink/60 truncate">{m.referencia}</div>
-                  <div className="text-sm mt-0.5">
-                    {m.sugerencia ? (
-                      <span className="text-brand-ink">
-                        {m.sugerencia}{' '}
-                        <span className={m.confianza === 'alta' ? 'text-emerald-700' : 'text-amber-700'}>
-                          · coincidencia {m.confianza}
-                        </span>
-                      </span>
-                    ) : (
-                      <span className="text-rose-600">Sin coincidencia · asignar manualmente</span>
-                    )}
-                  </div>
-                </div>
-                <span className="text-sm font-semibold tabular-nums text-brand-ink">{CURRENCY_FORMATTER.format(m.monto)}</span>
-                <span className="text-[11px] text-brand-ink/40">{m.fecha}</span>
-                <div className="flex gap-1.5">
-                  <button
-                    onClick={() => resolver(m.id, true)}
-                    disabled={!m.sugerencia}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold disabled:opacity-30"
-                  >
-                    <Check size={12} /> Aplicar
-                  </button>
-                  <button
-                    onClick={() => resolver(m.id, false)}
-                    aria-label="Descartar"
-                    className="px-2 py-1.5 rounded-lg border border-brand-ink/12 text-brand-ink/50 hover:bg-brand-bone"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              </div>
-            ))}
-            {pendientes.length === 0 && (
-              <div className="px-4 py-5 text-sm text-brand-ink/45">Todo validado. Los pagos aplicados ya se ven hoy.</div>
-            )}
-          </div>
-          {aplicados.length > 0 && (
-            <ul className="mt-3 space-y-1">
-              {aplicados.map((a) => (
-                <li key={a} className="flex items-center gap-2 text-[12px] text-emerald-700">
-                  <Check size={12} /> {a} · aplicado, se refleja hoy
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </Reveal>
   );
 }
 

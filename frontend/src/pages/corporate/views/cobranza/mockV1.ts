@@ -378,7 +378,7 @@ export function audiencia(cfg: CampanaConfig, cartera: (CuentaCartera & { segmen
     if (cfg.segmentos.length && !cfg.segmentos.includes(segmento)) continue;
     if (cfg.agentes.length && !cfg.agentes.includes(c.agente)) continue;
     if (cfg.lineas.length && !cfg.lineas.includes(c.linea)) continue;
-    if (saldoDe(c) < cfg.montoMin) continue;
+    if (saldoDe(c) <= 1 || saldoDe(c) < cfg.montoMin) continue; // saldadas no entran
     const paso = PASOS_CAMPANA.includes(cfg.plantilla)
       ? construirPlan(planConfig(c, segmento)).pasos.find((p) => p.id === cfg.plantilla)
       : undefined;
@@ -448,21 +448,81 @@ export const GESTIONES: Gestion[] = [
   gestion('2026-09-27', '08:30', 'Papelera Industrial Sur', 'No gestionada'),
 ];
 
-// ── Pagos: movimientos bancarios por validar (T+1) ─────────────────────
-export type Movimiento = {
+// ── Pagos: conciliación con ERP y REP ──────────────────────────────────
+// Un pago real se guarda UNA vez, con la lista de dónde se vio (evidencias):
+// el ERP es la señal rápida y el REP (complemento de pago) la confirmación
+// fiscal. La fecha oficial del pago es la del REP. El saldo de cada factura
+// sale de sumar sus pagos: por eso estos montos cuadran con `pagado` arriba.
+
+export type Fuente = 'ERP' | 'REP';
+export type Evidencia = { fuente: Fuente; fecha: string; texto: string };
+export type EstadoPago = 'confirmado' | 'solo_erp' | 'solo_rep' | 'discrepancia';
+
+export type Pago = {
   id: string;
-  fecha: string;
-  referencia: string;
+  cuentaId: string;
   monto: number;
-  sugerencia: string | null;
-  confianza: 'alta' | 'media' | 'baja';
+  fechaPago: string;
+  metodo: 'PPD' | 'PUE';
+  estado: EstadoPago;
+  evidencias: Evidencia[];
+  parcialidad?: number;
+  /** Para pagos PPD vistos solo en el ERP: fecha límite para emitir el REP. */
+  limiteRep?: string;
+  diasRep?: number;
+  avisado?: boolean;
+  montoRep?: number;
+  nota?: string;
 };
 
-export const MOVIMIENTOS: Movimiento[] = [
-  { id: 'm1', fecha: '27 sep', referencia: 'SPEI 8841207 LOGISTICA ANDRADE', monto: 15_700, sugerencia: 'Logística Andrade · F-2915 (liquida)', confianza: 'alta' },
-  { id: 'm2', fecha: '27 sep', referencia: 'DEP 00392 MAT PENINSULARES', monto: 39_050, sugerencia: 'Materiales Peninsulares · F-2903 (parcial)', confianza: 'media' },
-  { id: 'm3', fecha: '26 sep', referencia: 'SPEI 7712093 SIN REFERENCIA', monto: 12_400, sugerencia: null, confianza: 'baja' },
+export const ERP_CONECTADO = { nombre: 'Odoo', ultima: 'hoy 06:00', siguiente: 'hoy 18:00' };
+
+export const PAGOS_INICIALES: Pago[] = [
+  {
+    id: 'p1', cuentaId: 'k01', monto: 85_350, fechaPago: '10 sep', metodo: 'PPD', estado: 'confirmado', parcialidad: 1,
+    evidencias: [
+      { fuente: 'ERP', fecha: '11 sep', texto: 'Odoo: el saldo bajó de $284,500 a $199,150' },
+      { fuente: 'REP', fecha: '18 sep', texto: 'REP 7c41…e2a0 · parcialidad 1 · vigente en el SAT' },
+    ],
+  },
+  {
+    id: 'p2', cuentaId: 'k02', monto: 78_100, fechaPago: '5 sep', metodo: 'PPD', estado: 'solo_erp', parcialidad: 1,
+    limiteRep: '10 oct', diasRep: 12,
+    evidencias: [{ fuente: 'ERP', fecha: '6 sep', texto: 'Odoo: el saldo bajó de $156,200 a $78,100' }],
+  },
+  {
+    id: 'p3', cuentaId: 'k04', monto: 47_100, fechaPago: '22 sep', metodo: 'PPD', estado: 'confirmado', parcialidad: 1,
+    evidencias: [
+      { fuente: 'ERP', fecha: '23 sep', texto: 'Odoo: el saldo bajó de $62,800 a $15,700' },
+      { fuente: 'REP', fecha: '25 sep', texto: 'REP 1b9d…44f3 · parcialidad 1 · vigente en el SAT' },
+    ],
+  },
+  {
+    id: 'p4', cuentaId: 'k05', monto: 123_600, fechaPago: '15 sep', metodo: 'PPD', estado: 'solo_erp', parcialidad: 1,
+    limiteRep: '10 oct', diasRep: 12,
+    evidencias: [{ fuente: 'ERP', fecha: '16 sep', texto: 'Odoo: el saldo bajó de $412,000 a $288,400' }],
+  },
+  {
+    id: 'p5', cuentaId: 'k13', monto: 20_000, fechaPago: '24 sep', metodo: 'PUE', estado: 'confirmado',
+    nota: 'Factura PUE: no lleva REP, el ERP es la única fuente.',
+    evidencias: [{ fuente: 'ERP', fecha: '25 sep', texto: 'Odoo: el saldo bajó de $83,500 a $63,500' }],
+  },
 ];
+
+/** Lo que trae la siguiente sincronización del ERP (simulada). */
+export const SYNC_ERP_SIM: Pago = {
+  id: 'p6', cuentaId: 'k07', monto: 60_000, fechaPago: '27 sep', metodo: 'PPD', estado: 'solo_erp', parcialidad: 1,
+  limiteRep: '10 oct', diasRep: 12,
+  evidencias: [{ fuente: 'ERP', fecha: 'hoy 11:24', texto: 'Odoo: el saldo bajó de $126,300 a $66,300' }],
+};
+
+/** Lo que trae el ZIP de REP (simulado): un caso de cada tipo. */
+export const ZIP_REP_SIM = {
+  confirma: { cuentaId: 'k05', uuid: 'a83f…19c2', fecha: '27 sep', monto: 123_600 },
+  discrepa: { cuentaId: 'k02', uuid: '5e07…b7d1', fecha: '26 sep', monto: 78_000 },
+  nuevo: { cuentaId: 'k06', uuid: 'd2c5…0a6e', fecha: '27 sep', fechaPago: '26 sep', monto: 74_300 },
+  desconocido: { uuid: 'f914…3b88', rfc: 'TME150312AB4', nombre: 'Textiles Mérida SA de CV', monto: 18_500, fecha: '27 sep' },
+};
 
 // ── Respuestas simuladas a campañas ─────────────────────────────────────
 // Al lanzar una campaña, estos clientes "contestan" para que el agente vea

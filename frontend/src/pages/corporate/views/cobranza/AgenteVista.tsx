@@ -31,7 +31,8 @@ export function AgenteVista() {
   const [pestana, setPestana] = React.useState<Pestana>('cuentas');
   const reduce = useReducedMotion();
 
-  const mias = cartera.filter((c) => c.agente === agente);
+  // Una factura saldada ya no se cobra: sale de la lista del agente.
+  const mias = cartera.filter((c) => c.agente === agente && !c.saldada);
   const listas = mias.filter((c) => resultadosHoy[c.id]);
   const ahora = mias.filter((c) => c.contactable && !resultadosHoy[c.id]).length;
   const avance = mias.length ? Math.round((listas.length / mias.length) * 100) : 0;
