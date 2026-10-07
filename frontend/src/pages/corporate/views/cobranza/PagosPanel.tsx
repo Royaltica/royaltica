@@ -17,7 +17,7 @@ import { useCobranza, type CuentaViva } from './store.tsx';
  */
 const ESTADOS: Record<EstadoPago, { label: string; chip: string }> = {
   confirmado: { label: 'Confirmado · ERP y REP', chip: 'bg-emerald-50 text-emerald-700' },
-  solo_erp: { label: 'Solo ERP · falta REP', chip: 'bg-sky-50 text-sky-700' },
+  solo_erp: { label: 'Falta REP', chip: 'bg-sky-50 text-sky-700' },
   solo_rep: { label: 'Solo REP · falta en ERP', chip: 'bg-amber-50 text-amber-700' },
   discrepancia: { label: 'No cuadra', chip: 'bg-rose-50 text-rose-700' },
 };
@@ -25,6 +25,7 @@ const ESTADOS: Record<EstadoPago, { label: string; chip: string }> = {
 const FUENTE_CHIP: Record<Fuente, string> = {
   ERP: 'bg-sky-100 text-sky-800',
   REP: 'bg-emerald-100 text-emerald-800',
+  CSV: 'bg-violet-100 text-violet-800',
 };
 
 const fmt = (n: number) => CURRENCY_FORMATTER.format(n);
@@ -59,6 +60,8 @@ export function PagosPanel({ soloLectura = false }: { soloLectura?: boolean }) {
     noReconocidos,
     erp,
     zipCargado,
+    csvCargado,
+    subirCsv,
     sincronizarErp,
     subirRep,
     resolverDiscrepancia,
@@ -71,6 +74,7 @@ export function PagosPanel({ soloLectura = false }: { soloLectura?: boolean }) {
   const [abierto, setAbierto] = React.useState<string | null>(null);
   const reduce = useReducedMotion();
   const inputRef = React.useRef<HTMLInputElement>(null);
+  const csvRef = React.useRef<HTMLInputElement>(null);
 
   const cuenta = (id: string) => cartera.find((c) => c.id === id)!;
   const cobrado = pagos.reduce((a, p) => a + p.monto, 0);
@@ -95,7 +99,7 @@ export function PagosPanel({ soloLectura = false }: { soloLectura?: boolean }) {
   return (
     <div className="space-y-5">
       {/* Fuentes: qué hace cada una y su estado */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Reveal>
           <TarjetaFuente
             titulo={`ERP · ${ERP_CONECTADO.nombre}`}
@@ -149,6 +153,40 @@ export function PagosPanel({ soloLectura = false }: { soloLectura?: boolean }) {
               )
             }
             mensaje={mensaje?.fuente === 'REP' ? mensaje.texto : null}
+          />
+        </Reveal>
+        <Reveal delay={0.1}>
+          <TarjetaFuente
+            titulo="CSV · reporte de cartera"
+            etiqueta="Sin integración"
+            color="violet"
+            texto="Para ERPs sin conexión: sube el reporte de facturas con su saldo. Royáltica lo compara con el anterior y registra los pagos y las facturas nuevas."
+            dato={csvCargado ? 'Último reporte: hoy, 14 facturas' : 'Último reporte: 21 sep, 13 facturas'}
+            tiempo="Cada vez que lo subas (sugerido: diario o semanal)"
+            boton={
+              soloLectura ? null : (
+                <>
+                  <BotonAccion onClick={() => csvRef.current?.click()} cargando={cargando === 'CSV'} icon={<Upload size={13} />}>
+                    Subir CSV
+                  </BotonAccion>
+                  {/* Mockup: cualquier archivo dispara la simulación. */}
+                  <input
+                    ref={csvRef}
+                    type="file"
+                    accept=".csv,.xlsx,.xls"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files?.length) correr('CSV', subirCsv);
+                      e.target.value = '';
+                    }}
+                  />
+                  <button onClick={() => correr('CSV', subirCsv)} className="text-[11px] font-semibold text-brand-ink/45 hover:text-brand-ink">
+                    Usar CSV de ejemplo
+                  </button>
+                </>
+              )
+            }
+            mensaje={mensaje?.fuente === 'CSV' ? mensaje.texto : null}
           />
         </Reveal>
       </div>
@@ -255,7 +293,7 @@ export function PagosPanel({ soloLectura = false }: { soloLectura?: boolean }) {
             <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-6">
               <BlockTitle icon={<FileCheck2 size={12} />}>REP pendientes</BlockTitle>
               <p className="text-[12px] text-brand-ink/50 mt-1.5 leading-relaxed">
-                Pagos de facturas PPD que el ERP ya registró y que aún no tienen complemento de pago emitido.
+                Pagos de facturas PPD que ya se registraron (por ERP o CSV) y que aún no tienen complemento de pago emitido.
               </p>
               {repPendientes.length === 0 && <p className="text-sm text-brand-ink/45 mt-3">Todos los pagos tienen su REP.</p>}
               <ul className="mt-3 divide-y divide-brand-ink/6">
@@ -303,15 +341,15 @@ function TarjetaFuente({
 }: {
   titulo: string;
   etiqueta: string;
-  color: 'sky' | 'emerald';
+  color: 'sky' | 'emerald' | 'violet';
   texto: string;
   dato: string;
   tiempo: string;
   boton: React.ReactNode;
   mensaje: string | null;
 }) {
-  const punto = color === 'sky' ? 'bg-sky-500' : 'bg-emerald-500';
-  const chip = color === 'sky' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700';
+  const punto = { sky: 'bg-sky-500', emerald: 'bg-emerald-500', violet: 'bg-violet-500' }[color];
+  const chip = { sky: 'bg-sky-50 text-sky-700', emerald: 'bg-emerald-50 text-emerald-700', violet: 'bg-violet-50 text-violet-700' }[color];
   return (
     <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-6 h-full flex flex-col">
       <div className="flex items-center justify-between gap-3">
@@ -428,7 +466,7 @@ function FilaPago({
                 </li>
                 {p.evidencias.map((e, i) => (
                   <li key={i} className="pl-4 text-[12px]">
-                    <span className={`absolute -left-[4px] mt-1.5 w-2 h-2 rounded-full ${e.fuente === 'ERP' ? 'bg-sky-500' : 'bg-emerald-500'}`} />
+                    <span className={`absolute -left-[4px] mt-1.5 w-2 h-2 rounded-full ${{ ERP: 'bg-sky-500', REP: 'bg-emerald-500', CSV: 'bg-violet-500' }[e.fuente]}`} />
                     <span className="text-brand-ink/45">{e.fecha}</span> ·{' '}
                     <span className={`text-[10px] font-semibold px-1 py-0.5 rounded ${FUENTE_CHIP[e.fuente]}`}>{e.fuente}</span>{' '}
                     <span className="text-brand-ink/75">{e.texto}</span>

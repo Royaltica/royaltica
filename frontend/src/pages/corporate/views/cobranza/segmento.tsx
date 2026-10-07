@@ -196,6 +196,9 @@ function ClientesSegmento({ lista }: { lista: CuentaViva[] }) {
               <div className="text-sm font-semibold text-brand-ink">
                 {c.cliente}
                 {c.saldada && <span className="ml-2 audit-badge bg-emerald-50 text-emerald-700">Saldada</span>}
+                {c.comportamiento.esperaDescuentos && (
+                  <span className="ml-2 audit-badge bg-rose-50 text-rose-700">Espera descuentos</span>
+                )}
               </div>
               <div className="text-[11px] text-brand-ink/40 mt-0.5">
                 {CURRENCY_FORMATTER.format(saldoDe(c))} por cobrar · {c.agente}

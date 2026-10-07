@@ -3,8 +3,6 @@
 // planes y reportes se derivan de aquí para que los 3 perfiles cuadren.
 // Reemplazar por el API cuando exista el backend del Módulo 2.
 
-import { construirPlan } from './plan.tsx';
-
 export const HOY = '2026-09-28';
 
 export const AGENTES = ['María Jiménez', 'Carlos Mendoza', 'Ana Robles'] as const;
@@ -29,6 +27,15 @@ export type PlanConfig = {
   resultados: Resultados;
 };
 
+export type Factura = {
+  folio: string;
+  monto: number;
+  emision: string;
+  vence: string;
+  dias: number; // respecto al vencimiento (negativo = faltan)
+  planInicio: string | null;
+};
+
 export type CuentaCartera = {
   id: string;
   cliente: string;
@@ -51,6 +58,15 @@ export type CuentaCartera = {
   canal: CanalPreferido;
   cuentaGrande?: boolean; // tono formal, correo con estado de cuenta
   aclaraciones?: boolean; // ha tenido aclaraciones de factura
+  /** Factura en cobro: cuándo se emitió y cuándo arrancó su plan. */
+  emision: string;
+  planInicio: string;
+  /** Otras facturas del cliente que todavía no tienen plan de cobranza. */
+  facturasExtra?: Factura[];
+  /** Campañas especiales (con descuento) en las que terminó pagando. */
+  campanasPagadas?: string[];
+  /** Veces que su cobranza terminó en negociación de un plan de pagos. */
+  negociaciones?: number;
   /** Días de atraso de sus últimas 12 facturas pagadas (negativo = pagó antes). */
   historial: number[];
   promesas: { cumplidas: number; rotas: number };
@@ -63,6 +79,7 @@ export const CARTERA: CuentaCartera[] = [
     agente: 'María Jiménez', linea: 'Materiales', registrado: 'Lic. Arturo Garza · Director general',
     finanzas: { nombre: 'Patricia Salas', puesto: 'Tesorería', telefono: '81 2231 0045' },
     ciudad: 'Monterrey', zona: 'UTC-6', horaLocal: '11:20', contactable: true, canal: 'WhatsApp',
+    emision: '18 jul', planInicio: '18 jul', facturasExtra: [{ folio: 'F-2968', monto: 96_000, emision: '25 sep', vence: '25 oct', dias: -27, planInicio: null }], campanasPagadas: ['Buen Fin 2025'], negociaciones: 1, 
     historial: [0, -2, 0, 1, 0, 0, 3, 0, 0, 12, 18, 25], promesas: { cumplidas: 3, rotas: 1 },
     resultados: { N0: 'Confirmó factura', N1: 'Sin respuesta', N2: 'Respondió', N3: 'Sin respuesta', N4: 'Sin respuesta', A: 'Respondió', B: 'Prometió fecha', C: 'Sin respuesta' },
   },
@@ -71,6 +88,7 @@ export const CARTERA: CuentaCartera[] = [
     agente: 'Ana Robles', linea: 'Materiales', registrado: 'Sr. Manuel Poot · Dueño',
     finanzas: { nombre: 'Jorge Canché', puesto: 'Cuentas por pagar', telefono: '999 214 7730' },
     ciudad: 'Mérida', zona: 'UTC-6', horaLocal: '11:20', contactable: true, canal: 'Correo',
+    emision: '1 ago', planInicio: '1 ago', 
     historial: [0, 0, -1, 0, 0, 0, 0, -2, 0, 0, 9, 16], promesas: { cumplidas: 2, rotas: 0 },
     resultados: { N0: 'Confirmó factura', N1: 'Respondió', N2: 'Sin respuesta', N3: 'Respondió', N4: 'Sin respuesta', A: 'Sin respuesta', B: 'Respondió' },
   },
@@ -78,6 +96,7 @@ export const CARTERA: CuentaCartera[] = [
     id: 'k03', cliente: 'Grupo Ferretero Bajío', folio: 'F-2877', monto: 98_400, pagado: 0, dias: 35, vence: '24 ago',
     agente: 'Carlos Mendoza', linea: 'Materiales', registrado: 'Ing. Raúl Bravo · Director general', finanzas: null,
     ciudad: 'León', zona: 'UTC-6', horaLocal: '11:20', contactable: true, aclaraciones: true, canal: 'WhatsApp',
+    emision: '25 jul', planInicio: '25 jul', campanasPagadas: ['Buen Fin 2025'], negociaciones: 1, 
     historial: [0, -2, 0, -1, 0, 2, -3, 0, -1, 8, 14, 21], promesas: { cumplidas: 1, rotas: 1 },
     resultados: { N0: 'Aclaró factura', N1: 'Sin respuesta', N2: 'Sin respuesta', N3: 'Sin respuesta', N4: 'Sin respuesta', A: 'Sin respuesta', B: 'Sin respuesta', C: 'Sin respuesta' },
   },
@@ -86,6 +105,7 @@ export const CARTERA: CuentaCartera[] = [
     agente: 'Ana Robles', linea: 'Logística', registrado: 'Sr. Tomás Andrade · Dueño',
     finanzas: { nombre: 'Rocío Andrade', puesto: 'Tesorería', telefono: '33 1845 2290' },
     ciudad: 'Guadalajara', zona: 'UTC-6', horaLocal: '11:20', contactable: true, canal: 'WhatsApp',
+    emision: '17 ago', planInicio: '17 ago', 
     historial: [14, 15, 13, 16, 15, 14, 15, 16, 14, 15, 13, 15], promesas: { cumplidas: 4, rotas: 0 },
     resultados: { N0: 'Confirmó factura', N3: 'Respondió', N4: 'Pagó parcial' },
   },
@@ -93,6 +113,7 @@ export const CARTERA: CuentaCartera[] = [
     id: 'k05', cliente: 'Constructora Vanguardia', folio: 'F-2860', monto: 412_000, pagado: 123_600, dias: 19, vence: '9 sep',
     agente: 'María Jiménez', linea: 'Servicios', registrado: 'Arq. Elena Duarte · Directora', finanzas: null,
     ciudad: 'CDMX', zona: 'UTC-6', horaLocal: '11:20', contactable: true, cuentaGrande: true, canal: 'Correo',
+    emision: '10 ago', planInicio: '10 ago', facturasExtra: [{ folio: 'F-2974', monto: 150_000, emision: '26 sep', vence: '26 oct', dias: -28, planInicio: null }], 
     historial: [0, 0, 2, 0, 5, 0, 0, 3, 0, 0, 4, 0], promesas: { cumplidas: 2, rotas: 0 },
     resultados: { N0: 'Confirmó factura', N1: 'Respondió', N2: 'Sin respuesta', N3: 'Sin respuesta', N4: 'Sin respuesta', A: 'Sin respuesta', B: 'Turnado a finanzas' },
   },
@@ -101,6 +122,7 @@ export const CARTERA: CuentaCartera[] = [
     agente: 'Carlos Mendoza', linea: 'Servicios', registrado: 'Lic. Pablo Ortiz · Director',
     finanzas: { nombre: 'Daniela Ortiz', puesto: 'Finanzas', telefono: '55 4410 8812' },
     ciudad: 'CDMX', zona: 'UTC-6', horaLocal: '11:20', contactable: true, canal: 'WhatsApp',
+    emision: '3 sep', planInicio: '3 sep', 
     historial: [], promesas: { cumplidas: 0, rotas: 0 },
     resultados: { N0: 'Confirmó factura', N1: 'Sin respuesta', N2: 'Respondió' },
   },
@@ -109,6 +131,7 @@ export const CARTERA: CuentaCartera[] = [
     agente: 'Ana Robles', linea: 'Logística', registrado: 'Sr. Ernesto Ruiz · Dueño',
     finanzas: { nombre: 'Héctor Ruiz', puesto: 'Tesorería', telefono: '669 118 4402' },
     ciudad: 'Mazatlán', zona: 'UTC-7', horaLocal: '10:20', contactable: true, canal: 'WhatsApp',
+    emision: '22 ago', planInicio: '22 ago', facturasExtra: [{ folio: 'F-2971', monto: 41_800, emision: '27 sep', vence: '27 oct', dias: -29, planInicio: null }], 
     historial: [0, 3, 0, 5, 0, 2, 0, 4, 0, 1, 0, 6], promesas: { cumplidas: 2, rotas: 0 },
     resultados: { N0: 'Confirmó factura', N1: 'Sin respuesta', N2: 'Sin respuesta', N3: 'Sin respuesta', N4: 'Sin respuesta', A: 'Pidió aclaración' },
   },
@@ -117,6 +140,7 @@ export const CARTERA: CuentaCartera[] = [
     agente: 'Ana Robles', linea: 'Materiales', registrado: 'Sr. Luis Méndez · Dueño',
     finanzas: { nombre: 'Laura Méndez', puesto: 'Finanzas', telefono: '33 3627 1190' },
     ciudad: 'Guadalajara', zona: 'UTC-6', horaLocal: '11:20', contactable: true, canal: 'WhatsApp',
+    emision: '1 sep', planInicio: '1 sep', facturasExtra: [{ folio: 'F-2966', monto: 22_400, emision: '15 sep', vence: '15 oct', dias: -17, planInicio: null }], 
     historial: [0, -1, 0, 0, -3, 0, 0, 0, -2, 0, 0, 0], promesas: { cumplidas: 0, rotas: 0 },
     resultados: { N0: 'Confirmó factura' },
   },
@@ -126,6 +150,7 @@ export const CARTERA: CuentaCartera[] = [
     finanzas: { nombre: 'Iván Castro', puesto: 'Tesorería', telefono: '664 902 3318' },
     ciudad: 'Tijuana', zona: 'UTC-8', horaLocal: '8:20', contactable: false, motivo: 'Fuera de horario · se puede desde las 9:00',
     canal: 'WhatsApp',
+    emision: '28 ago', planInicio: '28 ago', 
     historial: [2, 0, 6, 0, 3, 0, 0, 5, 0, 4, 0, 2], promesas: { cumplidas: 1, rotas: 0 },
     resultados: { N0: 'Confirmó factura', N1: 'Sin respuesta', N2: 'Sin respuesta', N3: 'Sin respuesta', N4: 'Sin respuesta' },
   },
@@ -135,6 +160,7 @@ export const CARTERA: CuentaCartera[] = [
     finanzas: { nombre: 'Mónica Leal', puesto: 'Finanzas', telefono: '222 581 7764' },
     ciudad: 'Puebla', zona: 'UTC-6', horaLocal: '11:20', contactable: false, motivo: 'Promesa de pago vigente hasta el 30 sep', promesa: true,
     canal: 'WhatsApp',
+    emision: '11 ago', planInicio: '11 ago', campanasPagadas: ['Buen Fin 2024', 'Buen Fin 2025'], 
     historial: [8, 10, 7, 9, 12, 8, 10, 9, 11, 8, 10, 9], promesas: { cumplidas: 5, rotas: 0 },
     resultados: { N0: 'Confirmó factura', N1: 'Sin respuesta', N2: 'Sin respuesta', N3: 'Sin respuesta', N4: 'Sin respuesta', A: 'Sin respuesta', B: 'Prometió pagar el 30 sep' },
   },
@@ -143,6 +169,7 @@ export const CARTERA: CuentaCartera[] = [
     agente: 'María Jiménez', linea: 'Materiales', registrado: 'Ing. Óscar Pech · Director',
     finanzas: { nombre: 'Karla Pech', puesto: 'Tesorería', telefono: '999 330 1187' },
     ciudad: 'Mérida', zona: 'UTC-6', horaLocal: '11:20', contactable: true, canal: 'Correo',
+    emision: '8 sep', planInicio: '8 sep', 
     historial: [0, 0, 0, -1, 0, 0, 0, 0, 0, -2, 0, 0], promesas: { cumplidas: 0, rotas: 0 },
     resultados: { N0: 'Confirmó factura' },
   },
@@ -151,6 +178,7 @@ export const CARTERA: CuentaCartera[] = [
     agente: 'Carlos Mendoza', linea: 'Materiales', registrado: 'Ing. Sofía Treviño · Directora',
     finanzas: { nombre: 'Rubén Treviño', puesto: 'Tesorería', telefono: '662 219 5540' },
     ciudad: 'Hermosillo', zona: 'UTC-7', horaLocal: '10:20', contactable: true, canal: 'WhatsApp',
+    emision: '16 jun', planInicio: '16 jun', campanasPagadas: ['Cierre de año 2024', 'Buen Fin 2025'], negociaciones: 2, 
     historial: [20, 25, 31, 18, 40, 35, 28, 45, 50, 38, 42, 55], promesas: { cumplidas: 1, rotas: 3 },
     resultados: { N0: 'Sin respuesta', N1: 'Sin respuesta', N2: 'Sin respuesta', N3: 'Sin respuesta', N4: 'Sin respuesta', A: 'Sin respuesta', B: 'Sin respuesta', C: 'Sin respuesta', D: 'No contestó' },
   },
@@ -159,6 +187,7 @@ export const CARTERA: CuentaCartera[] = [
     agente: 'María Jiménez', linea: 'Materiales', registrado: 'Sr. Jaime Ríos · Dueño',
     finanzas: { nombre: 'Norma Ríos', puesto: 'Tesorería', telefono: '81 8340 2201' },
     ciudad: 'Monterrey', zona: 'UTC-6', horaLocal: '11:20', contactable: true, canal: 'WhatsApp',
+    emision: '10 abr', planInicio: '10 abr', campanasPagadas: ['Buen Fin 2024', 'Cierre de año 2024', 'Buen Fin 2025'], negociaciones: 3, 
     historial: [5, 12, 20, 30, 25, 40, 35, 60, 45, 80, 90, 120], promesas: { cumplidas: 1, rotas: 2 },
     resultados: { N0: 'Confirmó factura', N1: 'Sin respuesta', N2: 'Sin respuesta', N3: 'Sin respuesta', N4: 'Sin respuesta', A: 'Sin respuesta', B: 'Respondió', C: 'Sin respuesta', D: 'Plan de pagos incumplido' },
   },
@@ -167,6 +196,7 @@ export const CARTERA: CuentaCartera[] = [
     agente: 'Carlos Mendoza', linea: 'Servicios', registrado: 'Ing. Hugo Salinas · Director',
     finanzas: { nombre: 'Beatriz Salinas', puesto: 'Finanzas', telefono: '868 812 4410' },
     ciudad: 'Matamoros', zona: 'UTC-6', horaLocal: '11:20', contactable: true, disputa: true, cuentaGrande: true, canal: 'Correo',
+    emision: '13 oct 2025', planInicio: '13 oct 2025', negociaciones: 2, 
     historial: [0, 5, 0, 10, 0, 8, 15, 0, 22, 30, 0, 40], promesas: { cumplidas: 1, rotas: 1 },
     resultados: { N0: 'Confirmó factura', N1: 'Sin respuesta', N2: 'Sin respuesta', N3: 'Sin respuesta', N4: 'Sin respuesta', A: 'Sin respuesta', B: 'Sin respuesta', C: 'Sin respuesta', D: 'Disputa abierta' },
   },
@@ -220,6 +250,32 @@ export function segmentoDe(historial: number[], promesas: { rotas: number }, dis
   return { ...base, segmento: 'olvidadizo', porque: `Paga a tiempo el ${pct(aTiempo)}; cuando se atrasa, suele pagar después del recordatorio.` };
 }
 
+// ── Comportamiento ante campañas especiales ────────────────────────────
+// Detecta al cliente que se atrasa a propósito esperando un descuento:
+// pagó en 2+ campañas con descuento Y se atrasa más de 30 días seguido o
+// ya se le negoció varias veces. Sale de las campañas por defecto.
+
+export type Comportamiento = {
+  campanasPagadas: string[];
+  atrasosLargos: number;
+  negociaciones: number;
+  esperaDescuentos: boolean;
+  porque: string;
+};
+
+export function comportamientoDe(c: CuentaCartera): Comportamiento {
+  const campanasPagadas = c.campanasPagadas ?? [];
+  const atrasosLargos = c.historial.filter((d) => d > 30).length;
+  const negociaciones = c.negociaciones ?? 0;
+  const esperaDescuentos = campanasPagadas.length >= 2 && (atrasosLargos >= 2 || negociaciones >= 2);
+  const porque = esperaDescuentos
+    ? `Pagó en ${campanasPagadas.length} campañas con descuento (${campanasPagadas.join(', ')}), tuvo ${atrasosLargos} facturas con más de 30 días de atraso y ${negociaciones} negociaciones. Parece esperar la siguiente campaña para pagar.`
+    : campanasPagadas.length >= 2
+      ? `Pagó en ${campanasPagadas.length} campañas, pero sin atrasos largos ni negociaciones repetidas: no hay señal de que espere descuentos.`
+      : 'Sin señales de que espere campañas con descuento para pagar.';
+  return { campanasPagadas, atrasosLargos, negociaciones, esperaDescuentos, porque };
+}
+
 export const diagnosticoDe = (c: CuentaCartera) => segmentoDe(c.historial, c.promesas, c.disputa);
 /** Segmento que tenía hace 3 facturas: sirve para detectar quién cambió. */
 export const diagnosticoAnterior = (c: CuentaCartera) => segmentoDe(c.historial.slice(0, -3), c.promesas, c.disputa);
@@ -241,20 +297,6 @@ export function planConfig(c: CuentaCartera, segmento?: Segmento): PlanConfig {
 export function planDe(cliente: string): PlanConfig {
   return planConfig(cuentaPorCliente(cliente)!);
 }
-
-// ── Bloques (buckets) por días de vencimiento ──────────────────────────
-export const BUCKETS = [
-  { id: 'prev', rango: 'Por vencer', min: -999, max: 0, tono: 'preventiva', sugerida: 'N2' },
-  { id: 'b1', rango: '1–7 días', min: 1, max: 7, tono: 'temprana', sugerida: 'A' },
-  { id: 'b2', rango: '8–15 días', min: 8, max: 15, tono: 'temprana', sugerida: 'B' },
-  { id: 'b3', rango: '16–30 días', min: 16, max: 30, tono: 'media', sugerida: 'C' },
-  { id: 'b4', rango: '31–60 días', min: 31, max: 60, tono: 'media', sugerida: 'D' },
-  { id: 'b5', rango: '61–90 días', min: 61, max: 90, tono: 'alta', sugerida: 'D' },
-  { id: 'b6', rango: '91–300 días', min: 91, max: 300, tono: 'alta', sugerida: 'D' },
-  { id: 'b7', rango: '+300 días', min: 301, max: 99_999, tono: 'critica', sugerida: 'D' },
-] as const;
-export type Bucket = (typeof BUCKETS)[number];
-export const bucketDe = (dias: number) => BUCKETS.find((b) => dias >= b.min && dias <= b.max)!;
 
 // ── Plantillas aprobadas por etapa ─────────────────────────────────────
 export type Plantilla = {
@@ -288,13 +330,17 @@ export const PLANTILLAS: Plantilla[] = [
     texto: 'Saludar a {{contacto}}, confirmar el saldo de {{monto}} de la factura {{folio}} ({{dias}} días vencida), preguntar su capacidad de pago y ofrecer el plan pre-aprobado (hasta 3 parcialidades). Registrar acuerdo y fecha.' },
   { id: 'S1', etapa: 'Servicio', nombre: 'Validar datos de contacto', canal: 'WhatsApp', grupo: 'Servicio', estado: 'Aprobada',
     texto: 'Hola, {{contacto}}. Estamos actualizando nuestros registros: ¿sigue siendo usted el contacto de pagos de {{cliente}}? Si cambió, ¿nos comparte el nombre de la persona de tesorería?' },
-  { id: 'E1', etapa: 'Especial', nombre: 'Buen Fin · parcialidades sin recargo', canal: 'WhatsApp', grupo: 'Especial', estado: 'Aprobada',
-    texto: '{{contacto}}, del 13 al 16 de noviembre puede liquidar su saldo de {{monto}} en hasta 3 parcialidades sin recargo. Aproveche aquí: {{liga}}.' },
-  { id: 'E2', etapa: 'Especial', nombre: 'Black Friday · descuento por pronto pago', canal: 'WhatsApp', grupo: 'Especial', estado: 'En revisión',
-    texto: '{{contacto}}, solo el 27 de noviembre: liquide su saldo de {{monto}} y obtenga un descuento por pronto pago. Detalles y pago aquí: {{liga}}.' },
+  { id: 'E1', etapa: 'Especial', nombre: 'Buen Fin', canal: 'WhatsApp', grupo: 'Especial', estado: 'Aprobada',
+    texto: '{{contacto}}, del 13 al 16 de noviembre puede liquidar su saldo de {{monto}} con {{oferta}}. Aproveche aquí: {{liga}}.' },
+  { id: 'E2', etapa: 'Especial', nombre: 'Black Friday', canal: 'WhatsApp', grupo: 'Especial', estado: 'En revisión',
+    texto: '{{contacto}}, solo el 27 de noviembre: liquide su saldo de {{monto}} con {{oferta}}. Detalles y pago aquí: {{liga}}.' },
+  { id: 'E3', etapa: 'Especial', nombre: 'Cierre de año', canal: 'Correo', grupo: 'Especial', estado: 'Aprobada',
+    texto: 'Estimados {{cliente}}: para cerrar el año al corriente, del 1 al 20 de diciembre pueden liquidar su saldo de {{monto}} con {{oferta}}. Liga de pago: {{liga}}.' },
+  { id: 'E4', etapa: 'Especial', nombre: 'Oferta especial', canal: 'WhatsApp', grupo: 'Especial', estado: 'Aprobada',
+    texto: '{{contacto}}, por tiempo limitado puede liquidar su saldo de {{monto}} con {{oferta}}. Detalles y pago aquí: {{liga}}.' },
 ];
 
-export function llenarPlantilla(texto: string, c: CuentaCartera): string {
+export function llenarPlantilla(texto: string, c: CuentaCartera, oferta = 'las facilidades de esta campaña'): string {
   const monto = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(saldoDe(c));
   return texto
     .replaceAll('{{cliente}}', c.cliente)
@@ -303,110 +349,75 @@ export function llenarPlantilla(texto: string, c: CuentaCartera): string {
     .replaceAll('{{monto}}', monto)
     .replaceAll('{{fecha}}', c.vence)
     .replaceAll('{{dias}}', String(Math.abs(c.dias)))
+    .replaceAll('{{oferta}}', oferta)
     .replaceAll('{{liga}}', 'pagar.royaltica.com/' + c.folio.toLowerCase());
 }
 
-// ── Campañas ───────────────────────────────────────────────────────────
-export type Momento = 'porVencer' | 'vencidas' | 'todas';
+// ── Campañas: solo fechas especiales ───────────────────────────────────
+// El cobro diario lo hace el plan de cada cliente (niveles 1–4 antes de
+// vencer, etapas A–D después). Las campañas son para fechas especiales y
+// van solo a los clientes que se elijan.
+
+export type Ocasion = 'buen_fin' | 'black_friday' | 'cierre' | 'personalizada' | 'contacto';
+export type Oferta = { tipo: 'descuento' | 'parcialidades' | 'ninguna'; valor: number };
+
+export const OCASIONES: { id: Ocasion; nombre: string; fechas: string; inicio: string; fin: string; plantilla: string; oferta: Oferta }[] = [
+  { id: 'buen_fin', nombre: 'Buen Fin', fechas: '13 al 16 de noviembre', inicio: '2026-11-13', fin: '2026-11-16', plantilla: 'E1', oferta: { tipo: 'parcialidades', valor: 3 } },
+  { id: 'black_friday', nombre: 'Black Friday', fechas: '27 de noviembre', inicio: '2026-11-27', fin: '2026-11-27', plantilla: 'E2', oferta: { tipo: 'descuento', valor: 5 } },
+  { id: 'cierre', nombre: 'Cierre de año', fechas: '1 al 20 de diciembre', inicio: '2026-12-01', fin: '2026-12-20', plantilla: 'E3', oferta: { tipo: 'parcialidades', valor: 2 } },
+  { id: 'personalizada', nombre: 'Fecha personalizada', fechas: 'tú eliges', inicio: HOY, fin: HOY, plantilla: 'E4', oferta: { tipo: 'descuento', valor: 5 } },
+  { id: 'contacto', nombre: 'Validar contactos', fechas: 'cuando quieras', inicio: HOY, fin: HOY, plantilla: 'S1', oferta: { tipo: 'ninguna', valor: 0 } },
+];
+
+export function textoOferta(o: Oferta): string {
+  if (o.tipo === 'descuento') return `${o.valor}% de descuento por pronto pago`;
+  if (o.tipo === 'parcialidades') return `hasta ${o.valor} parcialidades sin recargo`;
+  return '';
+}
 
 export type CampanaConfig = {
-  momento: Momento;
-  buckets: string[]; // vencidas: rangos de atraso (vacío = todos)
-  segmentos: string[]; // vacío = todos
-  agentes: string[]; // vacío = todos
-  lineas: string[]; // vacío = todas
-  montoMin: number;
-  excluirPromesa: boolean;
+  ocasion: Ocasion;
   plantilla: string;
-  canal: 'WhatsApp' | 'Correo';
-  seguimiento: { activo: boolean; dias: number; plantilla: string };
-  oferta: string;
+  oferta: Oferta;
   inicio: string; // YYYY-MM-DD
-  hora: string;
-  horario: [string, string];
-  diasSemana: 'L-V' | 'L-S';
-  maxPorSemana: number;
+  fin: string;
+  canal: 'WhatsApp' | 'Correo';
+  clientes: string[]; // ids de cuenta elegidos
 };
 
 export type Campana = {
   id: string;
   nombre: string;
   config: CampanaConfig;
-  estado: 'Activa' | 'Programada' | 'Pausada' | 'Borrador';
+  estado: 'Activa' | 'Programada' | 'Pausada' | 'Borrador' | 'Finalizada';
   enviados: number;
   respuesta?: number;
+  /** Solo campañas pasadas: quiénes terminaron pagando con la oferta. */
+  pagaron?: string[];
 };
 
-export const CONFIG_BASE: CampanaConfig = {
-  momento: 'porVencer',
-  buckets: [],
-  segmentos: [],
-  agentes: [],
-  lineas: [],
-  montoMin: 0,
-  excluirPromesa: true,
-  plantilla: 'N2',
-  canal: 'WhatsApp',
-  seguimiento: { activo: true, dias: 4, plantilla: 'N3' },
-  oferta: 'Hasta 3 parcialidades sin recargo',
-  inicio: HOY,
-  hora: '09:30',
-  horario: ['09:00', '18:00'],
-  diasSemana: 'L-V',
-  maxPorSemana: 2,
-};
-
-/** Pasos del plan que puede mandar una campaña (el nivel 0 sale solo al emitir). */
-export const PASOS_CAMPANA = ['N1', 'N2', 'N3', 'N4', 'A', 'B', 'C', 'D'];
-
-/** En cobranza temprana, el nivel decide a quién le toca: vencen en N días o menos. */
-export const VENTANA_NIVEL: Record<string, number> = { N1: 14, N2: 7, N3: 3, N4: 0 };
-
-/**
- * Cuentas que entran a una campaña + las que quedan fuera y por qué: sin
- * contacto de finanzas, promesa vigente, o porque el plan de su segmento no
- * incluye ese nivel/etapa (p. ej. a un Puntual no se le manda el nivel 2).
- */
-export function audiencia(cfg: CampanaConfig, cartera: (CuentaCartera & { segmento?: Segmento })[]) {
-  const incluidas: CuentaCartera[] = [];
-  const excluidas: { cuenta: CuentaCartera; motivo: string }[] = [];
-  const pl = PLANTILLAS.find((p) => p.id === cfg.plantilla);
-  for (const c of cartera) {
-    if (cfg.momento === 'porVencer' && !(c.dias <= 0 && c.dias >= -(VENTANA_NIVEL[cfg.plantilla] ?? 14))) continue;
-    if (cfg.momento === 'vencidas' && !(c.dias > 0 && (!cfg.buckets.length || cfg.buckets.includes(bucketDe(c.dias).id)))) continue;
-    const segmento = c.segmento ?? diagnosticoDe(c).segmento;
-    if (cfg.segmentos.length && !cfg.segmentos.includes(segmento)) continue;
-    if (cfg.agentes.length && !cfg.agentes.includes(c.agente)) continue;
-    if (cfg.lineas.length && !cfg.lineas.includes(c.linea)) continue;
-    if (saldoDe(c) <= 1 || saldoDe(c) < cfg.montoMin) continue; // saldadas no entran
-    const paso = PASOS_CAMPANA.includes(cfg.plantilla)
-      ? construirPlan(planConfig(c, segmento)).pasos.find((p) => p.id === cfg.plantilla)
-      : undefined;
-    if (!c.finanzas) excluidas.push({ cuenta: c, motivo: 'Sin contacto de finanzas' });
-    else if (cfg.excluirPromesa && c.promesa) excluidas.push({ cuenta: c, motivo: 'Promesa de pago vigente' });
-    else if (paso?.estado === 'omitido')
-      excluidas.push({ cuenta: c, motivo: `Su plan no incluye ${pl?.etapa ?? 'este paso'} (${SEGMENTOS[segmento].nombre})` });
-    else incluidas.push(c);
-  }
-  return { incluidas, excluidas };
-}
+const OC = (id: Ocasion) => OCASIONES.find((o) => o.id === id)!;
 
 export const CAMPANAS: Campana[] = [
   {
-    id: 'c1', nombre: 'Temprana · Recordatorio de cortesía', estado: 'Activa', enviados: 1, respuesta: 100,
-    config: { ...CONFIG_BASE, momento: 'porVencer', plantilla: 'N2' },
-  },
-  {
-    id: 'c2', nombre: 'Vencidas 16–60 días · Notificación formal', estado: 'Programada', enviados: 0,
-    config: { ...CONFIG_BASE, momento: 'vencidas', buckets: ['b3', 'b4'], plantilla: 'C', canal: 'Correo', inicio: '2026-09-29', hora: '09:00', seguimiento: { activo: true, dias: 5, plantilla: 'D' } },
-  },
-  {
     id: 'c3', nombre: 'Validación de contactos', estado: 'Activa', enviados: 11, respuesta: 27,
-    config: { ...CONFIG_BASE, momento: 'todas', plantilla: 'S1', excluirPromesa: false, seguimiento: { activo: false, dias: 3, plantilla: 'S1' } },
+    config: { ocasion: 'contacto', plantilla: 'S1', oferta: OC('contacto').oferta, inicio: '2026-09-27', fin: '2026-10-11', canal: 'WhatsApp', clientes: ['k01', 'k02', 'k04', 'k06', 'k07', 'k08', 'k09', 'k10', 'k11', 'k12', 'k13'] },
   },
   {
-    id: 'c4', nombre: 'Buen Fin · 3 parcialidades', estado: 'Borrador', enviados: 0,
-    config: { ...CONFIG_BASE, momento: 'vencidas', buckets: ['b3', 'b4', 'b5', 'b6', 'b7'], segmentos: ['deterioro', 'moroso'], plantilla: 'E1', inicio: '2026-11-13', seguimiento: { activo: false, dias: 2, plantilla: 'E1' } },
+    id: 'c5', nombre: 'Buen Fin 2026', estado: 'Borrador', enviados: 0,
+    config: { ocasion: 'buen_fin', plantilla: 'E1', oferta: OC('buen_fin').oferta, inicio: '2026-11-13', fin: '2026-11-16', canal: 'WhatsApp', clientes: ['k01', 'k02'] },
+  },
+  {
+    id: 'h1', nombre: 'Buen Fin 2025', estado: 'Finalizada', enviados: 9, pagaron: ['k13', 'k12', 'k03', 'k01', 'k10'],
+    config: { ocasion: 'buen_fin', plantilla: 'E1', oferta: { tipo: 'parcialidades', valor: 3 }, inicio: '2025-11-14', fin: '2025-11-17', canal: 'WhatsApp', clientes: ['k01', 'k03', 'k05', 'k07', 'k09', 'k10', 'k12', 'k13', 'k14'] },
+  },
+  {
+    id: 'h2', nombre: 'Cierre de año 2024', estado: 'Finalizada', enviados: 6, pagaron: ['k13', 'k12'],
+    config: { ocasion: 'cierre', plantilla: 'E3', oferta: { tipo: 'descuento', valor: 4 }, inicio: '2024-12-01', fin: '2024-12-20', canal: 'Correo', clientes: ['k03', 'k05', 'k10', 'k12', 'k13', 'k14'] },
+  },
+  {
+    id: 'h3', nombre: 'Buen Fin 2024', estado: 'Finalizada', enviados: 7, pagaron: ['k13', 'k10'],
+    config: { ocasion: 'buen_fin', plantilla: 'E1', oferta: { tipo: 'parcialidades', valor: 3 }, inicio: '2024-11-15', fin: '2024-11-18', canal: 'WhatsApp', clientes: ['k01', 'k03', 'k05', 'k10', 'k12', 'k13', 'k14'] },
   },
 ];
 
@@ -454,7 +465,7 @@ export const GESTIONES: Gestion[] = [
 // fiscal. La fecha oficial del pago es la del REP. El saldo de cada factura
 // sale de sumar sus pagos: por eso estos montos cuadran con `pagado` arriba.
 
-export type Fuente = 'ERP' | 'REP';
+export type Fuente = 'ERP' | 'REP' | 'CSV';
 export type Evidencia = { fuente: Fuente; fecha: string; texto: string };
 export type EstadoPago = 'confirmado' | 'solo_erp' | 'solo_rep' | 'discrepancia';
 
@@ -516,6 +527,16 @@ export const SYNC_ERP_SIM: Pago = {
   evidencias: [{ fuente: 'ERP', fecha: 'hoy 11:24', texto: 'Odoo: el saldo bajó de $126,300 a $66,300' }],
 };
 
+/** Lo que trae el CSV de cartera (simulado): un saldo que bajó y una factura nueva. */
+export const CSV_SIM = {
+  pago: {
+    id: 'p8', cuentaId: 'k03', monto: 30_000, fechaPago: '26 sep', metodo: 'PPD', estado: 'solo_erp', parcialidad: 1,
+    limiteRep: '10 oct', diasRep: 12,
+    evidencias: [{ fuente: 'CSV', fecha: 'hoy 11:24', texto: 'Reporte de cartera: el saldo bajó de $98,400 a $68,400' }],
+  } as Pago,
+  facturaNueva: { cuentaId: 'k12', factura: { folio: 'F-2983', monto: 25_600, emision: '27 sep', vence: '27 oct', dias: -29, planInicio: null } as Factura },
+};
+
 /** Lo que trae el ZIP de REP (simulado): un caso de cada tipo. */
 export const ZIP_REP_SIM = {
   confirma: { cuentaId: 'k05', uuid: 'a83f…19c2', fecha: '27 sep', monto: 123_600 },
@@ -537,7 +558,6 @@ export const RESPUESTAS_SIM: Record<string, string> = {
 
 /** Toques que ya hicieron las campañas activas antes de hoy. */
 export const TOQUES_INICIALES: Record<string, { campanaId: string; campana: string; plantilla: string; hora: string; respuesta?: string }[]> = {
-  k06: [{ campanaId: 'c1', campana: 'Temprana · Recordatorio de cortesía', plantilla: 'N2', hora: 'ayer 09:30', respuesta: RESPUESTAS_SIM.k06 }],
   k07: [{ campanaId: 'c3', campana: 'Validación de contactos', plantilla: 'S1', hora: 'ayer 10:00', respuesta: RESPUESTAS_SIM.k07 }],
   k02: [{ campanaId: 'c3', campana: 'Validación de contactos', plantilla: 'S1', hora: 'ayer 10:00' }],
   k04: [{ campanaId: 'c3', campana: 'Validación de contactos', plantilla: 'S1', hora: 'ayer 10:00' }],

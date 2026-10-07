@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { AlertTriangle, Check, ChevronDown, Clock, Loader2, MapPin, Megaphone, MessageCircle, Phone, Send, Sparkles } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { EASE, Reveal, Bar } from './primitives.tsx';
-import { AGENTES, PLANTILLAS, llenarPlantilla, saldoDe, type Agente } from './mockV1.ts';
+import { AGENTES, PLANTILLAS, llenarPlantilla, saldoDe, textoOferta, type Agente } from './mockV1.ts';
 import { FaseDot, LineaPlan, textoHoy, CanalIcon } from './plan.tsx';
 import { useCobranza, planCuenta, plantillaPorId, type CuentaViva } from './store.tsx';
 import { SegmentoChip } from './segmento.tsx';
@@ -181,7 +181,7 @@ function TarjetaCuenta({
   onTerminar: () => void;
 }) {
   const reduce = useReducedMotion();
-  const { envios, enviar, registrar, toques, tareas } = useCobranza();
+  const { envios, enviar, registrar, toques, tareas, campanas } = useCobranza();
   const misToques = toques[c.id] ?? [];
   const respuesta = [...misToques].reverse().find((t) => t.respuesta);
   const tarea = tareas[c.id];
@@ -317,7 +317,7 @@ function TarjetaCuenta({
                           <span className="font-semibold text-brand-ink/70">{t.campana}</span>
                           <span>{pl?.etapa} · {t.hora}</span>
                         </div>
-                        {pl && <p className="px-4 py-2.5 text-[13px] text-brand-ink/70 leading-relaxed">{llenarPlantilla(pl.texto, c)}</p>}
+                        {pl && <p className="px-4 py-2.5 text-[13px] text-brand-ink/70 leading-relaxed">{llenarPlantilla(pl.texto, c, textoOferta(campanas.find((x) => x.id === t.campanaId)?.config.oferta ?? { tipo: 'ninguna', valor: 0 }) || undefined)}</p>}
                         {t.respuesta && (
                           <div className="px-4 py-2.5 bg-brand-cream border-t border-brand-gold/25">
                             <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40">Respondió</div>
@@ -539,8 +539,8 @@ function FranjaCampanas({ cuentas }: { cuentas: CuentaViva[] }) {
               <li key={camp.id} className="px-5 py-3">
                 <div className="text-[13px] font-semibold text-brand-ink">{camp.nombre}</div>
                 <div className="text-[11px] text-brand-ink/50 mt-0.5">
-                  Envió {pl?.etapa} · {pl?.nombre} por {camp.config.canal}
-                  {camp.config.seguimiento.activo && ` · si no responden en ${camp.config.seguimiento.dias} días, sigue otro aviso`}
+                  Campaña especial · {pl?.nombre} por {camp.config.canal}
+                  {textoOferta(camp.config.oferta) && ` · ${textoOferta(camp.config.oferta)}`}
                 </div>
                 <div className="text-[11px] text-brand-ink/65 mt-1">
                   {tocadas.length > 0 && <span>A tus clientes: {tocadas.map((c) => c.cliente).join(', ')}. </span>}

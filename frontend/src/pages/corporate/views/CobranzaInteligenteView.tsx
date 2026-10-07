@@ -23,8 +23,9 @@ import {
   CanalIcon,
 } from './cobranza/plan.tsx';
 import { planDe, saldoDe, AGENTES } from './cobranza/mockV1.ts';
-import { CobranzaProvider, useCobranza, planCuenta } from './cobranza/store.tsx';
+import { CobranzaProvider, useCobranza, planCuenta, type CuentaViva } from './cobranza/store.tsx';
 import { SegmentoChip, SegmentosPanel } from './cobranza/segmento.tsx';
+import { SubFacturas } from './cobranza/facturas.tsx';
 import { AgenteVista } from './cobranza/AgenteVista.tsx';
 import { CampanasPanel } from './cobranza/CampanasPanel.tsx';
 import { PlantillasPanel } from './cobranza/PlantillasPanel.tsx';
@@ -59,7 +60,7 @@ type Section =
 
 const LABEL: Record<Section, string> = {
   alertas: 'Alertas',
-  recordatorios: 'Recordatorios',
+  recordatorios: 'Clientes',
   campanas: 'Campañas',
   plantillas: 'Plantillas',
   reportes: 'Reportes',
@@ -522,11 +523,6 @@ function PrototypeNotice() {
 
 type CarteraItem = (typeof MOCK.cartera)[number];
 
-const URGENCIA_STYLES = {
-  alta: 'bg-red-100 text-red-700',
-  media: 'bg-amber-100 text-amber-700',
-  baja: 'bg-brand-sand/40 text-brand-ink/50',
-} as const;
 
 /**
  * Score compuesto a partir de sus factores ponderados.
@@ -590,6 +586,22 @@ const SEVERIDAD = {
 
 function AlertasPanel() {
   const reduce = useReducedMotion();
+  const { cartera } = useCobranza();
+  // Alerta calculada (no fija): sale del contador histórico de cada cliente.
+  const esperan = cartera.filter((c) => !c.saldada && c.comportamiento.esperaDescuentos);
+  const alertas = [
+    ...(esperan.length
+      ? [
+          {
+            severidad: 'alta' as const,
+            titulo: `${esperan.length} ${esperan.length === 1 ? 'cliente espera' : 'clientes esperan'} campañas con descuento para pagar`,
+            detalle: `${esperan.map((c) => `${c.cliente} (pagó en ${c.comportamiento.campanasPagadas.length} campañas, ${c.comportamiento.negociaciones} negociaciones)`).join(' y ')}. Se atrasan y pagan cuando llega la oferta. Quedan fuera de las campañas por defecto.`,
+            cuando: 'Calculado hoy',
+          },
+        ]
+      : []),
+    ...MOCK.alertas,
+  ];
 
   return (
     <div className="space-y-5">
@@ -601,7 +613,7 @@ function AlertasPanel() {
       </Reveal>
 
       <div className="space-y-3">
-        {MOCK.alertas.map((a, i) => {
+        {alertas.map((a, i) => {
           const s = SEVERIDAD[a.severidad];
           return (
             <Reveal key={a.titulo} delay={0.06 + i * 0.06}>
@@ -644,14 +656,35 @@ const RESULTADO_STYLES = {
 
 type RecordatorioItem = (typeof MOCK.recordatorios)[number];
 
-type SubSeccion = 'resumen' | 'plan' | 'historial' | 'simulador';
+type SubSeccion = 'facturas' | 'plan' | 'historial' | 'resumen' | 'simulador';
 
 const SUB_SECCIONES: { id: SubSeccion; label: string }[] = [
-  { id: 'resumen', label: 'Resumen' },
+  { id: 'facturas', label: 'Facturas' },
   { id: 'plan', label: 'Plan' },
   { id: 'historial', label: 'Historial' },
+  { id: 'resumen', label: 'Riesgo' },
   { id: 'simulador', label: 'Simulador' },
 ];
+
+/**
+ * Expediente de un cliente que todavía no tiene mensajes registrados: misma
+ * forma que los de MOCK.recordatorios, con lo que se sabe de la cartera.
+ */
+function registroDe(c: CuentaViva): RecordatorioItem {
+  const encontrado = MOCK.recordatorios.find((r) => r.cliente === c.cliente);
+  if (encontrado) return encontrado;
+  return {
+    cliente: c.cliente,
+    encargado: c.agente,
+    enviados: 0,
+    tasa: 0,
+    ultimo: '—',
+    mejor: { canal: c.canal, tono: 'Estándar', hora: '—', estrategia: 'Plantilla general' },
+    nota: c.diagnostico.porque,
+    plan: planDe(c.cliente),
+    mensajes: [],
+  } as unknown as RecordatorioItem;
+}
 
 /**
  * El expediente de cada cliente se reparte en subpestañas en vez de apilarse.
@@ -662,9 +695,12 @@ const SUB_SECCIONES: { id: SubSeccion; label: string }[] = [
 function RecordatoriosPanel() {
   const { cartera } = useCobranza();
   const planDeCliente = (cliente: string) => planCuenta(cartera.find((c) => c.cliente === cliente)!);
-  const [selected, setSelected] = React.useState(MOCK.recordatorios[0].cliente);
-  const [sub, setSub] = React.useState<SubSeccion>('resumen');
-  const activo = MOCK.recordatorios.find((r) => r.cliente === selected) ?? MOCK.recordatorios[0];
+  const [selected, setSelected] = React.useState(cartera[0].cliente);
+  const [sub, setSub] = React.useState<SubSeccion>('facturas');
+  const [buscar, setBuscar] = React.useState('');
+  const registros = cartera.map(registroDe);
+  const visibles = registros.filter((r) => r.cliente.toLowerCase().includes(buscar.toLowerCase()));
+  const activo = registros.find((r) => r.cliente === selected) ?? registros[0];
   const reduce = useReducedMotion();
   // El riesgo de la cuenta vive en MOCK.cartera y se enlaza por nombre de
   // cliente. Puede no existir (un cliente contactado sin factura priorizada),
@@ -674,11 +710,12 @@ function RecordatoriosPanel() {
 
   // Agregados de la cartera contactada: llenan el pie de la lista con algo
   // útil en vez de dejar aire muerto bajo los cinco clientes.
-  const totalMensajes = MOCK.recordatorios.reduce((s, r) => s + r.enviados, 0);
+  const conMensajes = registros.filter((r) => r.enviados > 0);
+  const totalMensajes = registros.reduce((s, r) => s + r.enviados, 0);
   const tasaPromedio = Math.round(
-    MOCK.recordatorios.reduce((s, r) => s + r.tasa, 0) / MOCK.recordatorios.length,
+    conMensajes.reduce((s, r) => s + r.tasa, 0) / Math.max(1, conMensajes.length),
   );
-  const enEscalamiento = MOCK.recordatorios.filter((r) =>
+  const enEscalamiento = registros.filter((r) =>
     planDeCliente(r.cliente).actual?.fase === 'escalamiento',
   ).length;
 
@@ -687,11 +724,17 @@ function RecordatoriosPanel() {
       {/* Lista de clientes */}
       <Reveal className="lg:col-span-2">
         <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden lg:sticky lg:top-4">
-          <div className="px-6 py-4 border-b border-brand-ink/8">
-            <BlockTitle>Clientes contactados</BlockTitle>
+          <div className="px-6 py-4 border-b border-brand-ink/8 space-y-3">
+            <BlockTitle>Clientes · {cartera.length}</BlockTitle>
+            <input
+              value={buscar}
+              onChange={(e) => setBuscar(e.target.value)}
+              placeholder="Buscar cliente"
+              className="w-full px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-bone/50 text-sm text-brand-ink outline-none focus:border-brand-gold/60"
+            />
           </div>
-          <div>
-            {MOCK.recordatorios.map((r) => {
+          <div className="max-h-[620px] overflow-y-auto">
+            {visibles.map((r) => {
               const cuentaFila = cuentaDe(r.cliente);
               const activa = selected === r.cliente;
               const pasoActual = planDeCliente(r.cliente).actual;
@@ -721,6 +764,14 @@ function RecordatoriosPanel() {
                         {cartera.find((c) => c.cliente === r.cliente)!.saldada && (
                           <span className="audit-badge bg-emerald-50 text-emerald-700">Saldada</span>
                         )}
+                        {cartera.find((c) => c.cliente === r.cliente)!.comportamiento.esperaDescuentos && (
+                          <span className="audit-badge bg-rose-50 text-rose-700" title="Espera campañas con descuento para pagar">
+                            Espera descuentos
+                          </span>
+                        )}
+                        {cartera.find((c) => c.cliente === r.cliente)!.facturas.some((f) => !f.planInicio) && (
+                          <span className="audit-badge bg-amber-50 text-amber-700">Factura sin plan</span>
+                        )}
                       </div>
                       {pasoActual && (
                         <div className="flex items-center gap-1.5 mt-1.5">
@@ -747,15 +798,11 @@ function RecordatoriosPanel() {
                         </div>
                       )}
                       <div className="text-[11px] text-brand-ink/35 mt-2 tabular-nums">
-                        {r.enviados} mensajes · {r.tasa}% respuesta
+                        {r.enviados ? `${r.enviados} mensajes · ${r.tasa}% respuesta` : 'Sin mensajes todavía'}
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
-                      {cuentaFila ? (
-                        <RiskChip score={scoreOf(cuentaFila.factores)} />
-                      ) : (
-                        <span className="text-[11px] text-brand-ink/25">sin factura</span>
-                      )}
+                      {cuentaFila && <RiskChip score={scoreOf(cuentaFila.factores)} />}
                     </div>
                   </div>
                 </button>
@@ -790,17 +837,21 @@ function RecordatoriosPanel() {
                   {activo.cliente}
                 </h3>
                 <div className="flex items-center gap-2 mt-1 text-[11px] text-brand-ink/40">
-                  {cuenta && <span className="font-mono">{cuenta.folio}</span>}
-                  {cuenta && <span className="w-px h-3 bg-brand-ink/15" aria-hidden />}
+                  <span className="font-mono">{activoVivo.folio}</span>
+                  <span className="w-px h-3 bg-brand-ink/15" aria-hidden />
                   <span>{activoVivo.agente}</span>
                   <SegmentoChip cuenta={activoVivo} />
                 </div>
               </div>
-              {cuenta && (
-                <span className={`audit-badge shrink-0 ${URGENCIA_STYLES[cuenta.urgencia]}`}>
-                  {cuenta.accion}
-                </span>
-              )}
+              {(() => {
+                const act = planCuenta(activoVivo).actual;
+                if (activoVivo.saldada) return <span className="audit-badge shrink-0 bg-emerald-50 text-emerald-700">Saldada</span>;
+                return act ? (
+                  <span className="audit-badge shrink-0 bg-brand-ink/5 text-brand-ink/70">
+                    Hoy: {act.etiqueta} · {act.nombre}
+                  </span>
+                ) : null;
+              })()}
             </div>
 
             {/* Subpestañas: indicador deslizante, mismo lenguaje que la
@@ -837,14 +888,15 @@ function RecordatoriosPanel() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.22, ease: EASE }}
           >
+            {sub === 'facturas' && <SubFacturas cuenta={activoVivo} />}
             {sub === 'resumen' && <SubResumen cuenta={cuenta} />}
             {sub === 'plan' && <SubPlan registro={activo} />}
             {sub === 'historial' && <SubHistorial registro={activo} reduce={reduce} />}
             {sub === 'simulador' && cuenta && <SimuladorCuenta cuenta={cuenta} />}
             {sub === 'simulador' && !cuenta && (
               <p className="px-7 py-8 text-sm text-brand-ink/45">
-                Este cliente no tiene una factura priorizada, así que no hay nada que simular
-                todavía.
+                El simulador está disponible para las cuentas con análisis de riesgo. Este cliente
+                todavía no tiene uno.
               </p>
             )}
           </motion.div>
@@ -1055,7 +1107,7 @@ function SubResumen({ cuenta }: { cuenta: CarteraItem | undefined }) {
   if (!cuenta) {
     return (
       <p className="px-7 py-8 text-sm text-brand-ink/45">
-        Este cliente ha sido contactado, pero no tiene una factura priorizada en la cartera.
+        El desglose de riesgo está disponible para las cuentas analizadas. Este cliente todavía no tiene uno: revisa su segmento y su comportamiento en Facturas.
       </p>
     );
   }

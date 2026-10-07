@@ -5,20 +5,22 @@ import {
   HOY,
   CAMPANAS,
   PLANTILLAS,
-  PASOS_CAMPANA,
   RESPUESTAS_SIM,
   TOQUES_INICIALES,
   PAGOS_INICIALES,
   SYNC_ERP_SIM,
   ZIP_REP_SIM,
-  audiencia,
+  CSV_SIM,
+  comportamientoDe,
   diagnosticoDe,
   gestion,
   planConfig,
   type Agente,
   type Campana,
   type CuentaCartera,
+  type Comportamiento,
   type Diagnostico,
+  type Factura,
   type Gestion,
   type Pago,
   type PasoId,
@@ -44,8 +46,13 @@ export type NoReconocido = { uuid: string; rfc: string; nombre: string; monto: n
 export type CambioSegmento = { cliente: string; de: Segmento; a: Segmento; motivo: string; hora: string };
 
 /** Cuenta tal como la ven los 3 perfiles: con segmento, agente y lo hecho hoy. */
+/** Factura tal como se muestra: la principal (la que está en cobro) y las demás. */
+export type FacturaViva = Factura & { principal: boolean; pagado: number };
+
 export type CuentaViva = CuentaCartera & {
   saldada: boolean;
+  facturas: FacturaViva[];
+  comportamiento: Comportamiento;
   segmento: Segmento;
   diagnostico: Diagnostico;
   segmentoManual?: { motivo: string };
@@ -61,6 +68,9 @@ type Store = {
   tareas: Record<string, Tarea>;
   cambiosSegmento: CambioSegmento[];
   pagos: Pago[];
+  csvCargado: boolean;
+  subirCsv: () => string;
+  iniciarPlanes: (folios: string[]) => void;
   noReconocidos: NoReconocido[];
   erp: { ultima: string; sincronizado: boolean };
   zipCargado: boolean;
@@ -104,6 +114,9 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   const [noReconocidos, setNoReconocidos] = React.useState<NoReconocido[]>([]);
   const [erp, setErp] = React.useState({ ultima: 'hoy 06:00', sincronizado: false });
   const [zipCargado, setZipCargado] = React.useState(false);
+  const [csvCargado, setCsvCargado] = React.useState(false);
+  const [planesIniciados, setPlanesIniciados] = React.useState<Record<string, string>>({});
+  const [facturasNuevas, setFacturasNuevas] = React.useState<Record<string, Factura[]>>({});
 
   const cartera: CuentaViva[] = React.useMemo(
     () =>
@@ -124,6 +137,16 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
           ...c,
           pagado,
           saldada: c.monto - pagado <= 1, // tolerancia de centavos
+          facturas: [
+            { folio: c.folio, monto: c.monto, emision: c.emision, vence: c.vence, dias: c.dias, planInicio: c.planInicio, principal: true, pagado },
+            ...[...(c.facturasExtra ?? []), ...(facturasNuevas[c.id] ?? [])].map((f) => ({
+              ...f,
+              planInicio: planesIniciados[f.folio] ?? f.planInicio,
+              principal: false,
+              pagado: 0,
+            })),
+          ],
+          comportamiento: comportamientoDe(c),
           agente: agentes[c.id] ?? c.agente,
           finanzas: contactos[c.id] ?? c.finanzas,
           resultados: res,
@@ -132,33 +155,21 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
           segmentoManual: manual ? { motivo: manual.motivo } : undefined,
         };
       }),
-    [agentes, contactos, segManual, envios, resultadosHoy, pagos],
+    [agentes, contactos, segManual, envios, resultadosHoy, pagos, planesIniciados, facturasNuevas],
   );
 
   const anotar = (c: CuentaViva, r: Resultado, monto?: number) =>
     setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, r, monto), agente: c.agente }]);
 
-  // Lanzar hoy: a cada cuenta contactable de la audiencia se le manda el
-  // nivel/etapa elegido en la campaña (y queda marcado en su plan).
+  // Lanzar una campaña especial: el mensaje va solo a los clientes elegidos
+  // que se pueden contactar. No toca su plan: el plan sigue su curso aparte.
   const lanzar = (camp: Campana): Campana => {
-    const { incluidas } = audiencia(camp.config, cartera);
-    const nuevosEnvios: Record<string, Envio> = {};
     const nuevosToques: Record<string, Toque> = {};
-    const nuevasTareas: Record<string, Tarea> = {};
-    const pl = PLANTILLAS.find((p) => p.id === camp.config.plantilla);
-    const esPaso = !!pl && PASOS_CAMPANA.includes(pl.id);
-    for (const c of incluidas as CuentaViva[]) {
-      if (!c.contactable || envios[c.id] || tareas[c.id]) continue;
-      // La etapa D es llamada: la campaña no manda mensaje, le deja la tarea al agente.
-      if (pl?.canal === 'Llamada') {
-        nuevasTareas[c.id] = { campana: camp.nombre, motivo: `${pl.etapa} · ${pl.nombre}` };
-        continue;
-      }
-      nuevosToques[c.id] = { campanaId: camp.id, campana: camp.nombre, plantilla: camp.config.plantilla, hora: HORA_ACTUAL, respuesta: RESPUESTAS_SIM[c.id] };
-      if (esPaso) nuevosEnvios[c.id] = { paso: pl!.id as PasoId, canal: camp.config.canal, origen: `Campaña "${camp.nombre}"`, hora: HORA_ACTUAL };
+    for (const id of camp.config.clientes) {
+      const c = cartera.find((x) => x.id === id);
+      if (!c || c.saldada || !c.contactable || !c.finanzas) continue;
+      nuevosToques[id] = { campanaId: camp.id, campana: camp.nombre, plantilla: camp.config.plantilla, hora: HORA_ACTUAL, respuesta: RESPUESTAS_SIM[id] };
     }
-    setEnvios((e) => ({ ...e, ...nuevosEnvios }));
-    setTareas((t) => ({ ...t, ...nuevasTareas }));
     setToques((t) => {
       const out = { ...t };
       for (const [id, tq] of Object.entries(nuevosToques)) out[id] = [...(out[id] ?? []), tq];
@@ -175,6 +186,20 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
     erp,
     zipCargado,
     // Sincronización del ERP: compara saldos y registra la diferencia como pago.
+    csvCargado,
+    // CSV de cartera: igual que el ERP, compara saldos contra el último reporte.
+    subirCsv: () => {
+      if (csvCargado) return 'Ese reporte ya se había cargado: no cambió ningún saldo.';
+      setCsvCargado(true);
+      setPagos((ps) => [CSV_SIM.pago, ...ps]);
+      setFacturasNuevas((f) => ({ ...f, [CSV_SIM.facturaNueva.cuentaId]: [CSV_SIM.facturaNueva.factura] }));
+      const c = cartera.find((x) => x.id === CSV_SIM.pago.cuentaId)!;
+      const nueva = cartera.find((x) => x.id === CSV_SIM.facturaNueva.cuentaId)!;
+      anotar(c, 'Pagó', CSV_SIM.pago.monto);
+      return `14 facturas leídas: ${c.cliente} pagó $30,000 (queda $68,400) y apareció una factura nueva de ${nueva.cliente} (F-2983), lista para iniciar su plan.`;
+    },
+    iniciarPlanes: (folios) =>
+      setPlanesIniciados((p) => ({ ...p, ...Object.fromEntries(folios.map((f) => [f, `hoy ${HORA_ACTUAL}`])) })),
     sincronizarErp: () => {
       setErp({ ultima: `hoy ${HORA_ACTUAL}`, sincronizado: true });
       if (erp.sincronizado) return 'Sin cambios: ningún saldo se movió desde la última sincronización.';
