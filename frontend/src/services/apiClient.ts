@@ -12,6 +12,10 @@
 import type { Invoice, Supplier } from '../types';
 
 const TOKEN_KEY = 'royaltica_jwt';
+/** JWT original del SUPERADMIN mientras está "viendo como" un cliente. */
+const IMPERSONATION_STASH_KEY = 'royaltica_jwt_superadmin_stash';
+/** Nombre de la organización que se está impersonando (solo para el banner). */
+const IMPERSONATION_ORG_KEY = 'royaltica_impersonating_org';
 const BASE = '/api';
 
 /**
@@ -29,6 +33,34 @@ export const isRealId = (id: string): boolean => UUID_RE.test(id);
 export const getToken = (): string | null => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t: string): void => localStorage.setItem(TOKEN_KEY, t);
 export const clearToken = (): void => localStorage.removeItem(TOKEN_KEY);
+
+// ── Impersonation ("Entrar como este cliente") ──────────────
+// Guarda el JWT del SUPERADMIN aparte para poder "volver a mi cuenta" sin
+// tener que iniciar sesión otra vez.
+
+/** True si la sesión activa es una impersonation (hay un JWT de superadmin guardado). */
+export const isImpersonating = (): boolean =>
+  localStorage.getItem(IMPERSONATION_STASH_KEY) !== null;
+
+export const getImpersonatedOrgName = (): string | null =>
+  localStorage.getItem(IMPERSONATION_ORG_KEY);
+
+/** Guarda el JWT actual del SUPERADMIN y activa la sesión del cliente. */
+export const startImpersonation = (clientToken: string, organizationName: string): void => {
+  const current = getToken();
+  if (current) localStorage.setItem(IMPERSONATION_STASH_KEY, current);
+  localStorage.setItem(IMPERSONATION_ORG_KEY, organizationName);
+  setToken(clientToken);
+};
+
+/** Restaura el JWT original del SUPERADMIN y sale del modo impersonation. */
+export const endImpersonation = (): void => {
+  const original = localStorage.getItem(IMPERSONATION_STASH_KEY);
+  localStorage.removeItem(IMPERSONATION_STASH_KEY);
+  localStorage.removeItem(IMPERSONATION_ORG_KEY);
+  if (original) setToken(original);
+  else clearToken();
+};
 
 // ── Núcleo de peticiones ───────────────────────────────────
 
@@ -146,13 +178,15 @@ export interface ApiUser {
   organizationProduct?: string | null;
 }
 
-interface ApiAuthResult {
+export interface ApiAuthResult {
   accessToken: string;
   expiresIn: string;
   user: ApiUser;
   /** Presentes cuando la cuenta tiene 2FA activo: falta el código TOTP. */
   twoFactorRequired?: true;
   tempToken?: string;
+  /** Presente solo cuando esta sesión viene de "Entrar como este cliente". */
+  impersonation?: { organizationName: string };
 }
 
 export interface LoginResult {
@@ -1170,6 +1204,12 @@ export const api = {
     },
   ): Promise<{ id: string; name: string; plan: string; isActive: boolean }> {
     return request('PATCH', `/admin/organizations/${id}`, payload);
+  },
+
+  /** "Entrar como este cliente": pide una sesión real del admin de esa
+   * organización (solo SUPERADMIN). Queda auditado en la bitácora. */
+  async adminImpersonate(orgId: string): Promise<ApiAuthResult> {
+    return request<ApiAuthResult>('POST', `/admin/organizations/${orgId}/impersonate`);
   },
 
   // ── Configuración de la organización (completa) ─────────

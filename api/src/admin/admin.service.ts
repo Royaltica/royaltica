@@ -16,6 +16,7 @@ import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { QueryCostsDto } from './dto/query-costs.dto';
 import type { Env } from '../config/env.validation';
 import { SEAT_PACKAGE_PRESETS, getSeatLimits } from '../common/seat-limits';
+import { AuthService, type AuthResult } from '../auth/auth.service';
 
 const num = (v: Prisma.Decimal | null): number => (v ? Number(v) : 0);
 
@@ -37,7 +38,19 @@ export class AdminService {
     private readonly email: EmailService,
     private readonly usage: UsageService,
     private readonly config: ConfigService<Env, true>,
+    private readonly auth: AuthService,
   ) {}
+
+  /** "Entrar como este cliente" — ver AuthService#impersonateOrganizationAdmin. */
+  async impersonate(
+    organizationId: string,
+    actingSuperadmin: { id: string; email: string },
+  ): Promise<AuthResult> {
+    return this.auth.impersonateOrganizationAdmin(
+      organizationId,
+      actingSuperadmin,
+    );
+  }
 
   // ── Organizaciones ────────────────────────────────────────
 

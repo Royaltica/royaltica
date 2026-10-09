@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckCircle2, LogOut, ChevronRight, FileText, X, Plus, ChevronLeft, Activity, Loader2, DollarSign, Crown, Users, Server, Gauge, Handshake, HeartPulse } from 'lucide-react';
+import { CheckCircle2, LogOut, LogIn, ChevronRight, FileText, X, Plus, ChevronLeft, Activity, Loader2, DollarSign, Crown, Users, Server, Gauge, Handshake, HeartPulse } from 'lucide-react';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { api, isRealId, type AdminOrg, type AdminActivity, type AdminCostByFeature, type AdminOrgCost } from '../../services/apiClient.ts';
 import { NotificationBell } from '../../components/NotificationBell.tsx';
@@ -101,7 +101,7 @@ const fmtCostMxn = (n: number): string =>
 type AdminTab = 'overview' | 'clients' | 'health' | 'activity' | 'leads';
 const ADMIN_TABS: AdminTab[] = ['overview', 'clients', 'health', 'activity', 'leads'];
 
-export function AdminDashboard({ user, onLogout, onBackToRole }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void }) {
+export function AdminDashboard({ user, onLogout, onBackToRole, onImpersonate }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, onImpersonate?: (orgId: string) => Promise<void> }) {
   // La pestaña activa vive en la URL (react-router): permite recargar,
   // compartir el link, y usar atrás/adelante del navegador.
   const location = useLocation();
@@ -231,6 +231,23 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
       setSavingSeat(false);
     }
   }, [loadTenants]);
+
+  // "Entrar como este cliente" — punto 7 de José: el SUPERADMIN entra al
+  // portal real del admin de la organización (queda auditado en backend).
+  const [impersonatingOrgId, setImpersonatingOrgId] = useState<string | null>(null);
+  const [impersonateError, setImpersonateError] = useState<string | null>(null);
+  const handleImpersonate = React.useCallback(async (orgId: string) => {
+    if (!onImpersonate) return;
+    setImpersonatingOrgId(orgId);
+    setImpersonateError(null);
+    try {
+      await onImpersonate(orgId);
+    } catch (e) {
+      setImpersonateError(e instanceof Error ? e.message : 'No se pudo entrar como este cliente.');
+    } finally {
+      setImpersonatingOrgId(null);
+    }
+  }, [onImpersonate]);
 
   const activeTenants = tenants.filter(t => t.status === 'active');
   const totalVolume = tenants.reduce((s, t) => s + t.monthlyVolume, 0);
@@ -490,8 +507,23 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
                           <h3 className="text-xl font-serif text-brand-ink">{selectedTenant.name}</h3>
                           <p className="text-[10px] text-brand-ink/40 mt-0.5">{selectedTenant.rfc} · ID: {selectedTenant.id}</p>
                         </div>
-                        <button onClick={() => setSelectedTenant(null)} className="p-2 hover:bg-brand-bone rounded-full cursor-pointer"><X size={16} className="text-brand-ink/40" /></button>
+                        <div className="flex items-center gap-2">
+                          {onImpersonate && (
+                            <button
+                              onClick={() => handleImpersonate(selectedTenant.id)}
+                              disabled={impersonatingOrgId === selectedTenant.id}
+                              className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg bg-brand-ink text-brand-paper hover:bg-brand-ink/90 transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              {impersonatingOrgId === selectedTenant.id ? <Loader2 size={13} className="animate-spin" /> : <LogIn size={13} />}
+                              Entrar como este cliente
+                            </button>
+                          )}
+                          <button onClick={() => setSelectedTenant(null)} className="p-2 hover:bg-brand-bone rounded-full cursor-pointer"><X size={16} className="text-brand-ink/40" /></button>
+                        </div>
                       </div>
+                      {impersonateError && (
+                        <p className="text-[11px] text-red-600 -mt-3 mb-4">{impersonateError}</p>
+                      )}
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         {[
                           { label: 'Plan', value: selectedTenant.plan },

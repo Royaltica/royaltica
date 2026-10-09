@@ -13,6 +13,8 @@ import {
 import { AdminService } from './admin.service';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { QueryCostsDto } from './dto/query-costs.dto';
@@ -56,6 +58,19 @@ export class AdminController {
   @Delete('organizations/:id')
   removeOrganization(@Param('id', ParseUUIDPipe) id: string) {
     return this.admin.removeOrganization(id);
+  }
+
+  /**
+   * "Entrar como este cliente": emite una sesión real del admin de esa
+   * organización para que el SUPERADMIN vea/opere su portal tal cual lo ve
+   * él. Queda auditado en la bitácora de actividad (ver AuthService).
+   */
+  @Post('organizations/:id/impersonate')
+  impersonate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.admin.impersonate(id, { id: user.id, email: user.email });
   }
 
   // ── Métricas globales ─────────────────────────────────────

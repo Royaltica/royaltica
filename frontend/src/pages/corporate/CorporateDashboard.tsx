@@ -60,7 +60,7 @@ const AREA_PRODUCT: Partial<Record<string, 'CXP' | 'CXC'>> = {
   cxc: 'CXC',
 };
 
-export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, permissions = [], role = '', organizationProduct = null }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, sessionStartedAt?: Date, permissions?: string[], role?: string, organizationProduct?: string | null }) {
+export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, permissions = [], role = '', organizationProduct = null, isImpersonating = false, impersonatedOrgName = null, onExitImpersonation }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, sessionStartedAt?: Date, permissions?: string[], role?: string, organizationProduct?: string | null, isImpersonating?: boolean, impersonatedOrgName?: string | null, onExitImpersonation?: () => void }) {
   // La pestaña activa vive en la URL (react-router), no en useState: permite
   // recargar, compartir el link, y usar atrás/adelante del navegador para
   // moverse entre secciones del portal corporativo.
@@ -327,7 +327,22 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
   );
 
   return (
-    <div className="h-screen w-full bg-brand-bone flex overflow-hidden">
+    <div className="h-screen w-full bg-brand-bone flex overflow-hidden" style={isImpersonating ? { paddingTop: 28 } : undefined}>
+      {/* Banner "Entrar como este cliente": visible solo mientras un SUPERADMIN
+          está viendo el portal de un cliente desde el panel admin. */}
+      {isImpersonating && (
+        <div className="fixed top-0 left-0 right-0 z-[200] h-7 bg-amber-500 text-black flex items-center justify-center gap-3">
+          <span className="text-[11px] font-bold uppercase tracking-wide">
+            Viendo como: {impersonatedOrgName ?? 'cliente'} · modo Superadmin
+          </span>
+          <button
+            onClick={onExitImpersonation}
+            className="text-[11px] font-bold underline cursor-pointer hover:no-underline"
+          >
+            Volver a mi cuenta
+          </button>
+        </div>
+      )}
       <NotificationBell />
       {/* Document Manager Modal */}
       {viewingDocs && (

@@ -38,6 +38,11 @@ export interface AuthResult {
      * todo). Ver admin/dto/update-organization.dto.ts#PRODUCTS. */
     organizationProduct: string | null;
   };
+  /** Presente solo cuando esta sesión es un SUPERADMIN viendo el portal de
+   * un cliente ("Entrar como este cliente" — ver AdminService#impersonate).
+   * El frontend usa esto para mostrar el banner "estás viendo como X" y el
+   * botón de volver a su propia sesión. */
+  impersonation?: { organizationName: string };
 }
 
 @Injectable()
@@ -293,6 +298,60 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('Usuario no encontrado.');
     return this.toPublicUser(user); // ya async, el caller hace await
+  }
+
+  /**
+   * "Entrar como este cliente" — emite un JWT real del CORPORATE_ADMIN de la
+   * organización para que un SUPERADMIN pueda ver/operar el portal tal cual
+   * lo ve el cliente (impersonation). Solo la llama AdminService, que ya
+   * exige rol SUPERADMIN vía @Roles('SUPERADMIN') en AdminController.
+   *
+   * No crea una sesión "especial": es el JWT normal de ese usuario (mismas
+   * reglas de permisos de siempre), marcado con `impersonation` solo para
+   * que el FRONTEND sepa mostrar el banner "viendo como X / volver" — el
+   * backend no distingue esta sesión de un login real de ese usuario. Por
+   * eso la bitácora (abajo) es la única forma real de auditar que pasó.
+   */
+  async impersonateOrganizationAdmin(
+    organizationId: string,
+    actingSuperadmin: { id: string; email: string },
+  ): Promise<AuthResult> {
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, name: true, deletedAt: true },
+    });
+    if (!org || org.deletedAt) {
+      throw new UnauthorizedException('Organización no encontrada.');
+    }
+    // El admin MÁS ANTIGUO activo: es, por construcción (ver admin.service.ts
+    // #createOrganization), la cuenta original que Royáltica le dio al
+    // cliente al contratar — la más representativa de "entrar como él".
+    const target = await this.prisma.user.findFirst({
+      where: { organizationId, role: 'CORPORATE_ADMIN', isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!target) {
+      throw new UnauthorizedException(
+        'Esta organización no tiene un administrador activo al cual entrar.',
+      );
+    }
+
+    // Auditoría: esto es lo único que distingue esta sesión de un login
+    // real — debe quedar trazado quién, cuándo y a cuál cliente.
+    void this.activity.record({
+      organizationId,
+      userId: actingSuperadmin.id,
+      action: 'SUPERADMIN_IMPERSONATION_STARTED',
+      entityType: 'Organization',
+      entityId: organizationId,
+      metadata: {
+        superadminEmail: actingSuperadmin.email,
+        impersonatedUserEmail: target.email,
+      },
+    });
+
+    const result = await this.buildAuthResult(target);
+    return { ...result, impersonation: { organizationName: org.name } };
   }
 
   /**

@@ -4,7 +4,8 @@ import { motion } from 'motion/react';
 import { onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
 import { auth, signInWithEmail, signInWithGoogle } from './lib/firebase.ts';
 import { type Supplier } from './types.ts';
-import { api } from './services/apiClient.ts';
+import { api, startImpersonation, endImpersonation, isImpersonating, getImpersonatedOrgName } from './services/apiClient.ts';
+import type { ApiUser } from './services/apiClient.ts';
 import type { Role } from './utils/role.ts';
 import { useInactivityLock } from './hooks/useInactivityLock.ts';
 import { LandingPage } from './pages/LandingPage.tsx';
@@ -80,12 +81,14 @@ function LegacyApp() {
   // para los demás). Lanza si la cuenta no existe en el backend (invitation-only:
   // un correo real de Google que no esté invitado igual queda fuera), para que
   // la pantalla de login muestre el error.
-  const finishLogin = async (idToken: string) => {
-    const login = await api.verifyToken(idToken);
-    const apiUser = login.user;
+  // Lógica de ruteo por rol, extraída de finishLogin para poder reusarla
+  // también al entrar/salir de "Entrar como este cliente" (impersonation),
+  // donde la sesión no viene de un login de Firebase sino de un JWT que ya
+  // trae el backend.
+  const applyApiUser = async (apiUser: ApiUser, twoFactorRequired: boolean, tempToken: string | null) => {
     // 2FA real: si la cuenta lo tiene activo, el backend NO emite sesión
     // hasta validar el código TOTP (pantalla de verificación).
-    setPendingTempToken(login.twoFactorRequired ? login.tempToken : null);
+    setPendingTempToken(twoFactorRequired ? tempToken : null);
     setApiPermissions(apiUser.permissions ?? []);
     setApiRole(apiUser.role);
     setApiProduct(apiUser.organizationProduct ?? null);
@@ -114,16 +117,42 @@ function LegacyApp() {
       // Si no lo tiene, la sesión ya quedó emitida en devLogin y entra directo
       // (antes se mostraba siempre la pantalla y caía al código demo, lo que
       // hacía fallar el código real de la app autenticadora).
-      setNeeds2FA(login.twoFactorRequired);
+      setNeeds2FA(twoFactorRequired);
     } else if (apiUser.role === 'CORPORATE_USER' && apiUser.operationalProfile === 'AGENTE_EJECUTIVO') {
       // Perfil Agente/Ejecutivo: pantalla ultra-simplificada aparte del
       // portal completo (spec "Mejoras V1", sección 2). Sigue siendo
       // CORPORATE_USER del lado del backend — esto es solo ruteo de UI.
       setRole('agent');
-      setNeeds2FA(login.twoFactorRequired);
+      setNeeds2FA(twoFactorRequired);
     } else {
       setRole('corporate');
-      setNeeds2FA(login.twoFactorRequired);
+      setNeeds2FA(twoFactorRequired);
+    }
+  };
+
+  const finishLogin = async (idToken: string) => {
+    const login = await api.verifyToken(idToken);
+    await applyApiUser(login.user, !!login.twoFactorRequired, login.twoFactorRequired ? login.tempToken : null);
+  };
+
+  // "Entrar como este cliente": el SUPERADMIN pide una sesión real del admin
+  // de esa organización (backend la audita), guarda su propio JWT aparte y
+  // adopta el portal corporativo de ese cliente tal cual lo ve él.
+  const handleImpersonate = async (orgId: string) => {
+    const result = await api.adminImpersonate(orgId);
+    startImpersonation(result.accessToken, result.impersonation?.organizationName ?? result.user.name);
+    await applyApiUser(result.user, false, null);
+  };
+
+  // "Volver a mi cuenta": restaura el JWT del SUPERADMIN que quedó guardado
+  // y recupera su sesión (vuelve al panel admin).
+  const handleExitImpersonation = async () => {
+    endImpersonation();
+    try {
+      const me = await api.me();
+      await applyApiUser(me, false, null);
+    } catch {
+      handleLogout();
     }
   };
 
@@ -179,7 +208,7 @@ function LegacyApp() {
   }
 
   if (role === 'admin') {
-    return <AdminDashboard user={user} onLogout={handleLogout} onBackToRole={handleLogout} />;
+    return <AdminDashboard user={user} onLogout={handleLogout} onBackToRole={handleLogout} onImpersonate={handleImpersonate} />;
   }
 
   if (role === 'agent') {
@@ -187,7 +216,12 @@ function LegacyApp() {
   }
 
   if (role === 'corporate') {
-    return <CorporateDashboard user={user} onLogout={handleLogout} onBackToRole={handleLogout} sessionStartedAt={sessionStartedAt} permissions={apiPermissions} role={apiRole} organizationProduct={apiProduct} />;
+    return <CorporateDashboard
+      user={user} onLogout={handleLogout} onBackToRole={handleLogout} sessionStartedAt={sessionStartedAt}
+      permissions={apiPermissions} role={apiRole} organizationProduct={apiProduct}
+      isImpersonating={isImpersonating()} impersonatedOrgName={getImpersonatedOrgName()}
+      onExitImpersonation={handleExitImpersonation}
+    />;
   }
 
   // Fallback de seguridad: sin rol resuelto, de vuelta al login.
