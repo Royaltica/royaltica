@@ -14,6 +14,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { ALL_AREAS } from '../auth/constants/permissions';
 import { InviteUserDto } from './dto/invite-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { getSeatLimits } from '../common/seat-limits';
 
 /** Forma pública de un usuario para Configuración > Usuarios. */
 const USER_SELECT = {
@@ -91,8 +92,15 @@ export class UsersService {
 
     const org = await this.prisma.organization.findUnique({
       where: { id: organizationId },
-      select: { name: true },
+      select: { name: true, settings: true },
     });
+
+    await this.assertSeatAvailable(
+      organizationId,
+      { settings: org?.settings ?? {} },
+      role,
+      dto.operationalProfile,
+    );
 
     // Áreas: un admin ve todo, así que no guardamos permisos para ese rol.
     // Si no mandan permissions explícitas pero sí un perfil operativo, se usa
@@ -270,6 +278,62 @@ export class UsersService {
       throw new NotFoundException('Usuario no encontrado.');
     }
     return user;
+  }
+
+  /**
+   * Valida que la organización todavía tenga "asiento" libre en el bucket
+   * que corresponde al usuario que se va a invitar, según el paquete de
+   * licencias asignado por el superadmin (ver common/seat-limits.ts).
+   *
+   * Mapeo de buckets (según la spec de José — "administrador del cliente,
+   * mismo nivel que él, no superadmin / supervisor / agente"):
+   * - admin: usuarios con role=CORPORATE_ADMIN (incluye al admin original
+   *   de la cuenta, que cuenta como el primero del cupo).
+   * - supervisor: operationalProfile=SUPERVISOR_GERENTE.
+   * - agente: operationalProfile=AGENTE_EJECUTIVO.
+   * Si la organización no tiene paquete asignado, no hay tope (ver
+   * getSeatLimits). ADMINISTRADOR_DATA (perfil de CORPORATE_USER) no cuenta
+   * en ningún bucket todavía — no estaba en los 3 perfiles que pidió José.
+   */
+  private async assertSeatAvailable(
+    organizationId: string,
+    org: { settings: Prisma.JsonValue },
+    role: UserRole,
+    operationalProfile: OperationalProfile | undefined,
+  ): Promise<void> {
+    const limits = getSeatLimits(org as never);
+    const bucket =
+      role === 'CORPORATE_ADMIN'
+        ? 'admin'
+        : operationalProfile === 'SUPERVISOR_GERENTE'
+          ? 'supervisor'
+          : operationalProfile === 'AGENTE_EJECUTIVO'
+            ? 'agente'
+            : null;
+    if (!bucket) return; // perfil sin tope definido (ej. ADMINISTRADOR_DATA)
+
+    const limit = limits[bucket];
+    if (!Number.isFinite(limit)) return;
+
+    const where: Prisma.UserWhereInput =
+      bucket === 'admin'
+        ? { organizationId, role: 'CORPORATE_ADMIN' }
+        : {
+            organizationId,
+            operationalProfile:
+              bucket === 'supervisor' ? 'SUPERVISOR_GERENTE' : 'AGENTE_EJECUTIVO',
+          };
+
+    const current = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.user.count({ where }),
+    );
+    if (current >= limit) {
+      const label =
+        bucket === 'admin' ? 'administrador' : bucket === 'supervisor' ? 'supervisor' : 'agente';
+      throw new BadRequestException(
+        `Tu paquete solo incluye ${limit} cuenta(s) de ${label}. Ya tienes ${current}. Contacta a Royáltica para ampliar tu paquete.`,
+      );
+    }
   }
 
   /** Evita dejar a la organización sin ningún administrador activo. */

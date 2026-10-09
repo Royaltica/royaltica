@@ -15,6 +15,7 @@ import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { QueryCostsDto } from './dto/query-costs.dto';
 import type { Env } from '../config/env.validation';
+import { SEAT_PACKAGE_PRESETS } from '../common/seat-limits';
 
 const num = (v: Prisma.Decimal | null): number => (v ? Number(v) : 0);
 
@@ -281,15 +282,29 @@ export class AdminService {
 
   /** Cambia plan y/o estado activo de una organización. */
   async updateOrganization(id: string, dto: UpdateOrganizationDto) {
-    await this.ensureExists(id);
+    const org = await this.prisma.organization.findUnique({
+      where: { id },
+      select: { settings: true },
+    });
+    if (!org) throw new NotFoundException('Organización no encontrada.');
     const data: Prisma.OrganizationUpdateInput = {};
     if (dto.plan !== undefined) data.plan = dto.plan;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (dto.seatPackage !== undefined) {
+      // Se guarda en settings.seatLimits (JSON) — ver common/seat-limits.ts
+      // sobre por qué no es una columna propia todavía.
+      const settings = (org.settings ?? {}) as Prisma.JsonObject;
+      data.settings = {
+        ...settings,
+        seatLimits: SEAT_PACKAGE_PRESETS[dto.seatPackage],
+        seatPackage: dto.seatPackage,
+      };
+    }
 
     const updated = await this.prisma.organization.update({
       where: { id },
       data,
-      select: { id: true, name: true, plan: true, isActive: true },
+      select: { id: true, name: true, plan: true, isActive: true, settings: true },
     });
     return updated;
   }
