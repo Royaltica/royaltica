@@ -15,17 +15,24 @@ import { CorporateDashboard } from './pages/corporate/CorporateDashboard.tsx';
 import { AgentDashboard } from './pages/agent/AgentDashboard.tsx';
 import { ProviderDashboard } from './pages/provider/ProviderDashboard.tsx';
 import { CustomerPortalPage } from './pages/customer-portal/CustomerPortalPage.tsx';
+import { CxCApp } from './pages/cxc/CxCApp.tsx';
 
 /**
  * Ruta pública SIN AUTH para el portal de autoservicio de clientes deudores
  * (Tradespace): tiene prioridad absoluta y bypassa por completo la lógica
  * interna de la app (auth, roles, 2FA, etc.), que sigue viviendo intacta en
  * `LegacyApp` como ruta catch-all "*". No se toca esa lógica.
+ *
+ * `/cxc` es el producto separado de Cobranza IA: tiene su PROPIO login
+ * (CxCApp), que usa el mismo Firebase/backend pero NO pasa por el switch de
+ * roles de LegacyApp — entra directo a la vista de Cobranza IA, sin redirigir
+ * según permisos.
  */
 export default function App() {
   return (
     <Routes>
       <Route path="/portal-cliente/:token" element={<CustomerPortalPage />} />
+      <Route path="/cxc/*" element={<CxCApp />} />
       <Route path="*" element={<LegacyApp />} />
     </Routes>
   );

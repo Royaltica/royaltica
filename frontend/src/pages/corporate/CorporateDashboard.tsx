@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ChevronRight, BarChart3, Building2, FileText, DollarSign, ShieldCheck, Activity,
-  BookOpen, Zap, FolderArchive, Settings, Lock, Server, LogOut, Bot, X, Sparkles,
+  BookOpen, Zap, FolderArchive, Settings, Lock, Server, LogOut, Bot, X, Sparkles, Brain,
   ThumbsUp, ThumbsDown, Loader2, Send,
 } from 'lucide-react';
 import type { User as FirebaseUser } from 'firebase/auth';
@@ -25,13 +25,14 @@ import { FiscalAuditDashboard } from './views/FiscalAuditDashboard.tsx';
 import { ContabilidadView } from './views/ContabilidadView.tsx';
 import { HistorialView } from './views/HistorialView.tsx';
 import { GrowthOpsView } from './views/GrowthOpsView.tsx';
+import { CobranzaInteligenteView } from './views/CobranzaInteligenteView.tsx';
 import { useOrgBranding } from '../../hooks/useOrgBranding.ts';
 
 /** Mensaje del chat con el asistente de IA (backend /ai/chat). */
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
 
-type CorporateTab = 'dashboard' | 'suppliers' | 'audits' | 'pending_invoices' | 'receivables' | 'growth' | 'financing' | 'settings' | 'fiscal_audit' | 'contabilidad' | 'historial';
-const CORPORATE_TABS: CorporateTab[] = ['dashboard', 'suppliers', 'audits', 'pending_invoices', 'receivables', 'growth', 'financing', 'settings', 'fiscal_audit', 'contabilidad', 'historial'];
+type CorporateTab = 'dashboard' | 'suppliers' | 'audits' | 'pending_invoices' | 'receivables' | 'cobranza_ia' | 'growth' | 'financing' | 'settings' | 'fiscal_audit' | 'contabilidad' | 'historial';
+const CORPORATE_TABS: CorporateTab[] = ['dashboard', 'suppliers', 'audits', 'pending_invoices', 'receivables', 'cobranza_ia', 'growth', 'financing', 'settings', 'fiscal_audit', 'contabilidad', 'historial'];
 /** Área de permisos (JWT) que gobierna cada pestaña — ver `canSee` abajo. */
 const TAB_AREA: Record<CorporateTab, string> = {
   dashboard: 'dashboard',
@@ -39,6 +40,7 @@ const TAB_AREA: Record<CorporateTab, string> = {
   pending_invoices: 'finanzas',
   audits: 'finanzas',
   receivables: 'cxc',
+  cobranza_ia: 'cxc',
   growth: 'cxc',
   fiscal_audit: 'estados',
   contabilidad: 'estados',
@@ -351,6 +353,7 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
             {canSee('proveedores') && <SidebarLink icon={<Building2 size={18} />} label="Proveedores" active={activeTab === 'suppliers'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('suppliers')} />}
             {canSee('finanzas') && <SidebarLink icon={<FileText size={18} />} label="F. por pagar" active={activeTab === 'pending_invoices'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('pending_invoices')} />}
             {canSee('cxc') && <SidebarLink icon={<DollarSign size={18} />} label="F. por cobrar" active={activeTab === 'receivables'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('receivables')} />}
+            {canSee('cxc') && <SidebarLink icon={<Brain size={18} />} label="Cobranza IA" active={activeTab === 'cobranza_ia'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('cobranza_ia')} />}
             {canSee('cxc') && <SidebarLink icon={<Sparkles size={18} />} label="Crecimiento" active={activeTab === 'growth'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('growth')} />}
             {canSee('finanzas') && <SidebarLink icon={<ShieldCheck size={18} />} label="Validación" active={activeTab === 'audits'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('audits')} />}
             {canSee('estados') && <SidebarLink icon={<Activity size={18} />} label="Auditoría" active={activeTab === 'fiscal_audit'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('fiscal_audit')} />}
@@ -491,6 +494,10 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
 
           {activeTab === 'receivables' && (
               <ReceivablesView />
+          )}
+
+          {activeTab === 'cobranza_ia' && (
+              <CobranzaInteligenteView />
           )}
 
           {activeTab === 'growth' && (
