@@ -1,19 +1,28 @@
 /**
- * Crea (idempotente) el usuario SUPERADMIN de la plataforma — el CEO.
- * No es destructivo: se puede correr sin borrar datos.
- *   npx ts-node prisma/create-superadmin.ts
+ * Crea (idempotente) un usuario SUPERADMIN de la plataforma.
+ * No es destructivo: se puede correr sin borrar datos. Si el email ya
+ * existe como User (p. ej. ya iniciaste sesión alguna vez con Google/Firebase
+ * con ese correo), solo le sube el rol a SUPERADMIN y conserva todo lo demás
+ * (su firebaseUid real, su organizationId, etc.) — no lo recrea.
+ *
+ * Email por defecto: jgmalfavaun@gmail.com (José). Para crear otro
+ * SUPERADMIN, pasa el correo como argumento:
+ *   npx ts-node prisma/create-superadmin.ts otro@correo.com
  */
 import { PrismaClient, UserRole, UserStatus } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
 async function main() {
-  const email = 'admin@royaltica.com';
+  const email = (process.argv[2] || 'jgmalfavaun@gmail.com').toLowerCase();
   const user = await prisma.user.upsert({
     where: { email },
     update: { role: UserRole.SUPERADMIN, isActive: true, status: UserStatus.ACTIVE },
     create: {
-      firebaseUid: 'seed-superadmin-uid',
+      // Placeholder: se sobrescribe solo con el UID real de Firebase en el
+      // primer login real con este correo (ver auth.service.ts verifyToken,
+      // flujo de "primer ingreso del invitado").
+      firebaseUid: `seed-superadmin-${email}`,
       organizationId: null,
       role: UserRole.SUPERADMIN,
       email,
