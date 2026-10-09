@@ -294,11 +294,15 @@ export class AdminService {
       // Se guarda en settings.seatLimits (JSON) — ver common/seat-limits.ts
       // sobre por qué no es una columna propia todavía.
       const settings = (org.settings ?? {}) as Prisma.JsonObject;
+      // Cast explícito a InputJsonValue: Prisma exige que el shape calce
+      // estructuralmente con JsonValue, y la interfaz SeatLimits (con
+      // Number.POSITIVE_INFINITY tipado como `number`) no lo satisface por
+      // inferencia automática aunque el valor real siempre sea serializable.
       data.settings = {
         ...settings,
         seatLimits: SEAT_PACKAGE_PRESETS[dto.seatPackage],
         seatPackage: dto.seatPackage,
-      };
+      } as Prisma.InputJsonValue;
     }
 
     const updated = await this.prisma.organization.update({
