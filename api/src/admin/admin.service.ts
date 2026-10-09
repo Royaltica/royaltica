@@ -195,8 +195,20 @@ export class AdminService {
     const amountByOrg = new Map(
       amounts.map((a) => [a.organizationId, num(a._sum.total)]),
     );
-    const toCountMap = (rows: { organizationId: string; _count: { _all: number } }[]) =>
-      new Map(rows.map((r) => [r.organizationId, r._count._all]));
+    // organizationId es nullable en el tipo que genera groupBy (aunque en la
+    // práctica un User de CORPORATE_ADMIN/SUPERVISOR_GERENTE/AGENTE_EJECUTIVO
+    // siempre pertenece a una organización) — se tipa `string | null` para
+    // calzar exactamente con lo que Prisma infiere, y se descartan los nulls.
+    const toCountMap = (
+      rows: { organizationId: string | null; _count: { _all: number } }[],
+    ) =>
+      new Map(
+        rows
+          .filter((r): r is { organizationId: string; _count: { _all: number } } =>
+            r.organizationId !== null,
+          )
+          .map((r) => [r.organizationId, r._count._all]),
+      );
     const adminByOrg = toCountMap(adminCounts);
     const supervisorByOrg = toCountMap(supervisorCounts);
     const agenteByOrg = toCountMap(agenteCounts);
