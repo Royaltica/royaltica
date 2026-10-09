@@ -142,6 +142,8 @@ export interface ApiUser {
   avatarUrl: string | null;
   totpEnabled?: boolean;
   operationalProfile?: OperationalProfile | null;
+  /** Producto contratado por la organización (CXP|CXC); null = legacy, ve todo. */
+  organizationProduct?: string | null;
 }
 
 interface ApiAuthResult {
@@ -1156,6 +1158,20 @@ export const api = {
     return request('POST', '/admin/organizations', payload);
   },
 
+  /** Asigna paquete de licencias, producto (CXP/CXC) y/o plan/estado de una
+   * organización (solo SUPERADMIN). */
+  async adminUpdateOrganization(
+    id: string,
+    payload: {
+      plan?: 'FREE' | 'PRO' | 'ENTERPRISE';
+      seatPackage?: 'PAQUETE_1' | 'PAQUETE_2' | 'PAQUETE_3';
+      product?: 'CXP' | 'CXC';
+      isActive?: boolean;
+    },
+  ): Promise<{ id: string; name: string; plan: string; isActive: boolean }> {
+    return request('PATCH', `/admin/organizations/${id}`, payload);
+  },
+
   // ── Configuración de la organización (completa) ─────────
 
   /** Actualiza los datos fiscales / operativos de la organización. */
@@ -1682,6 +1698,14 @@ export interface AdminOrg {
   createdAt: string;
   amount: number;
   counts: { users: number; suppliers: number; invoices: number };
+  /** Paquete de licencias de CxC asignado (PAQUETE_1/2/3) o null si no tiene. */
+  seatPackage: string | null;
+  /** Producto contratado (CXP|CXC) o null si no tiene asignado (ve todo). */
+  product: string | null;
+  /** Subcuentas ya usadas por bucket. */
+  seats: { admin: number; supervisor: number; agente: number };
+  /** Tope por bucket según el paquete; null = sin tope. */
+  seatLimits: { admin: number | null; supervisor: number | null; agente: number | null };
 }
 
 /** Gasto de un servicio/feature (Gemini, correos, etc.). */

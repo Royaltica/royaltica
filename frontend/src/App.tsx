@@ -44,6 +44,9 @@ function LegacyApp() {
   // Permisos/rol reales del JWT (para filtrar pestañas del portal corporativo).
   const [apiPermissions, setApiPermissions] = useState<string[]>([]);
   const [apiRole, setApiRole] = useState<string>('');
+  // Producto contratado por la organización (CXP|CXC); null = legacy, ve
+  // todo — ver punto 5c de José: separación completa CXP/CXC.
+  const [apiProduct, setApiProduct] = useState<string | null>(null);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -85,6 +88,7 @@ function LegacyApp() {
     setPendingTempToken(login.twoFactorRequired ? login.tempToken : null);
     setApiPermissions(apiUser.permissions ?? []);
     setApiRole(apiUser.role);
+    setApiProduct(apiUser.organizationProduct ?? null);
     setUser({
       uid: apiUser.id,
       displayName: apiUser.name,
@@ -183,7 +187,7 @@ function LegacyApp() {
   }
 
   if (role === 'corporate') {
-    return <CorporateDashboard user={user} onLogout={handleLogout} onBackToRole={handleLogout} sessionStartedAt={sessionStartedAt} permissions={apiPermissions} role={apiRole} />;
+    return <CorporateDashboard user={user} onLogout={handleLogout} onBackToRole={handleLogout} sessionStartedAt={sessionStartedAt} permissions={apiPermissions} role={apiRole} organizationProduct={apiProduct} />;
   }
 
   // Fallback de seguridad: sin rol resuelto, de vuelta al login.

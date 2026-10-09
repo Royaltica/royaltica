@@ -9,12 +9,14 @@ import { SidebarLink } from '../../components/SidebarLink.tsx';
 import { LeadsAdminPanel } from '../../features/admin/LeadsAdminPanel.tsx';
 
 // ─── Admin Dashboard (Royáltica CEO Portal) ──────────────────────────────────
+const EMPTY_SEATS = { admin: 0, supervisor: 0, agente: 0 };
+const EMPTY_SEAT_LIMITS = { admin: null, supervisor: null, agente: null };
 const MOCK_TENANTS = [
-  { id: 'T-001', name: 'Grupo Industrial Monterrey SA de CV', rfc: 'GIM901215AB3', plan: 'Enterprise', status: 'active' as const, invoicesProcessed: 1247, lastActive: '2026-06-12T08:30:00', monthlyVolume: 18_500_000, users: 12, healthScore: 97 },
-  { id: 'T-002', name: 'Distribuidora Nacional MX', rfc: 'DNM880430QR7', plan: 'Business', status: 'active' as const, invoicesProcessed: 583, lastActive: '2026-06-11T17:45:00', monthlyVolume: 6_200_000, users: 5, healthScore: 84 },
-  { id: 'T-003', name: 'Alimentos del Pacífico SA', rfc: 'APS950612KL0', plan: 'Starter', status: 'trial' as const, invoicesProcessed: 42, lastActive: '2026-06-10T12:00:00', monthlyVolume: 890_000, users: 2, healthScore: 71 },
-  { id: 'T-004', name: 'Constructora Vanguardia', rfc: 'CVA070823MN5', plan: 'Enterprise', status: 'active' as const, invoicesProcessed: 2104, lastActive: '2026-06-12T09:15:00', monthlyVolume: 32_400_000, users: 18, healthScore: 93 },
-  { id: 'T-005', name: 'Farmacéuticos del Bajío', rfc: 'FDB110517PQ2', plan: 'Business', status: 'suspended' as const, invoicesProcessed: 0, lastActive: '2026-05-28T10:00:00', monthlyVolume: 0, users: 7, healthScore: 0 },
+  { id: 'T-001', name: 'Grupo Industrial Monterrey SA de CV', rfc: 'GIM901215AB3', plan: 'Enterprise', status: 'active' as const, invoicesProcessed: 1247, lastActive: '2026-06-12T08:30:00', monthlyVolume: 18_500_000, users: 12, healthScore: 97, seatPackage: null, product: null, seats: EMPTY_SEATS, seatLimits: EMPTY_SEAT_LIMITS },
+  { id: 'T-002', name: 'Distribuidora Nacional MX', rfc: 'DNM880430QR7', plan: 'Business', status: 'active' as const, invoicesProcessed: 583, lastActive: '2026-06-11T17:45:00', monthlyVolume: 6_200_000, users: 5, healthScore: 84, seatPackage: null, product: null, seats: EMPTY_SEATS, seatLimits: EMPTY_SEAT_LIMITS },
+  { id: 'T-003', name: 'Alimentos del Pacífico SA', rfc: 'APS950612KL0', plan: 'Starter', status: 'trial' as const, invoicesProcessed: 42, lastActive: '2026-06-10T12:00:00', monthlyVolume: 890_000, users: 2, healthScore: 71, seatPackage: null, product: null, seats: EMPTY_SEATS, seatLimits: EMPTY_SEAT_LIMITS },
+  { id: 'T-004', name: 'Constructora Vanguardia', rfc: 'CVA070823MN5', plan: 'Enterprise', status: 'active' as const, invoicesProcessed: 2104, lastActive: '2026-06-12T09:15:00', monthlyVolume: 32_400_000, users: 18, healthScore: 93, seatPackage: null, product: null, seats: EMPTY_SEATS, seatLimits: EMPTY_SEAT_LIMITS },
+  { id: 'T-005', name: 'Farmacéuticos del Bajío', rfc: 'FDB110517PQ2', plan: 'Business', status: 'suspended' as const, invoicesProcessed: 0, lastActive: '2026-05-28T10:00:00', monthlyVolume: 0, users: 7, healthScore: 0, seatPackage: null, product: null, seats: EMPTY_SEATS, seatLimits: EMPTY_SEAT_LIMITS },
 ];
 
 /** Forma de un cliente en el panel admin (mock y real comparten esta forma). */
@@ -23,6 +25,11 @@ type AdminTenant = {
   status: 'active' | 'trial' | 'suspended';
   invoicesProcessed: number; lastActive: string; monthlyVolume: number;
   users: number; healthScore: number;
+  // ── Licencias de CxC (punto 5 de José: supervisión multi-cliente) ──
+  seatPackage: string | null;
+  product: string | null;
+  seats: { admin: number; supervisor: number; agente: number };
+  seatLimits: { admin: number | null; supervisor: number | null; agente: number | null };
 };
 
 /** Mapea una organización real del backend al shape que usa el panel. */
@@ -38,7 +45,17 @@ const mapOrgToTenant = (o: AdminOrg): AdminTenant => ({
   users: o.counts.users,
   // "Salud" no tiene backend de monitoreo aún: se deriva del estado/actividad.
   healthScore: o.deleted || !o.isActive ? 0 : o.counts.invoices > 0 ? 95 : 75,
+  seatPackage: o.seatPackage ?? null,
+  product: o.product ?? null,
+  seats: o.seats ?? { admin: 0, supervisor: 0, agente: 0 },
+  seatLimits: o.seatLimits ?? { admin: null, supervisor: null, agente: null },
 });
+
+const SEAT_PACKAGE_LABELS: Record<string, string> = {
+  PAQUETE_1: 'Paquete 1 (3/3/3)',
+  PAQUETE_2: 'Paquete 2 (4/4/4)',
+  PAQUETE_3: 'Paquete 3 (5/5/5)',
+};
 
 /** Traduce el código de acción de la bitácora a una frase legible en español. */
 const ACTIVITY_LABELS: Record<string, string> = {
@@ -187,6 +204,33 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
       setCreatingClient(false);
     }
   }, [newClient, loadTenants]);
+
+  // Asignar paquete de licencias / producto (CXP|CXC) a un cliente — punto 5
+  // de José: supervisión multi-cliente desde el panel superadmin.
+  const [savingSeat, setSavingSeat] = useState(false);
+  const assignSeatPackage = React.useCallback(async (orgId: string, seatPackage: 'PAQUETE_1' | 'PAQUETE_2' | 'PAQUETE_3') => {
+    setSavingSeat(true);
+    try {
+      await api.adminUpdateOrganization(orgId, { seatPackage });
+      await loadTenants();
+      setSelectedTenant(prev => {
+        if (!prev || prev.id !== orgId) return prev;
+        const refreshed = tenants.find(t => t.id === orgId);
+        return refreshed ?? prev;
+      });
+    } finally {
+      setSavingSeat(false);
+    }
+  }, [loadTenants, tenants]);
+  const assignProduct = React.useCallback(async (orgId: string, product: 'CXP' | 'CXC') => {
+    setSavingSeat(true);
+    try {
+      await api.adminUpdateOrganization(orgId, { product });
+      await loadTenants();
+    } finally {
+      setSavingSeat(false);
+    }
+  }, [loadTenants]);
 
   const activeTenants = tenants.filter(t => t.status === 'active');
   const totalVolume = tenants.reduce((s, t) => s + t.monthlyVolume, 0);
@@ -460,6 +504,55 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
                             <p className="text-lg font-serif text-brand-ink">{item.value}</p>
                           </div>
                         ))}
+                      </div>
+
+                      {/* Licencias de CxC: paquete, producto y uso de subasientos */}
+                      <div className="mt-5 pt-5 border-t border-brand-sand/15">
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-[9px] uppercase tracking-widest text-brand-ink/30 font-bold">Licencias de Cobranza (CxC)</p>
+                          {selectedTenant.seatPackage && (
+                            <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-brand-bone text-brand-ink/60">
+                              {SEAT_PACKAGE_LABELS[selectedTenant.seatPackage] ?? selectedTenant.seatPackage}
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 mb-4">
+                          {(['admin', 'supervisor', 'agente'] as const).map(bucket => {
+                            const used = selectedTenant.seats[bucket];
+                            const limit = selectedTenant.seatLimits[bucket];
+                            const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
+                            return (
+                              <div key={bucket} className="bg-brand-bone/50 rounded-xl p-3">
+                                <p className="text-[8px] uppercase tracking-widest text-brand-ink/30 font-bold mb-1">{bucket === 'admin' ? 'Administrador' : bucket === 'supervisor' ? 'Supervisor' : 'Agente'}</p>
+                                <p className="text-lg font-serif text-brand-ink">{used}<span className="text-xs text-brand-ink/40">/{limit ?? '∞'}</span></p>
+                                {limit !== null && (
+                                  <div className="w-full h-1.5 bg-brand-sand/20 rounded-full overflow-hidden mt-1.5">
+                                    <div className={`h-full rounded-full ${pct >= 100 ? 'bg-red-500' : pct >= 75 ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${pct}%` }} />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[9px] uppercase tracking-widest text-brand-ink/30 font-bold mr-1">Paquete:</span>
+                          {(['PAQUETE_1', 'PAQUETE_2', 'PAQUETE_3'] as const).map(pkg => (
+                            <button key={pkg} disabled={savingSeat} onClick={() => assignSeatPackage(selectedTenant.id, pkg)}
+                              className={`text-[9px] uppercase tracking-wider font-bold px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer disabled:opacity-40 ${
+                                selectedTenant.seatPackage === pkg ? 'bg-brand-ink text-brand-paper border-brand-ink' : 'bg-white text-brand-ink/50 border-brand-sand/30 hover:border-brand-gold/40'
+                              }`}>{SEAT_PACKAGE_LABELS[pkg]}</button>
+                          ))}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 mt-3">
+                          <span className="text-[9px] uppercase tracking-widest text-brand-ink/30 font-bold mr-1">Producto:</span>
+                          {(['CXP', 'CXC'] as const).map(prod => (
+                            <button key={prod} disabled={savingSeat} onClick={() => assignProduct(selectedTenant.id, prod)}
+                              className={`text-[9px] uppercase tracking-wider font-bold px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer disabled:opacity-40 ${
+                                selectedTenant.product === prod ? 'bg-brand-ink text-brand-paper border-brand-ink' : 'bg-white text-brand-ink/50 border-brand-sand/30 hover:border-brand-gold/40'
+                              }`}>{prod === 'CXP' ? 'Cuentas por Pagar' : 'Cuentas por Cobrar'}</button>
+                          ))}
+                          {!selectedTenant.product && <span className="text-[9px] text-brand-ink/30">Sin asignar — ve todo (legacy)</span>}
+                        </div>
                       </div>
 
                       {/* Costo de operación de este cliente (gasto real por servicio) */}

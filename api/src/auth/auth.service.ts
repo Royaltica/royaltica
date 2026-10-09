@@ -34,6 +34,9 @@ export interface AuthResult {
     avatarUrl: string | null;
     totpEnabled: boolean;
     operationalProfile: User['operationalProfile'];
+    /** Producto contratado por la organización (CXP|CXC|null = legacy, ve
+     * todo). Ver admin/dto/update-organization.dto.ts#PRODUCTS. */
+    organizationProduct: string | null;
   };
 }
 
@@ -289,7 +292,7 @@ export class AuthService {
   async getProfile(userId: string): Promise<AuthResult['user']> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('Usuario no encontrado.');
-    return this.toPublicUser(user);
+    return this.toPublicUser(user); // ya async, el caller hace await
   }
 
   /**
@@ -319,7 +322,7 @@ export class AuthService {
    * Si el usuario tiene 2FA activo, NO emite la sesión: devuelve un token
    * temporal (5 min) que solo sirve para POST /auth/2fa/complete.
    */
-  private gateTwoFactor(user: User): AuthResult {
+  private async gateTwoFactor(user: User): Promise<AuthResult> {
     void this.activity.record({
       organizationId: user.organizationId,
       userId: user.id,
@@ -333,7 +336,7 @@ export class AuthService {
       expiresIn: '5m',
       twoFactorRequired: true,
       tempToken: this.jwt.sign({ sub: user.id, twofa: true }, { expiresIn: '5m' }),
-      user: this.toPublicUser(user),
+      user: await this.toPublicUser(user),
     };
   }
 
@@ -346,7 +349,26 @@ export class AuthService {
     return isFullAccess ? [WILDCARD_PERMISSION] : user.permissions;
   }
 
-  private toPublicUser(user: User): AuthResult['user'] {
+  /** Lee settings.product de la organización del usuario (null si no
+   * aplica — proveedor/superadmin sin org, o org legacy sin producto
+   * asignado). Una query extra por login/refresh es aceptable: no está en
+   * un hot path de alto volumen. */
+  private async getOrganizationProduct(
+    organizationId: string | null,
+  ): Promise<string | null> {
+    if (!organizationId) return null;
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { settings: true },
+    });
+    const settings = (org?.settings ?? {}) as Record<string, unknown>;
+    return (settings.product as string | undefined) ?? null;
+  }
+
+  private async toPublicUser(user: User): Promise<AuthResult['user']> {
+    const organizationProduct = await this.getOrganizationProduct(
+      user.organizationId,
+    );
     return {
       id: user.id,
       email: user.email,
@@ -358,10 +380,11 @@ export class AuthService {
       avatarUrl: user.avatarUrl,
       totpEnabled: user.totpEnabled,
       operationalProfile: user.operationalProfile,
+      organizationProduct,
     };
   }
 
-  private buildAuthResult(user: User): AuthResult {
+  private async buildAuthResult(user: User): Promise<AuthResult> {
     const payload: JwtPayload = {
       sub: user.id,
       firebaseUid: user.firebaseUid,
@@ -375,7 +398,7 @@ export class AuthService {
     const accessToken = this.jwt.sign(payload);
     const expiresIn = this.config.get('JWT_EXPIRES_IN', { infer: true });
 
-    return { accessToken, expiresIn, user: this.toPublicUser(user) };
+    return { accessToken, expiresIn, user: await this.toPublicUser(user) };
   }
 }
 

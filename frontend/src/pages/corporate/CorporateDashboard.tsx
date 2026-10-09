@@ -46,8 +46,21 @@ const TAB_AREA: Record<CorporateTab, string> = {
   financing: 'factoraje',
   settings: 'configuracion',
 };
+/**
+ * Producto al que pertenece cada área (punto 5c de José: "cxp y cxc no se
+ * tienen que combinar por nada del mundo" — cada cliente solo tiene un
+ * producto contratado, y su gente solo ve las pestañas de ese producto).
+ * Las áreas que no aparecen aquí (dashboard, estados, configuración) son
+ * compartidas entre ambos productos y nunca se ocultan por esto.
+ */
+const AREA_PRODUCT: Partial<Record<string, 'CXP' | 'CXC'>> = {
+  proveedores: 'CXP',
+  finanzas: 'CXP',
+  factoraje: 'CXP',
+  cxc: 'CXC',
+};
 
-export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, permissions = [], role = '' }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, sessionStartedAt?: Date, permissions?: string[], role?: string }) {
+export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, permissions = [], role = '', organizationProduct = null }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, sessionStartedAt?: Date, permissions?: string[], role?: string, organizationProduct?: string | null }) {
   // La pestaña activa vive en la URL (react-router), no en useState: permite
   // recargar, compartir el link, y usar atrás/adelante del navegador para
   // moverse entre secciones del portal corporativo.
@@ -62,7 +75,15 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
   // Filtro de pestañas por permisos del JWT. Admin ve todo; el operativo solo
   // las áreas que se le asignaron al invitarlo (comodín '*' = acceso total).
   const isFullAccess = role === 'CORPORATE_ADMIN' || role === 'SUPERADMIN' || permissions.includes('*');
-  const canSee = (area: string) => isFullAccess || permissions.includes(area);
+  // Si la org tiene un producto asignado (CXP|CXC), un área del OTRO
+  // producto se oculta SIEMPRE, incluso para el admin de esa organización
+  // — es el producto que contrató, no un permiso que se le pueda dar. Sin
+  // producto asignado (null = legacy), no se oculta nada por esto.
+  const productBlocked = (area: string) =>
+    organizationProduct != null &&
+    AREA_PRODUCT[area] != null &&
+    AREA_PRODUCT[area] !== organizationProduct;
+  const canSee = (area: string) => !productBlocked(area) && (isFullAccess || permissions.includes(area));
 
   // Si la URL no corresponde a ninguna pestaña conocida (o el usuario no
   // tiene permiso para verla), redirige a /dashboard en vez de mostrar una

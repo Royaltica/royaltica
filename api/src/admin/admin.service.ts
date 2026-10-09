@@ -15,7 +15,7 @@ import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { QueryCostsDto } from './dto/query-costs.dto';
 import type { Env } from '../config/env.validation';
-import { SEAT_PACKAGE_PRESETS } from '../common/seat-limits';
+import { SEAT_PACKAGE_PRESETS, getSeatLimits } from '../common/seat-limits';
 
 const num = (v: Prisma.Decimal | null): number => (v ? Number(v) : 0);
 
@@ -148,33 +148,58 @@ export class AdminService {
 
   /** Lista todas las organizaciones con métricas básicas. */
   async listOrganizations() {
-    const [orgs, amounts] = await Promise.all([
-      this.prisma.organization.findMany({
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          name: true,
-          rfc: true,
-          plan: true,
-          isActive: true,
-          createdAt: true,
-          deletedAt: true,
-          _count: {
-            select: { users: true, suppliers: true, invoices: true },
+    const [orgs, amounts, adminCounts, supervisorCounts, agenteCounts] =
+      await Promise.all([
+        this.prisma.organization.findMany({
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            name: true,
+            rfc: true,
+            plan: true,
+            isActive: true,
+            createdAt: true,
+            deletedAt: true,
+            settings: true,
+            _count: {
+              select: { users: true, suppliers: true, invoices: true },
+            },
           },
-        },
-      }),
-      // Monto facturado total por organización (para "volumen" en el panel).
-      this.prisma.invoice.groupBy({
-        by: ['organizationId'],
-        where: { direction: 'PAYABLE', deletedAt: null },
-        _sum: { total: true },
-      }),
-    ]);
+        }),
+        // Monto facturado total por organización (para "volumen" en el panel).
+        this.prisma.invoice.groupBy({
+          by: ['organizationId'],
+          where: { direction: 'PAYABLE', deletedAt: null },
+          _sum: { total: true },
+        }),
+        // Uso de asientos por bucket (ver common/seat-limits.ts): para la
+        // pestaña de supervisión multi-cliente (cuántas subcuentas de cada
+        // tipo tiene cada cliente ya usadas, vs. el tope de su paquete).
+        this.prisma.user.groupBy({
+          by: ['organizationId'],
+          where: { role: 'CORPORATE_ADMIN' },
+          _count: { _all: true },
+        }),
+        this.prisma.user.groupBy({
+          by: ['organizationId'],
+          where: { operationalProfile: 'SUPERVISOR_GERENTE' },
+          _count: { _all: true },
+        }),
+        this.prisma.user.groupBy({
+          by: ['organizationId'],
+          where: { operationalProfile: 'AGENTE_EJECUTIVO' },
+          _count: { _all: true },
+        }),
+      ]);
 
     const amountByOrg = new Map(
       amounts.map((a) => [a.organizationId, num(a._sum.total)]),
     );
+    const toCountMap = (rows: { organizationId: string; _count: { _all: number } }[]) =>
+      new Map(rows.map((r) => [r.organizationId, r._count._all]));
+    const adminByOrg = toCountMap(adminCounts);
+    const supervisorByOrg = toCountMap(supervisorCounts);
+    const agenteByOrg = toCountMap(agenteCounts);
 
     return orgs.map((o) => ({
       id: o.id,
@@ -183,6 +208,31 @@ export class AdminService {
       plan: o.plan,
       isActive: o.isActive,
       deleted: o.deletedAt !== null,
+      seatPackage:
+        ((o.settings as Record<string, unknown>)?.seatPackage as
+          | string
+          | undefined) ?? null,
+      product:
+        ((o.settings as Record<string, unknown>)?.product as
+          | string
+          | undefined) ?? null,
+      seats: {
+        admin: adminByOrg.get(o.id) ?? 0,
+        supervisor: supervisorByOrg.get(o.id) ?? 0,
+        agente: agenteByOrg.get(o.id) ?? 0,
+      },
+      // Infinity (sin paquete asignado = sin tope) no es JSON válido; se
+      // normaliza a null explícitamente para que el frontend no dependa del
+      // comportamiento implícito de JSON.stringify(Infinity) === "null".
+      seatLimits: (() => {
+        const l = getSeatLimits({ settings: o.settings });
+        const toNullable = (n: number) => (Number.isFinite(n) ? n : null);
+        return {
+          admin: toNullable(l.admin),
+          supervisor: toNullable(l.supervisor),
+          agente: toNullable(l.agente),
+        };
+      })(),
       createdAt: o.createdAt,
       amount: amountByOrg.get(o.id) ?? 0,
       counts: {
@@ -290,19 +340,25 @@ export class AdminService {
     const data: Prisma.OrganizationUpdateInput = {};
     if (dto.plan !== undefined) data.plan = dto.plan;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
-    if (dto.seatPackage !== undefined) {
-      // Se guarda en settings.seatLimits (JSON) — ver common/seat-limits.ts
-      // sobre por qué no es una columna propia todavía.
+    if (dto.seatPackage !== undefined || dto.product !== undefined) {
+      // Ambos se guardan en settings (JSON) — ver common/seat-limits.ts
+      // sobre por qué no son columnas propias todavía. Se fusionan en un
+      // solo patch para no pisar uno al escribir el otro.
       const settings = (org.settings ?? {}) as Prisma.JsonObject;
+      const patch: Record<string, unknown> = { ...settings };
+      if (dto.seatPackage !== undefined) {
+        patch.seatLimits = SEAT_PACKAGE_PRESETS[dto.seatPackage];
+        patch.seatPackage = dto.seatPackage;
+      }
+      if (dto.product !== undefined) {
+        patch.product = dto.product;
+      }
       // Cast explícito a InputJsonValue: Prisma exige que el shape calce
-      // estructuralmente con JsonValue, y la interfaz SeatLimits (con
-      // Number.POSITIVE_INFINITY tipado como `number`) no lo satisface por
-      // inferencia automática aunque el valor real siempre sea serializable.
-      data.settings = {
-        ...settings,
-        seatLimits: SEAT_PACKAGE_PRESETS[dto.seatPackage],
-        seatPackage: dto.seatPackage,
-      } as Prisma.InputJsonValue;
+      // estructuralmente con JsonValue, y los tipos de origen (SeatLimits
+      // con Number.POSITIVE_INFINITY tipado `number`, Product como union
+      // literal) no lo satisfacen por inferencia automática aunque el valor
+      // real siempre sea serializable.
+      data.settings = patch as unknown as Prisma.InputJsonValue;
     }
 
     const updated = await this.prisma.organization.update({
