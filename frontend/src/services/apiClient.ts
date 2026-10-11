@@ -1161,6 +1161,26 @@ export const api = {
     return request<AdminCostByFeature>('GET', '/admin/costs/by-feature');
   },
 
+  /** ¿Está vivo el agente de recordatorios de cobranza, o se trabó/falló? */
+  async adminCollectionEngineHealth(): Promise<AdminCollectionEngineHealth> {
+    return request<AdminCollectionEngineHealth>('GET', '/admin/jobs/collection-engine');
+  },
+
+  /** Costo aislado de recordatorios de cobranza de toda la plataforma. */
+  async adminRemindersCostGlobal(): Promise<AdminRemindersCost> {
+    return request<AdminRemindersCost>('GET', '/admin/costs/reminders');
+  },
+
+  /** Historial de accesos (quién entró y cuándo). */
+  async adminLoginHistory(limit = 50): Promise<AdminLoginEvent[]> {
+    return request<AdminLoginEvent[]>('GET', `/admin/access-log?limit=${limit}`);
+  },
+
+  /** Histórico de latencia/uptime de DB/Redis (snapshots cada 10 min). */
+  async adminHealthHistory(hours = 24): Promise<AdminHealthHistory> {
+    return request<AdminHealthHistory>('GET', `/admin/health-history?hours=${hours}`);
+  },
+
   /** Gasto por cliente (organización). */
   async adminCosts(): Promise<AdminCostOrg[]> {
     return request<AdminCostOrg[]>('GET', '/admin/costs');
@@ -1737,6 +1757,21 @@ export interface AdminOrg {
   deleted: boolean;
   createdAt: string;
   amount: number;
+  /** Recordatorios de cobranza enviados (histórico completo). */
+  remindersSent: number;
+  /** Costo SOLO de recordatorios (aislado del resto de correos/WhatsApp). */
+  remindersCostMxn: number;
+  /** Último login REAL de cualquier usuario de esta organización (null = nadie ha entrado). */
+  lastLoginAt: string | null;
+  /** Costo operativo TOTAL (todos los features), para calcular margen. */
+  totalCostMxn: number;
+  /** Ingreso mensual aproximado según el plan (no es el monto real de Stripe). */
+  revenueMxn: number;
+  /** revenueMxn - totalCostMxn. */
+  marginMxn: number;
+  subscriptionStatus: string | null;
+  /** Salud real calculada en backend (pagos fallidos, facturas vencidas, inactividad). */
+  healthScore: number;
   counts: { users: number; suppliers: number; invoices: number };
   /** Paquete de licencias de CxC asignado (PAQUETE_1/2/3) o null si no tiene. */
   seatPackage: string | null;
@@ -1777,6 +1812,51 @@ export interface AdminCostOrg {
   events: number;
   units: number;
   estimatedCostMxn: number;
+}
+
+/** Costo aislado de recordatorios de cobranza (GET /admin/costs/reminders). */
+export interface AdminRemindersCost {
+  tag: string;
+  events: number;
+  units: number;
+  estimatedCostMxn: number;
+}
+
+/** Un evento de login (GET /admin/access-log). */
+export interface AdminLoginEvent {
+  id: string;
+  action: string;
+  user: string;
+  userEmail: string | null;
+  organization: string;
+  ipAddress: string | null;
+  createdAt: string;
+}
+
+/** Estado del agente/motor de recordatorios de cobranza (GET /admin/jobs/collection-engine). */
+export interface AdminCollectionEngineHealth {
+  status: 'ok' | 'failed' | 'stuck' | 'unknown';
+  lastRunAt: string | null;
+  lastRunSuccess: boolean | null;
+  lastRunResult: Record<string, unknown> | null;
+  hoursSinceLastRun: number | null;
+}
+
+/** Un snapshot periódico de salud (GET /admin/health-history). */
+export interface AdminHealthSample {
+  at: string;
+  dbOk: boolean;
+  dbLatencyMs: number | null;
+  redisOk: boolean;
+  redisLatencyMs: number | null;
+}
+
+/** Histórico de latencia/uptime de DB/Redis en una ventana de tiempo. */
+export interface AdminHealthHistory {
+  windowHours: number;
+  samples: AdminHealthSample[];
+  uptimePct: { db: number; redis: number };
+  avgLatencyMs: { db: number | null; redis: number | null };
 }
 
 /** Un evento de la bitácora global del panel SUPERADMIN (GET /admin/activity). */

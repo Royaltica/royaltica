@@ -20,6 +20,11 @@ const GEMINI_OUTPUT_USD_PER_M = 0.4;
 // Resend — ~$20 USD por 50,000 correos ≈ $0.0004 USD por correo.
 const EMAIL_USD_PER_UNIT = 0.0004;
 
+// WhatsApp Business (Meta Cloud API), categoría "utility" en México —
+// ~$0.0082 USD por conversación/mensaje iniciado por negocio. Antes NO se
+// registraba ningún costo de WhatsApp (ver WhatsappService#sendMessage).
+const WHATSAPP_USD_PER_UNIT = 0.0082;
+
 // Google Cloud Storage (Standard) — ~$0.020 USD por GB-mes.
 // La subida se cobra como el costo mensual de almacenar esos bytes.
 const GCS_USD_PER_GB_MONTH = 0.02;
@@ -58,6 +63,9 @@ export function estimateCostMxn(
       break;
     case 'EMAIL_SENT':
       usd = units * EMAIL_USD_PER_UNIT;
+      break;
+    case 'WHATSAPP_SENT':
+      usd = units * WHATSAPP_USD_PER_UNIT;
       break;
     case 'GCS_UPLOAD':
       // units = bytes subidos.

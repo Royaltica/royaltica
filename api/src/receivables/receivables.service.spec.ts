@@ -314,11 +314,13 @@ describe('ReceivablesService', () => {
       'org-1',
       '+5215512345678',
       expect.stringContaining('tok123'),
+      'collection_reminder',
     );
     expect(whatsapp.sendForOrg).toHaveBeenCalledWith(
       'org-1',
       '+5215512345678',
       expect.stringContaining('012345678901234567'),
+      'collection_reminder',
     );
     expect(email.sendCollectionReminder).toHaveBeenCalledWith(
       'a@b.mx',

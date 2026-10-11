@@ -51,13 +51,17 @@ export class AdminController {
   updateOrganization(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateOrganizationDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.admin.updateOrganization(id, dto);
+    return this.admin.updateOrganization(id, dto, { id: user.id, email: user.email });
   }
 
   @Delete('organizations/:id')
-  removeOrganization(@Param('id', ParseUUIDPipe) id: string) {
-    return this.admin.removeOrganization(id);
+  removeOrganization(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.admin.removeOrganization(id, { id: user.id, email: user.email });
   }
 
   /**
@@ -86,6 +90,28 @@ export class AdminController {
     return this.admin.recentActivity(limit ? Number(limit) : 50);
   }
 
+  /** ¿Está vivo el agente de recordatorios de cobranza, o se trabó/falló? */
+  @Get('jobs/collection-engine')
+  collectionEngineHealth() {
+    return this.admin.collectionEngineHealth();
+  }
+
+  /** Historial de accesos (quién entró y cuándo). SUPERADMIN. */
+  @Get('access-log')
+  loginHistory(@Query('limit') limit?: string) {
+    return this.admin.loginHistory(limit ? Number(limit) : 50);
+  }
+
+  /**
+   * Histórico de latencia/uptime de DB/Redis (snapshots cada 10 min, no solo
+   * el snapshot del momento en que se abre el dashboard). `hours` acota la
+   * ventana (máx 168 = 7 días).
+   */
+  @Get('health-history')
+  healthHistory(@Query('hours') hours?: string) {
+    return this.admin.healthHistory(hours ? Number(hours) : 24);
+  }
+
   // ── Cost tracking ─────────────────────────────────────────
 
   @Get('costs')
@@ -102,6 +128,12 @@ export class AdminController {
   @Get('costs/by-feature')
   costsByFeature(@Query() query: QueryCostsDto) {
     return this.admin.globalCostByFeature(query);
+  }
+
+  /** Costo aislado de recordatorios de cobranza (toda la plataforma). Declarado ANTES de :orgId. */
+  @Get('costs/reminders')
+  remindersCostGlobal(@Query() query: QueryCostsDto) {
+    return this.admin.remindersCostGlobal(query);
   }
 
   @Get('costs/:orgId')

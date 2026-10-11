@@ -17,8 +17,21 @@ import { QueryCostsDto } from './dto/query-costs.dto';
 import type { Env } from '../config/env.validation';
 import { SEAT_PACKAGE_PRESETS, getSeatLimits } from '../common/seat-limits';
 import { AuthService, type AuthResult } from '../auth/auth.service';
+import {
+  COLLECTION_ENGINE_JOB_RUN_ACTION,
+  SYSTEM_HEALTH_SNAPSHOT_ACTION,
+} from '../jobs/jobs.service';
+import { PLAN_MONTHLY_PRICE_MXN, isRevenueGenerating } from '../common/plan-pricing';
+import { computeHealthScore } from '../common/health-score';
+
+/** Cadencia esperada del motor de cobranza (cron diario 11am). Si no hay una
+ * corrida exitosa en más de esta ventana, se marca "atascado" en vez de
+ * esperar indefinidamente a que aparezca una — ver AdminService#collectionEngineHealth. */
+const COLLECTION_ENGINE_STALE_HOURS = 26;
 
 const num = (v: Prisma.Decimal | null): number => (v ? Number(v) : 0);
+const avg = (nums: number[]): number | null =>
+  nums.length > 0 ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : null;
 
 /**
  * Operaciones del panel SUPERADMIN: gestión de organizaciones (onboarding,
@@ -161,8 +174,21 @@ export class AdminService {
 
   /** Lista todas las organizaciones con métricas básicas. */
   async listOrganizations() {
-    const [orgs, amounts, adminCounts, supervisorCounts, agenteCounts] =
-      await Promise.all([
+    const [
+      orgs,
+      amounts,
+      adminCounts,
+      supervisorCounts,
+      agenteCounts,
+      sequenceReminderCounts,
+      singleStepReminderLogs,
+      remindersCostByOrg,
+      lastLoginByOrg,
+      totalCostByOrg,
+      paymentsTotalByOrg,
+      paymentsFailedByOrg,
+      overdueInvoicesByOrg,
+    ] = await Promise.all([
         this.prisma.organization.findMany({
           orderBy: { createdAt: 'desc' },
           select: {
@@ -174,6 +200,7 @@ export class AdminService {
             createdAt: true,
             deletedAt: true,
             settings: true,
+            subscriptionStatus: true,
             _count: {
               select: { users: true, suppliers: true, invoices: true },
             },
@@ -203,6 +230,53 @@ export class AdminService {
           where: { operationalProfile: 'AGENTE_EJECUTIVO' },
           _count: { _all: true },
         }),
+        // Recordatorios del motor de escalamiento multi-paso (collection-sequences).
+        this.prisma.activityLog.groupBy({
+          by: ['organizationId'],
+          where: { action: 'COLLECTION_SEQUENCE_STEP_SENT' },
+          _count: { _all: true },
+        }),
+        // Recordatorios del agente de un solo paso (T14/T3, ReceivablesService)
+        // — viven en InvoiceAuditLog, no en ActivityLog, y sin organizationId
+        // propio (solo vía Invoice), así que no se puede hacer un groupBy
+        // directo: se trae la proyección mínima y se agrega en memoria.
+        this.prisma.invoiceAuditLog.findMany({
+          where: { action: 'REMINDER_SENT' },
+          select: { invoice: { select: { organizationId: true } } },
+        }),
+        // Costo aislado de recordatorios de cobranza (tag 'collection_reminder'),
+        // separado del resto de correos/WhatsApp — pedido explícito de Paolo.
+        this.usage.costByTagPerOrganization('collection_reminder'),
+        // Último acceso REAL (login) por organización — User.lastLoginAt ya se
+        // actualiza en cada login (ver AuthService#verifyToken/issueSession);
+        // solo faltaba exponerlo acá. Distinto de "Cliente Desde" (createdAt).
+        this.prisma.user.groupBy({
+          by: ['organizationId'],
+          where: { lastLoginAt: { not: null } },
+          _max: { lastLoginAt: true },
+        }),
+        // Costo TOTAL por organización (todos los features, no solo
+        // recordatorios) — para calcular margen (ingreso - costo) por cliente.
+        this.usage.costByOrganization(),
+        // ── Señales reales para healthScore (ver common/health-score.ts) ──
+        this.prisma.payment.groupBy({
+          by: ['organizationId'],
+          _count: { _all: true },
+        }),
+        this.prisma.payment.groupBy({
+          by: ['organizationId'],
+          where: { status: 'FAILED' },
+          _count: { _all: true },
+        }),
+        this.prisma.invoice.groupBy({
+          by: ['organizationId'],
+          where: {
+            dueDate: { lt: new Date() },
+            status: { not: InvoiceStatus.PAID },
+            deletedAt: null,
+          },
+          _count: { _all: true },
+        }),
       ]);
 
     const amountByOrg = new Map(
@@ -225,6 +299,25 @@ export class AdminService {
     const adminByOrg = toCountMap(adminCounts);
     const supervisorByOrg = toCountMap(supervisorCounts);
     const agenteByOrg = toCountMap(agenteCounts);
+
+    // Recordatorios enviados = motor multi-paso (ActivityLog) + agente de un
+    // solo paso T14/T3 (InvoiceAuditLog, agregado en memoria arriba).
+    const remindersSentByOrg = toCountMap(sequenceReminderCounts);
+    for (const log of singleStepReminderLogs) {
+      const orgId = log.invoice.organizationId;
+      remindersSentByOrg.set(orgId, (remindersSentByOrg.get(orgId) ?? 0) + 1);
+    }
+    const lastLoginByOrgMap = new Map(
+      lastLoginByOrg
+        .filter((r): r is typeof r & { organizationId: string } => r.organizationId !== null)
+        .map((r) => [r.organizationId, r._max.lastLoginAt]),
+    );
+    const totalCostByOrgMap = new Map(
+      totalCostByOrg.map((c) => [c.organizationId, c.estimatedCostMxn]),
+    );
+    const paymentsTotalByOrgMap = toCountMap(paymentsTotalByOrg);
+    const paymentsFailedByOrgMap = toCountMap(paymentsFailedByOrg);
+    const overdueInvoicesByOrgMap = toCountMap(overdueInvoicesByOrg);
 
     return orgs.map((o) => ({
       id: o.id,
@@ -260,6 +353,35 @@ export class AdminService {
       })(),
       createdAt: o.createdAt,
       amount: amountByOrg.get(o.id) ?? 0,
+      // Recordatorios de cobranza enviados (histórico completo) — punto
+      // pedido por Paolo en el audio del superadmin.
+      remindersSent: remindersSentByOrg.get(o.id) ?? 0,
+      // Costo aislado SOLO de recordatorios (no mezclado con otros correos/WhatsApp).
+      remindersCostMxn: remindersCostByOrg.get(o.id)?.estimatedCostMxn ?? 0,
+      // Margen estimado (ingreso de plan - costo operativo total) — ingreso
+      // aproximado por PLAN_MONTHLY_PRICE_MXN (no es el monto real de
+      // Stripe, ver common/plan-pricing.ts), costo real medido vía UsageEvent.
+      totalCostMxn: totalCostByOrgMap.get(o.id) ?? 0,
+      revenueMxn: isRevenueGenerating(o.subscriptionStatus) ? PLAN_MONTHLY_PRICE_MXN[o.plan] : 0,
+      marginMxn:
+        (isRevenueGenerating(o.subscriptionStatus) ? PLAN_MONTHLY_PRICE_MXN[o.plan] : 0) -
+        (totalCostByOrgMap.get(o.id) ?? 0),
+      subscriptionStatus: o.subscriptionStatus,
+      // Último login REAL de cualquier usuario de esta organización (null si
+      // nunca ha entrado nadie). Distinto de createdAt ("Cliente Desde").
+      lastLoginAt: lastLoginByOrgMap.get(o.id)?.toISOString() ?? null,
+      // "Salud" real (ver common/health-score.ts): % de pagos fallidos, %
+      // de facturas vencidas y qué tan reciente fue el último login — ya NO
+      // es la heurística fija de antes (deleted/inactive → 0, invoices>0 → 95).
+      healthScore: computeHealthScore({
+        deleted: o.deletedAt !== null,
+        isActive: o.isActive,
+        totalPayments: paymentsTotalByOrgMap.get(o.id) ?? 0,
+        failedPayments: paymentsFailedByOrgMap.get(o.id) ?? 0,
+        totalInvoices: o._count.invoices,
+        overdueInvoices: overdueInvoicesByOrgMap.get(o.id) ?? 0,
+        lastLoginAt: lastLoginByOrgMap.get(o.id) ?? null,
+      }),
       counts: {
         users: o._count.users,
         suppliers: o._count.suppliers,
@@ -289,6 +411,43 @@ export class AdminService {
       entityType: a.entityType,
       user: a.user?.name ?? 'Sistema',
       organization: a.organization?.name ?? '—',
+      createdAt: a.createdAt.toISOString(),
+    }));
+  }
+
+  /**
+   * Historial de accesos (quién entró y cuándo) — pedido explícito de Paolo.
+   * Filtra la misma bitácora a solo eventos de login (AuthService ya los
+   * escribe en cada verifyToken/issueSession exitoso): LOGIN_SUCCESS,
+   * LOGIN_2FA_PENDING, LOGIN_2FA_COMPLETED, e impersonation del SUPERADMIN.
+   */
+  async loginHistory(limit = 50) {
+    const take = Math.min(200, Math.max(1, limit));
+    const rows = await this.prisma.activityLog.findMany({
+      where: {
+        action: {
+          in: [
+            'LOGIN_SUCCESS',
+            'LOGIN_2FA_PENDING',
+            'LOGIN_2FA_COMPLETED',
+            'SUPERADMIN_IMPERSONATION_STARTED',
+          ],
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+      include: {
+        user: { select: { name: true, email: true } },
+        organization: { select: { name: true } },
+      },
+    });
+    return rows.map((a) => ({
+      id: a.id,
+      action: a.action,
+      user: a.user?.name ?? 'Sistema',
+      userEmail: a.user?.email ?? null,
+      organization: a.organization?.name ?? '—',
+      ipAddress: a.ipAddress,
       createdAt: a.createdAt.toISOString(),
     }));
   }
@@ -355,13 +514,28 @@ export class AdminService {
     };
   }
 
-  /** Cambia plan y/o estado activo de una organización. */
-  async updateOrganization(id: string, dto: UpdateOrganizationDto) {
+  /**
+   * Cambia plan y/o estado activo de una organización.
+   * `actor` es el SUPERADMIN que hace el cambio — se audita en ActivityLog
+   * (acción SUPERADMIN_ORG_UPDATED) para poder revisar después quién tocó
+   * qué plan/paquete/producto de qué cliente y cuándo.
+   */
+  async updateOrganization(
+    id: string,
+    dto: UpdateOrganizationDto,
+    actor?: { id: string; email: string },
+  ) {
     const org = await this.prisma.organization.findUnique({
       where: { id },
-      select: { settings: true },
+      select: { plan: true, isActive: true, settings: true, name: true },
     });
     if (!org) throw new NotFoundException('Organización no encontrada.');
+    const before = {
+      plan: org.plan,
+      isActive: org.isActive,
+      seatPackage: (org.settings as Prisma.JsonObject | null)?.seatPackage ?? null,
+      product: (org.settings as Prisma.JsonObject | null)?.product ?? null,
+    };
     const data: Prisma.OrganizationUpdateInput = {};
     if (dto.plan !== undefined) data.plan = dto.plan;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
@@ -391,16 +565,63 @@ export class AdminService {
       data,
       select: { id: true, name: true, plan: true, isActive: true, settings: true },
     });
+
+    const after = {
+      plan: updated.plan,
+      isActive: updated.isActive,
+      seatPackage: (updated.settings as Prisma.JsonObject | null)?.seatPackage ?? null,
+      product: (updated.settings as Prisma.JsonObject | null)?.product ?? null,
+    };
+    const changed = (Object.keys(after) as Array<keyof typeof after>).filter(
+      (k) => before[k] !== after[k],
+    );
+    if (changed.length > 0) {
+      await this.prisma.activityLog
+        .create({
+          data: {
+            organizationId: id,
+            userId: actor?.id,
+            action: 'SUPERADMIN_ORG_UPDATED',
+            entityType: 'Organization',
+            entityId: id,
+            metadata: {
+              orgName: org.name,
+              actorEmail: actor?.email ?? null,
+              changed,
+              before: Object.fromEntries(changed.map((k) => [k, before[k]])),
+              after: Object.fromEntries(changed.map((k) => [k, after[k]])),
+            },
+          },
+        })
+        .catch(() => undefined);
+    }
+
     return updated;
   }
 
   /** Soft-delete: marca deletedAt y desactiva. No borra datos. */
-  async removeOrganization(id: string) {
-    await this.ensureExists(id);
+  async removeOrganization(id: string, actor?: { id: string; email: string }) {
+    const org = await this.prisma.organization.findUnique({
+      where: { id },
+      select: { name: true },
+    });
+    if (!org) throw new NotFoundException('Organización no encontrada.');
     await this.prisma.organization.update({
       where: { id },
       data: { deletedAt: new Date(), isActive: false },
     });
+    await this.prisma.activityLog
+      .create({
+        data: {
+          organizationId: id,
+          userId: actor?.id,
+          action: 'SUPERADMIN_ORG_DELETED',
+          entityType: 'Organization',
+          entityId: id,
+          metadata: { orgName: org.name, actorEmail: actor?.email ?? null },
+        },
+      })
+      .catch(() => undefined);
     return { deleted: true, id };
   }
 
@@ -458,6 +679,11 @@ export class AdminService {
     return this.usage.globalBreakdownByFeature(this.toPeriod(query));
   }
 
+  /** Costo aislado de recordatorios de cobranza de TODA la plataforma (separado del resto de correos/WhatsApp). */
+  remindersCostGlobal(query: QueryCostsDto) {
+    return this.usage.costByTag('collection_reminder', undefined, this.toPeriod(query));
+  }
+
   async costForOrganization(organizationId: string, query: QueryCostsDto) {
     await this.ensureExists(organizationId);
     return this.usage.breakdownByFeature(organizationId, this.toPeriod(query));
@@ -465,6 +691,91 @@ export class AdminService {
 
   realtimeCosts() {
     return this.usage.realtime();
+  }
+
+  // ── Salud del agente de recordatorios (cron de cobranza) ───
+
+  /**
+   * Estado del motor de escalamiento de cobranza (JobsService#collectionSequenceEngine,
+   * corre diario 11am). Distinto del health-check general (API/DB/Redis/IA):
+   * aquí se responde específicamente "¿está vivo el agente de recordatorios,
+   * o se quedó trabado/falló?" — pedido explícito de Paolo.
+   */
+  async collectionEngineHealth(): Promise<{
+    status: 'ok' | 'failed' | 'stuck' | 'unknown';
+    lastRunAt: string | null;
+    lastRunSuccess: boolean | null;
+    lastRunResult: Record<string, unknown> | null;
+    hoursSinceLastRun: number | null;
+  }> {
+    const last = await this.prisma.activityLog.findFirst({
+      where: { action: COLLECTION_ENGINE_JOB_RUN_ACTION },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!last) {
+      return {
+        status: 'unknown',
+        lastRunAt: null,
+        lastRunSuccess: null,
+        lastRunResult: null,
+        hoursSinceLastRun: null,
+      };
+    }
+    const meta = (last.metadata ?? {}) as Record<string, unknown>;
+    const success = meta.success === true;
+    const hoursSince = (Date.now() - last.createdAt.getTime()) / 3_600_000;
+    const stuck = hoursSince > COLLECTION_ENGINE_STALE_HOURS;
+    return {
+      status: stuck ? 'stuck' : success ? 'ok' : 'failed',
+      lastRunAt: last.createdAt.toISOString(),
+      lastRunSuccess: success,
+      lastRunResult: meta,
+      hoursSinceLastRun: Math.round(hoursSince * 10) / 10,
+    };
+  }
+
+  // ── Histórico de latencia/uptime (snapshots cada 10 min, ver JobsService#systemHealthSnapshot) ──
+
+  /**
+   * Histórico real de salud del sistema (no solo el snapshot que se mide al
+   * cargar el dashboard): lee los snapshots periódicos que JobsService
+   * guarda cada 10 minutos en ActivityLog, y calcula uptime % de DB/Redis
+   * en la ventana solicitada además de la serie de latencia para graficar.
+   */
+  async healthHistory(hours = 24) {
+    const since = new Date(Date.now() - Math.min(168, Math.max(1, hours)) * 3_600_000);
+    const rows = await this.prisma.activityLog.findMany({
+      where: { action: SYSTEM_HEALTH_SNAPSHOT_ACTION, createdAt: { gte: since } },
+      orderBy: { createdAt: 'asc' },
+      select: { createdAt: true, metadata: true },
+    });
+
+    const samples = rows.map((r) => {
+      const m = r.metadata as Record<string, unknown>;
+      return {
+        at: r.createdAt.toISOString(),
+        dbOk: m.dbOk === true,
+        dbLatencyMs: typeof m.dbLatencyMs === 'number' ? m.dbLatencyMs : null,
+        redisOk: m.redisOk === true,
+        redisLatencyMs: typeof m.redisLatencyMs === 'number' ? m.redisLatencyMs : null,
+      };
+    });
+
+    const pct = (okCount: number) =>
+      samples.length > 0 ? Math.round((okCount / samples.length) * 1000) / 10 : 100;
+
+    return {
+      windowHours: hours,
+      samples,
+      uptimePct: {
+        db: pct(samples.filter((s) => s.dbOk).length),
+        redis: pct(samples.filter((s) => s.redisOk).length),
+      },
+      avgLatencyMs: {
+        db: avg(samples.map((s) => s.dbLatencyMs).filter((n): n is number => n !== null)),
+        redis: avg(samples.map((s) => s.redisLatencyMs).filter((n): n is number => n !== null)),
+      },
+    };
   }
 
   // ── Hardening checklist ────────────────────────────────────

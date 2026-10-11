@@ -18,6 +18,8 @@ export interface SendEmailInput {
   organizationId?: string;
   /** Adjuntos opcionales (p. ej. el PDF del reporte de cobranza). */
   attachments?: SendEmailAttachment[];
+  /** Etiqueta libre para desglosar el gasto después (ver UsageService#costByTag). */
+  usageTag?: string;
 }
 
 export interface SendEmailAttachment {
@@ -126,7 +128,7 @@ export class EmailService implements OnModuleInit {
             organizationId: input.organizationId,
             feature: 'EMAIL_SENT',
             units: recipients,
-            metadata: { subject: input.subject },
+            metadata: { subject: input.subject, ...(input.usageTag ? { tag: input.usageTag } : {}) },
           });
         }
         return { sent: true, id: data?.id };
@@ -235,6 +237,7 @@ export class EmailService implements OnModuleInit {
       to,
       organizationId,
       replyTo,
+      usageTag: 'collection_reminder',
       subject: `Recordatorio de pago · factura ${folio}`,
       html: this.wrap(
         `<h2>Hola, ${customerName}</h2>
@@ -265,6 +268,7 @@ export class EmailService implements OnModuleInit {
     return this.send({
       to,
       organizationId,
+      usageTag: 'collection_reminder',
       subject:
         tone === 'URGENT' || tone === 'FIRM'
           ? 'Royáltica · Cuenta pendiente de pago'
