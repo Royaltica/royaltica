@@ -73,11 +73,17 @@ function FilaFactura({
   if (!f.planInicio) {
     cobro = <span className="text-amber-700 font-semibold">Sin iniciar</span>;
   } else if (f.principal) {
-    const act = planCuenta(c).actual;
+    const { actual: act, proxima } = planCuenta(c);
     cobro = (
       <span>
         Desde el {f.planInicio}
-        {c.saldada ? ' · saldada' : act ? ` · hoy en ${act.etiqueta} (${act.nombre})` : ''}
+        {c.saldada
+          ? ' · saldada'
+          : act
+            ? ` · hoy en ${act.etiqueta} (${act.nombre})`
+            : proxima
+              ? ` · al día, sigue ${proxima.etiqueta} en ${proxima.faltan} d`
+              : ''}
       </span>
     );
   } else {

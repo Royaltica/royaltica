@@ -25,6 +25,8 @@ export type PlanConfig = {
   cuentaGrande: boolean;
   aclaraciones: boolean;
   resultados: Resultados;
+  /** Pasos que ya salieron por WhatsApp (reales): cuentan como hechos. */
+  enviados?: string[];
 };
 
 export type Factura = {

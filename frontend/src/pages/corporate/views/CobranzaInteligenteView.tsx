@@ -739,7 +739,9 @@ function RecordatoriosPanel() {
             {visibles.map((r) => {
               const cuentaFila = cuentaDe(r.cliente);
               const activa = selected === r.cliente;
-              const pasoActual = planDeCliente(r.cliente).actual;
+              const planFila = planDeCliente(r.cliente);
+              const pasoActual = planFila.actual;
+              const siguiente = !pasoActual ? planFila.proxima : undefined;
               return (
                 <button
                   key={r.cliente}
@@ -780,6 +782,15 @@ function RecordatoriosPanel() {
                           <FaseDot fase={pasoActual.fase} />
                           <span className="text-[11px] text-brand-ink/55 truncate">
                             {pasoActual.etiqueta} · {pasoActual.nombre}
+                          </span>
+                        </div>
+                      )}
+                      {/* El nivel de hoy ya salió por WhatsApp: se muestra el que sigue. */}
+                      {siguiente && (
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          <Check size={11} className="text-emerald-600 shrink-0" />
+                          <span className="text-[11px] text-brand-ink/45 truncate">
+                            Al día · sigue {siguiente.etiqueta} en {siguiente.faltan} d
                           </span>
                         </div>
                       )}
@@ -846,11 +857,18 @@ function RecordatoriosPanel() {
                 </div>
               </div>
               {(() => {
-                const act = planCuenta(activoVivo).actual;
+                const { actual: act, proxima } = planCuenta(activoVivo);
                 if (activoVivo.saldada) return <span className="audit-badge shrink-0 bg-emerald-50 text-emerald-700">Saldada</span>;
-                return act ? (
-                  <span className="audit-badge shrink-0 bg-brand-ink/5 text-brand-ink/70">
-                    Hoy: {act.etiqueta} · {act.nombre}
+                if (act) {
+                  return (
+                    <span className="audit-badge shrink-0 bg-brand-ink/5 text-brand-ink/70">
+                      Hoy: {act.etiqueta} · {act.nombre}
+                    </span>
+                  );
+                }
+                return proxima ? (
+                  <span className="audit-badge shrink-0 bg-emerald-50 text-emerald-700">
+                    Al día · sigue {proxima.etiqueta} en {proxima.faltan} d
                   </span>
                 ) : null;
               })()}

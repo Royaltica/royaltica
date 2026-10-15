@@ -27,7 +27,8 @@ import {
   type Resultado,
   type Segmento,
 } from './mockV1.ts';
-import { construirPlan } from './plan.tsx';
+import { construirPlan, PASO_DE_PLANTILLA } from './plan.tsx';
+import { api, type WaPlanActivity } from '../../../../services/apiClient.ts';
 
 /**
  * Estado compartido de Cobranza IA. Lo que hace un perfil se ve en los
@@ -50,6 +51,8 @@ export type CambioSegmento = { cliente: string; de: Segmento; a: Segmento; motiv
 export type FacturaViva = Factura & { principal: boolean; pagado: number };
 
 export type CuentaViva = CuentaCartera & {
+  /** Pasos del plan que ya salieron por WhatsApp (datos reales del backend). */
+  pasosEnviados: string[];
   saldada: boolean;
   facturas: FacturaViva[];
   comportamiento: Comportamiento;
@@ -87,6 +90,10 @@ type Store = {
   registrar: (id: string, resultado: string) => void;
   guardarCampana: (c: Campana) => void;
   cambiarEstadoCampana: (id: string, estado: Campana['estado']) => void;
+  /** ID real del cliente en el backend (para su conversación de WhatsApp). */
+  waClienteId: (cliente: string) => string | null | undefined;
+  /** Vuelve a leer lo que pasó por WhatsApp (tras enviar, o al llegar respuestas). */
+  refrescarWhatsapp: () => Promise<void>;
 };
 
 const Ctx = React.createContext<Store | null>(null);
@@ -117,6 +124,19 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   const [csvCargado, setCsvCargado] = React.useState(false);
   const [planesIniciados, setPlanesIniciados] = React.useState<Record<string, string>>({});
   const [facturasNuevas, setFacturasNuevas] = React.useState<Record<string, Factura[]>>({});
+  // Lo que pasó por WhatsApp (real). undefined = aún cargando; null = sin conexión.
+  const [wa, setWa] = React.useState<WaPlanActivity | null | undefined>(undefined);
+
+  const refrescarWhatsapp = React.useCallback(async () => {
+    try {
+      setWa(await api.getWaPlanActivity());
+    } catch {
+      setWa((prev) => prev ?? null);
+    }
+  }, []);
+  React.useEffect(() => {
+    void refrescarWhatsapp();
+  }, [refrescarWhatsapp]);
 
   const cartera: CuentaViva[] = React.useMemo(
     () =>
@@ -131,10 +151,20 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
           const actual = construirPlan(planConfig(c, segmento)).actual;
           if (actual) res[actual.id] = resultadosHoy[c.id];
         }
+        // WhatsApp real: cada nivel enviado queda hecho con lo que pasó.
+        const pasosEnviados: string[] = [];
+        const actividad = wa?.customers.find((x) => x.name === c.cliente);
+        for (const [plantilla, nivel] of Object.entries(actividad?.levels ?? {})) {
+          const paso = PASO_DE_PLANTILLA[plantilla];
+          if (!paso || !nivel) continue;
+          pasosEnviados.push(paso);
+          res[paso] = resultadoWhatsapp(nivel as NivelWa, !!wa?.testMode);
+        }
         // El saldo sale de sumar los pagos aplicados (ERP y/o REP).
         const pagado = pagos.filter((p) => p.cuentaId === c.id).reduce((a, p) => a + p.monto, 0);
         return {
           ...c,
+          pasosEnviados,
           pagado,
           saldada: c.monto - pagado <= 1, // tolerancia de centavos
           facturas: [
@@ -155,7 +185,7 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
           segmentoManual: manual ? { motivo: manual.motivo } : undefined,
         };
       }),
-    [agentes, contactos, segManual, envios, resultadosHoy, pagos, planesIniciados, facturasNuevas],
+    [agentes, contactos, segManual, envios, resultadosHoy, pagos, planesIniciados, facturasNuevas, wa],
   );
 
   const anotar = (c: CuentaViva, r: Resultado, monto?: number) =>
@@ -303,6 +333,9 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
       if (estado === 'Activa' && camp.config.inicio <= HOY) upd = lanzar(upd);
       setCampanas((cs) => cs.map((x) => (x.id === id ? upd : x)));
     },
+    waClienteId: (cliente) =>
+      wa === undefined ? undefined : (wa?.customers.find((x) => x.name === cliente)?.customerId ?? null),
+    refrescarWhatsapp,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -316,7 +349,19 @@ export function useCobranza(): Store {
 
 /** Plan calculado de una cuenta (con su segmento y lo enviado/registrado hoy). */
 export function planCuenta(c: CuentaViva) {
-  return construirPlan(planConfig(c, c.segmento));
+  return construirPlan({ ...planConfig(c, c.segmento), enviados: c.pasosEnviados });
+}
+
+type NivelWa = WaPlanActivity['customers'][number]['levels'][string];
+
+/** Resultado del paso a partir de lo que pasó en WhatsApp (corto, para el plan). */
+function resultadoWhatsapp(nivel: NivelWa, prueba: boolean): string {
+  const r = nivel.reply;
+  if (r?.kind === 'BUTTON') return r.body.startsWith('Ya pagué') ? 'Dice que ya pagó' : `Tocó "${r.body}"`;
+  if (r?.kind === 'MEDIA') return 'Mandó un archivo';
+  if (r) return `Respondió: "${r.body.length > 48 ? `${r.body.slice(0, 48)}…` : r.body}"`;
+  const dia = new Date(nivel.sentAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+  return `Enviado por WhatsApp ${dia}${prueba && !nivel.delivered ? ' (prueba)' : ''}`;
 }
 
 /** Plantilla usada en un toque de campaña. */

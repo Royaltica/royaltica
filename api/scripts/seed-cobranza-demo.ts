@@ -8,29 +8,30 @@
  * existe): aunque se configure el token de Meta, ningún mensaje de prueba
  * puede llegarle a una persona real. Idempotente (upsert por RFC/UUID).
  *
- * Uso:  npx tsx scripts/seed-cobranza-demo.ts ["Nombre de la organización"]
- *       (default: "Royáltica Demo")
+ * Las fechas se calculan desde HOY REAL con los días del prototipo (`dias`),
+ * no con sus fechas fijas: así el backend (motor automático, ventana, nivel
+ * que toca) ve el mismo calendario que el plan de cada cliente en pantalla.
+ *
+ * Uso:  npx tsx scripts/seed-cobranza-demo.ts [--reset] ["Nombre de la organización"]
+ *       --reset  borra las conversaciones y ejecuciones de prueba de estos
+ *                clientes para empezar de cero. Default: "Royáltica Demo".
  */
 import 'dotenv/config';
 import { PrismaClient, Prisma } from '@prisma/client';
-import { CARTERA, HOY } from '../../frontend/src/pages/corporate/views/cobranza/mockV1';
+import { CARTERA } from '../../frontend/src/pages/corporate/views/cobranza/mockV1';
 
-const MESES: Record<string, number> = {
-  ene: 0, feb: 1, mar: 2, abr: 3, may: 4, jun: 5, jul: 6, ago: 7, sep: 8, oct: 9, nov: 10, dic: 11,
-};
-const ANIO = Number(HOY.slice(0, 4));
+const DIA = 86_400_000;
+const hoy = new Date();
+const HOY_UTC = Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), hoy.getUTCDate());
 
-/** "17 ago" → fecha UTC del año del prototipo. */
-function fecha(txt: string): Date {
-  const [d, m] = txt.trim().split(/\s+/);
-  const mes = MESES[m.toLowerCase().slice(0, 3)];
-  if (mes === undefined) throw new Error(`Fecha no reconocida: "${txt}"`);
-  return new Date(Date.UTC(ANIO, mes, Number(d)));
-}
+/** Vencimiento a partir de los días del prototipo (positivo = vencida hace N días). */
+const vencimiento = (dias: number) => new Date(HOY_UTC - dias * DIA);
 
 async function main() {
   if (process.env.NODE_ENV === 'production') throw new Error('Este script es solo para desarrollo.');
-  const orgName = process.argv[2] ?? 'Royáltica Demo';
+  const args = process.argv.slice(2);
+  const reset = args.includes('--reset');
+  const orgName = args.find((a) => !a.startsWith('--')) ?? 'Royáltica Demo';
   const prisma = new PrismaClient();
   const org = await prisma.organization.findFirst({ where: { name: orgName, deletedAt: null } });
   if (!org) throw new Error(`No existe la organización "${orgName}".`);
@@ -64,16 +65,23 @@ async function main() {
     });
     clientes++;
 
+    if (reset) {
+      await prisma.whatsappMessage.deleteMany({ where: { customerId: customer.id } });
+      await prisma.collectionSequenceRun.deleteMany({ where: { invoice: { customerId: customer.id } } });
+    }
+
     const todas = [
-      { folio: c.folio, monto: c.monto, emision: c.emision, vence: c.vence },
-      ...(c.facturasExtra ?? []).map((f) => ({ folio: f.folio, monto: f.monto, emision: f.emision, vence: f.vence })),
+      { folio: c.folio, monto: c.monto, dias: c.dias },
+      ...(c.facturasExtra ?? []).map((f) => ({ folio: f.folio, monto: f.monto, dias: f.dias })),
     ];
     for (const f of todas) {
       const total = new Prisma.Decimal(f.monto);
       const subtotal = total.div(1.16).toDecimalPlaces(2);
+      const dueDate = vencimiento(f.dias);
+      const date = new Date(dueDate.getTime() - 30 * DIA);
       await prisma.invoice.upsert({
         where: { cfdiUuid: `demo-${c.id}-${f.folio}` },
-        update: { total, subtotal, iva: total.minus(subtotal), dueDate: fecha(f.vence), status: 'PENDING' },
+        update: { total, subtotal, iva: total.minus(subtotal), date, dueDate, status: 'PENDING' },
         create: {
           organizationId: org.id,
           direction: 'RECEIVABLE',
@@ -85,8 +93,8 @@ async function main() {
           subtotal,
           iva: total.minus(subtotal),
           total,
-          date: fecha(f.emision),
-          dueDate: fecha(f.vence),
+          date,
+          dueDate,
           status: 'PENDING',
           description: 'Factura de ejemplo (Cobranza IA)',
         },
@@ -94,7 +102,9 @@ async function main() {
       facturas++;
     }
   }
-  console.log(`✓ ${clientes} clientes y ${facturas} facturas de ejemplo en "${org.name}".`);
+  console.log(
+    `✓ ${clientes} clientes y ${facturas} facturas de ejemplo en "${org.name}"${reset ? ' (conversaciones reiniciadas)' : ''}.`,
+  );
   await prisma.$disconnect();
 }
 

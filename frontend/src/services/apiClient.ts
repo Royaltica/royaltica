@@ -1671,8 +1671,12 @@ export const api = {
     return request<WaDraft>('POST', `/whatsapp/conversations/${customerId}/draft`);
   },
 
-  async sendWaText(customerId: string, text: string): Promise<WaSendResult> {
-    return request<WaSendResult>('POST', `/whatsapp/conversations/${customerId}/send`, { text });
+  async sendWaText(customerId: string, text: string, levelTemplate?: string): Promise<WaSendResult> {
+    return request<WaSendResult>('POST', `/whatsapp/conversations/${customerId}/send`, { text, levelTemplate });
+  },
+
+  async getWaPlanActivity(): Promise<WaPlanActivity> {
+    return request<WaPlanActivity>('GET', '/whatsapp/conversations/plan-activity');
   },
 
   /**
@@ -2465,6 +2469,25 @@ export interface WaDraft {
   source: 'ai' | 'fallback';
   warnings: string[];
   window: WaWindow;
+}
+
+/** Lo que pasó por WhatsApp en cada nivel del plan, por cliente. */
+export interface WaPlanActivity {
+  /** Sin token de Meta: los envíos no salen pero cuentan para probar el flujo. */
+  testMode: boolean;
+  customers: {
+    customerId: string;
+    name: string;
+    levels: Record<
+      string,
+      {
+        sentAt: string;
+        delivered: boolean;
+        by: 'manual' | 'automatico';
+        reply: { kind: WaKind; body: string; at: string } | null;
+      }
+    >;
+  }[];
 }
 
 export interface CollectionLevelPlan {

@@ -2,14 +2,15 @@ import React from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { AlertTriangle, Check, Clock, Loader2, Lock, Send, Sparkles, Unlock } from 'lucide-react';
 import { EASE, BlockTitle } from './primitives.tsx';
-import { planCuenta, type CuentaViva } from './store.tsx';
-import type { PasoPlan } from './plan.tsx';
-import { api, type WaConversationSummary, type WaTemplateInfo, type WaThread, type WaDraft } from '../../../../services/apiClient.ts';
+import { planCuenta, useCobranza, type CuentaViva } from './store.tsx';
+import { PLANTILLA_DE_PASO } from './plan.tsx';
+import { api, type WaTemplateInfo, type WaThread, type WaDraft } from '../../../../services/apiClient.ts';
 
 /**
  * Subpestaña WhatsApp del expediente de un cliente (DATOS REALES del
- * backend). No repite el plan: solo lo usa para preseleccionar la plantilla
- * del paso que le toca hoy. El flujo:
+ * backend). No repite el plan: lo usa para preseleccionar la plantilla del
+ * paso que le toca hoy, y cada envío/respuesta lo actualiza (el nivel queda
+ * hecho y el plan pasa al siguiente). El flujo:
  *
  *   1. Primer contacto → plantilla aprobada por Meta del paso del plan.
  *   2. El cliente contesta o toca un botón → ventana de 24h abierta.
@@ -18,41 +19,10 @@ import { api, type WaConversationSummary, type WaTemplateInfo, type WaThread, ty
 
 const MXN = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' });
 
-/** Paso del plan (Cobranza IA) → plantilla de Meta. C y D no van por WhatsApp. */
-const PLANTILLA_DE_PASO: Partial<Record<PasoPlan['id'], string>> = {
-  N0: 'confirmacion_factura',
-  N1: 'aviso_preventivo_pago',
-  N2: 'recordatorio_cortesia_pago',
-  N3: 'vence_3_dias',
-  N4: 'vence_hoy',
-  A: 'aviso_vencida',
-  B: 'seguimiento_vencida',
-};
-
-// Una sola consulta de la bandeja para todo el panel: sirve para enlazar el
-// cliente de la lista con su registro real (por nombre).
-let bandejaCache: Promise<WaConversationSummary[]> | null = null;
-const bandeja = () =>
-  (bandejaCache ??= api.getWaConversations().catch((e) => {
-    bandejaCache = null;
-    throw e;
-  }));
-
 export function SubWhatsapp({ cuenta }: { cuenta: CuentaViva }) {
-  const [customerId, setCustomerId] = React.useState<string | null | undefined>(undefined);
-  const [error, setError] = React.useState<string | null>(null);
+  const { waClienteId } = useCobranza();
+  const customerId = waClienteId(cuenta.cliente);
 
-  React.useEffect(() => {
-    let vivo = true;
-    bandeja()
-      .then((l) => vivo && setCustomerId(l.find((c) => c.name === cuenta.cliente)?.customerId ?? null))
-      .catch((e) => vivo && setError(e instanceof Error ? e.message : 'No se pudo conectar con el servidor.'));
-    return () => {
-      vivo = false;
-    };
-  }, [cuenta.cliente]);
-
-  if (error) return <div className="px-7 py-6"><Aviso tono="error" texto={error} /></div>;
   if (customerId === undefined) return <Cargando />;
   if (customerId === null) {
     return (
@@ -67,6 +37,7 @@ export function SubWhatsapp({ cuenta }: { cuenta: CuentaViva }) {
 
 function Conversacion({ customerId, cuenta }: { customerId: string; cuenta: CuentaViva }) {
   const reduce = useReducedMotion();
+  const { refrescarWhatsapp } = useCobranza();
   const [hilo, setHilo] = React.useState<WaThread | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [plantilla, setPlantilla] = React.useState<string | null>(null);
@@ -84,13 +55,16 @@ function Conversacion({ customerId, cuenta }: { customerId: string; cuenta: Cuen
     (actual && PLANTILLA_DE_PASO[actual.id] ? actual : pasosWa.find((p) => p.estado === 'programado')) ?? null;
   const sugeridoNombre = sugerido ? PLANTILLA_DE_PASO[sugerido.id] ?? null : null;
 
+  // Recarga el hilo y, con él, el plan de toda la cartera (lo enviado o
+  // respondido mueve el nivel del cliente).
   const cargar = React.useCallback(async () => {
     try {
-      setHilo(await api.getWaThread(customerId));
+      const [h] = await Promise.all([api.getWaThread(customerId), refrescarWhatsapp()]);
+      setHilo(h);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo cargar la conversación.');
     }
-  }, [customerId]);
+  }, [customerId, refrescarWhatsapp]);
 
   React.useEffect(() => {
     void cargar();
@@ -134,6 +108,8 @@ function Conversacion({ customerId, cuenta }: { customerId: string; cuenta: Cuen
     correr('plantilla', async () => {
       if (!factura || !tpl) return 'Elige el paso del plan y verifica que haya una factura pendiente.';
       const r = await api.sendWaTemplate(customerId, factura.id, tpl.name);
+      // El plan avanza: que se vuelva a sugerir el nivel que sigue.
+      setPlantilla(null);
       return r.sent
         ? 'Plantilla enviada.'
         : `Quedó registrada, pero no salió a WhatsApp (modo ${r.mode}: falta el token de Meta en este entorno).`;
@@ -149,7 +125,9 @@ function Conversacion({ customerId, cuenta }: { customerId: string; cuenta: Cuen
 
   const enviarTexto = () =>
     correr('enviar', async () => {
-      const r = await api.sendWaText(customerId, texto);
+      // Si el nivel de hoy no ha salido, este mensaje cuenta como su contacto.
+      const nivelHoy = actual ? PLANTILLA_DE_PASO[actual.id] : undefined;
+      const r = await api.sendWaText(customerId, texto, nivelHoy);
       setTexto('');
       setBorrador(null);
       return r.sent ? 'Mensaje enviado.' : `Quedó registrado, pero no salió a WhatsApp (modo ${r.mode}).`;
@@ -219,7 +197,7 @@ function Conversacion({ customerId, cuenta }: { customerId: string; cuenta: Cuen
                   <p className={`text-[10px] mt-1 ${sale ? 'text-brand-paper/45' : 'text-brand-ink/35'}`}>
                     {hora(m.createdAt)}
                     {sale && !m.sent && ' · no salió (modo prueba)'}
-                    {sale && m.sentByUserId === null && ' · automático'}
+                    {sale && m.sentByUserId === null && m.kind !== 'BUTTON' && ' · automático'}
                   </p>
                 </div>
               </motion.div>

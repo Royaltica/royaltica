@@ -34,11 +34,19 @@ const user = { id: 'u-1', organizationId: 'org-1', operationalProfile: null } as
 describe('WhatsappConversationService', () => {
   let prisma: {
     whatsappMessage: { findFirst: jest.Mock; create: jest.Mock; findMany: jest.Mock };
-    customer: { findFirst: jest.Mock };
+    customer: { findFirst: jest.Mock; findMany: jest.Mock };
     invoice: { findMany: jest.Mock };
+    collectionPolicy: { findFirst: jest.Mock };
+    collectionSequenceRun: { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
     withOrg: jest.Mock;
   };
-  let whatsapp: { sendTemplate: jest.Mock; sendMessage: jest.Mock };
+  let whatsapp: { sendTemplate: jest.Mock; sendMessage: jest.Mock; isConfigured: boolean };
+
+  /** El cliente escribió hace `h` horas (solo responde a la consulta de la ventana). */
+  const clienteEscribio = (h: number, phoneNumberId: string | null = null) =>
+    prisma.whatsappMessage.findFirst.mockImplementation(({ where }: { where: { direction: string } }) =>
+      where.direction === 'INBOUND' ? { createdAt: hoursAgo(h), phoneNumberId } : null,
+    );
   let gemini: { generateJson: jest.Mock };
   let service: WhatsappConversationService;
 
@@ -50,14 +58,17 @@ describe('WhatsappConversationService', () => {
         create: jest.fn().mockImplementation(({ data }) => ({ id: 'm-1', ...data })),
         findMany: jest.fn().mockResolvedValue([]),
       },
-      customer: { findFirst: jest.fn().mockResolvedValue(customer) },
+      customer: { findFirst: jest.fn().mockResolvedValue(customer), findMany: jest.fn().mockResolvedValue([customer]) },
       invoice: { findMany: jest.fn().mockResolvedValue([invoice]) },
+      collectionPolicy: { findFirst: jest.fn().mockResolvedValue(null) },
+      collectionSequenceRun: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn(), update: jest.fn() },
       withOrg: jest.fn(),
     };
     prisma.withOrg.mockImplementation((_o: string, fn: (tx: unknown) => unknown) => fn(prisma));
     whatsapp = {
       sendTemplate: jest.fn().mockResolvedValue({ sent: true, mode: 'meta', id: 'wamid.T' }),
       sendMessage: jest.fn().mockResolvedValue({ sent: true, mode: 'meta', id: 'wamid.X' }),
+      isConfigured: true,
     };
     gemini = { generateJson: jest.fn() };
     service = new WhatsappConversationService(
@@ -73,14 +84,14 @@ describe('WhatsappConversationService', () => {
 
   describe('ventana de 24h', () => {
     it('abierta si el cliente escribió hace menos de 24h', async () => {
-      prisma.whatsappMessage.findFirst.mockResolvedValue({ createdAt: hoursAgo(3), phoneNumberId: 'PN-1' });
+      clienteEscribio(3, 'PN-1');
       const w = await service.windowState('c-1');
       expect(w.open).toBe(true);
       expect(w.phoneNumberId).toBe('PN-1');
     });
 
     it('cerrada si pasaron más de 24h o nunca escribió', async () => {
-      prisma.whatsappMessage.findFirst.mockResolvedValue({ createdAt: hoursAgo(25), phoneNumberId: null });
+      clienteEscribio(25);
       expect((await service.windowState('c-1')).open).toBe(false);
       prisma.whatsappMessage.findFirst.mockResolvedValue(null);
       expect((await service.windowState('c-1')).open).toBe(false);
@@ -104,7 +115,7 @@ describe('WhatsappConversationService', () => {
     });
 
     it('ventana abierta → texto libre por el mismo número al que escribió el cliente', async () => {
-      prisma.whatsappMessage.findFirst.mockResolvedValue({ createdAt: hoursAgo(2), phoneNumberId: 'PN-9' });
+      clienteEscribio(2, 'PN-9');
       const r = await service.sendCollectionStep(step);
       expect(r.kind).toBe('TEXT');
       expect(whatsapp.sendMessage).toHaveBeenCalledWith('+5215512345678', 'texto libre', 'PN-9', expect.anything());
@@ -126,12 +137,12 @@ describe('WhatsappConversationService', () => {
     });
 
     it('rechaza palabras no permitidas aunque la ventana esté abierta', async () => {
-      prisma.whatsappMessage.findFirst.mockResolvedValue({ createdAt: hoursAgo(1), phoneNumberId: null });
+      clienteEscribio(1);
       await expect(service.sendFreeText(user, 'c-1', 'Su deuda sigue pendiente')).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('envía dentro de la ventana y lo registra con quién lo mandó', async () => {
-      prisma.whatsappMessage.findFirst.mockResolvedValue({ createdAt: hoursAgo(1), phoneNumberId: 'PN-1' });
+      clienteEscribio(1, 'PN-1');
       const r = await service.sendFreeText(user, 'c-1', 'Con gusto, le compartimos el PDF.');
       expect(r.sent).toBe(true);
       expect(prisma.whatsappMessage.create.mock.calls[0][0].data).toEqual(
@@ -147,7 +158,7 @@ describe('WhatsappConversationService', () => {
     });
 
     it('sin IA disponible regresa un borrador seguro (nunca envía)', async () => {
-      prisma.whatsappMessage.findFirst.mockResolvedValue({ createdAt: hoursAgo(1), phoneNumberId: null });
+      clienteEscribio(1);
       gemini.generateJson.mockResolvedValue(null);
       const r = await service.draftReply(user, 'c-1');
       expect(r.source).toBe('fallback');
@@ -164,5 +175,65 @@ describe('WhatsappConversationService', () => {
       organizationId: 'org-1', customerId: 'c-1', invoiceId: null, kind: 'TEXT', body: 'hola', waMessageId: 'wamid.1', phoneNumberId: null,
     });
     expect(r).toBeNull();
+  });
+
+  describe('plan del cliente ↔ WhatsApp', () => {
+    const politica = { id: 'pol-1', sequenceSteps: [{ stepOrder: 3, whatsappTemplateName: 'recordatorio_cortesia_pago' }] };
+
+    it('mandar la plantilla de un nivel a mano adelanta al motor a ese nivel (no la repite)', async () => {
+      prisma.collectionPolicy.findFirst.mockResolvedValue(politica);
+      prisma.collectionSequenceRun.findUnique.mockResolvedValue({ id: 'run-1', currentStepOrder: 1 });
+      await service.sendTemplateManual(user, 'c-1', 'inv-1', 'recordatorio_cortesia_pago');
+      expect(prisma.collectionSequenceRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ currentStepOrder: 3 }) }),
+      );
+    });
+
+    it('nunca hace retroceder al motor', async () => {
+      prisma.collectionPolicy.findFirst.mockResolvedValue(politica);
+      prisma.collectionSequenceRun.findUnique.mockResolvedValue({ id: 'run-1', currentStepOrder: 5 });
+      await service.sendTemplateManual(user, 'c-1', 'inv-1', 'recordatorio_cortesia_pago');
+      expect(prisma.collectionSequenceRun.update).not.toHaveBeenCalled();
+    });
+
+    it('el motor no reenvía un nivel que ya salió para esa factura', async () => {
+      prisma.whatsappMessage.findFirst.mockImplementation(({ where }: { where: { direction: string } }) =>
+        where.direction === 'OUTBOUND' ? { id: 'm-previo' } : null,
+      );
+      const r = await service.sendCollectionStep({ customer, invoice, templateName: 'vence_3_dias', freeText: 'x', locale: 'es-MX' });
+      expect(r.sent).toBe(true);
+      expect(whatsapp.sendTemplate).not.toHaveBeenCalled();
+    });
+
+    it('un mensaje libre a nombre de un nivel cuenta como el contacto de ese nivel', async () => {
+      clienteEscribio(1, 'PN-1');
+      await service.sendFreeText(user, 'c-1', 'Con gusto le compartimos la liga.', 'vence_hoy');
+      expect(prisma.whatsappMessage.create.mock.calls[0][0].data.templateName).toBe('vence_hoy');
+    });
+
+    it('planActivity: cada nivel con su envío y la primera respuesta del cliente', async () => {
+      prisma.whatsappMessage.findMany.mockResolvedValue([
+        { customerId: 'c-1', direction: 'OUTBOUND', kind: 'TEMPLATE', templateName: 'aviso_preventivo_pago', body: 't1', sent: true, sentByUserId: null, createdAt: hoursAgo(300) },
+        { customerId: 'c-1', direction: 'OUTBOUND', kind: 'TEMPLATE', templateName: 'recordatorio_cortesia_pago', body: 't2', sent: true, sentByUserId: 'u-1', createdAt: hoursAgo(50) },
+        { customerId: 'c-1', direction: 'INBOUND', kind: 'BUTTON', templateName: null, body: 'Todo claro', sent: true, sentByUserId: null, createdAt: hoursAgo(49) },
+        { customerId: 'c-1', direction: 'INBOUND', kind: 'TEXT', templateName: null, body: 'gracias', sent: true, sentByUserId: null, createdAt: hoursAgo(48) },
+      ]);
+      const r = await service.planActivity(user);
+      const niveles = r.customers[0].levels;
+      expect(niveles.aviso_preventivo_pago.reply).toBeNull();
+      expect(niveles.aviso_preventivo_pago.by).toBe('automatico');
+      expect(niveles.recordatorio_cortesia_pago.by).toBe('manual');
+      expect(niveles.recordatorio_cortesia_pago.reply).toEqual(expect.objectContaining({ kind: 'BUTTON', body: 'Todo claro' }));
+    });
+
+    it('con Meta configurado, un envío rechazado NO avanza el plan; en modo prueba sí cuenta', async () => {
+      const fallido = [{ customerId: 'c-1', direction: 'OUTBOUND', kind: 'TEMPLATE', templateName: 'vence_hoy', body: 't', sent: false, sentByUserId: 'u-1', createdAt: hoursAgo(1) }];
+      prisma.whatsappMessage.findMany.mockResolvedValue(fallido);
+      expect((await service.planActivity(user)).customers[0].levels.vence_hoy).toBeUndefined();
+      whatsapp.isConfigured = false;
+      const prueba = await service.planActivity(user);
+      expect(prueba.testMode).toBe(true);
+      expect(prueba.customers[0].levels.vence_hoy).toBeDefined();
+    });
   });
 });
