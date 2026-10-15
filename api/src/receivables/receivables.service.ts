@@ -403,7 +403,21 @@ export class ReceivablesService {
           { lastReminderSentAt: null },
           { lastReminderSentAt: { lt: staleBefore } },
         ],
-        organization: { isActive: true, deletedAt: null },
+        organization: {
+          isActive: true,
+          deletedAt: null,
+          // Las organizaciones con el plan por niveles (pasos con plantilla de
+          // Meta, ver CollectionSequencesService) ya cubren T-14 y T-3 con
+          // sus propios niveles: este recordatorio de un solo paso las
+          // duplicaría. Las demás siguen exactamente igual.
+          collectionPolicies: {
+            none: {
+              isActive: true,
+              deletedAt: null,
+              sequenceSteps: { some: { deletedAt: null, whatsappTemplateName: { not: null } } },
+            },
+          },
+        },
       },
       include: { customer: true },
     });

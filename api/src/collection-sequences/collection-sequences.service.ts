@@ -17,6 +17,8 @@ import { assertLegalTemplateCompliant } from '../common/legal-template-guard';
 import { ActivityLogService } from '../activity/activity-log.service';
 import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { WhatsappConversationService } from '../whatsapp/whatsapp-conversation.service';
+import { COLLECTION_TEMPLATES, findTemplate } from '../whatsapp/collection-templates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { GOOD_PAYER_SCORE_THRESHOLD } from '../customers/scoring/customer-scoring.constants';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -30,6 +32,139 @@ import {
 /** Monto formateado como moneda (mismo helper que ReceivablesService). */
 const money = (n: number, locale = 'es-MX') =>
   n.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+type StepLike = Pick<
+  CollectionSequenceStep,
+  'stepOrder' | 'daysAfterDue' | 'whatsappTemplateName'
+>;
+
+/**
+ * Elige el siguiente paso a ejecutar. Con pasos solo después del
+ * vencimiento (planes anteriores) es exactamente "el siguiente en orden, si
+ * ya le toca". Para los niveles de cobranza temprana agrega dos reglas, para
+ * que nunca se mande un mensaje atrasado o con un dato falso:
+ *  - Un nivel previo al vencimiento se salta si un nivel posterior ya le
+ *    toca (p. ej. la factura se cargó 5 días antes de vencer: no se manda el
+ *    aviso de 14 días). Excepción: el primer contacto antes del vencimiento
+ *    sí se manda (la confirmación de factura).
+ *  - Un nivel de día exacto ("vence en 3 días", "hoy vence") solo se manda
+ *    ese día; si ya pasó, se salta.
+ */
+export function pickNextStep<T extends StepLike>(
+  steps: T[],
+  currentStepOrder: number,
+  daysOverdue: number,
+): { step: T | undefined; superseded: T[] } {
+  const pending = steps
+    .filter((s) => s.stepOrder > currentStepOrder)
+    .sort((a, b) => a.stepOrder - b.stepOrder);
+  const firstContactBeforeDue = currentStepOrder === 0 && daysOverdue < 0;
+  const superseded: T[] = [];
+  for (let i = 0; i < pending.length; i++) {
+    const s = pending[i];
+    if (s.daysAfterDue > daysOverdue) return { step: s, superseded };
+    const exactDayPassed =
+      findTemplate(s.whatsappTemplateName)?.exactDay === true && daysOverdue !== s.daysAfterDue;
+    const laterAlreadyDue =
+      s.daysAfterDue < 0 &&
+      !(firstContactBeforeDue && superseded.length === 0) &&
+      pending[i + 1] !== undefined &&
+      pending[i + 1].daysAfterDue <= daysOverdue;
+    if (exactDayPassed || laterAlreadyDue) {
+      superseded.push(s);
+      continue;
+    }
+    return { step: s, superseded };
+  }
+  return { step: undefined, superseded };
+}
+
+/** Texto en WhatsApp DENTRO de la ventana de 24h (fuera de ella va la plantilla). */
+const tpl = (name: string) => COLLECTION_TEMPLATES.find((t) => t.name === name)!;
+
+/**
+ * Plan por niveles acordado (Nivel 0-4 antes del vencimiento, Etapas A-D
+ * después). Los niveles de WhatsApp llevan su plantilla de Meta; el
+ * `messageTemplate` es la versión en texto libre que se usa si el cliente
+ * ya tiene la ventana de 24h abierta.
+ */
+const LEVEL_PLAN_STEPS = [
+  {
+    daysAfterDue: tpl('confirmacion_factura').defaultDaysAfterDue,
+    channel: 'WHATSAPP' as const,
+    tone: 'GENTLE' as const,
+    whatsappTemplateName: 'confirmacion_factura',
+    messageTemplate:
+      '¡Hola {{customerName}}! Le escribimos para confirmar que recibió correctamente su factura por {{amount}}, con vencimiento el {{dueDate}}. ¿Todo concuerda de su lado?',
+  },
+  {
+    daysAfterDue: tpl('aviso_preventivo_pago').defaultDaysAfterDue,
+    channel: 'WHATSAPP' as const,
+    tone: 'GENTLE' as const,
+    whatsappTemplateName: 'aviso_preventivo_pago',
+    messageTemplate:
+      '¡Hola {{customerName}}! Le escribimos para avisarle que su factura por {{amount}} tiene como fecha de vencimiento el {{dueDate}}. ¿La tiene ya en su radar?',
+  },
+  {
+    daysAfterDue: tpl('recordatorio_cortesia_pago').defaultDaysAfterDue,
+    channel: 'WHATSAPP' as const,
+    tone: 'GENTLE' as const,
+    whatsappTemplateName: 'recordatorio_cortesia_pago',
+    messageTemplate:
+      '¡Hola {{customerName}}! Le recordamos que su factura por {{amount}} vence el {{dueDate}}. ¿Hay algo que podamos aclararle mientras tanto?',
+  },
+  {
+    daysAfterDue: tpl('vence_3_dias').defaultDaysAfterDue,
+    channel: 'WHATSAPP' as const,
+    tone: 'STANDARD' as const,
+    whatsappTemplateName: 'vence_3_dias',
+    messageTemplate:
+      '¡Hola {{customerName}}! Su factura por {{amount}} vence en 3 días, el {{dueDate}}. Si ya quedó programada, con gusto la esperamos; si necesita más tiempo, también podemos platicarlo.',
+  },
+  {
+    daysAfterDue: tpl('vence_hoy').defaultDaysAfterDue,
+    channel: 'WHATSAPP' as const,
+    tone: 'STANDARD' as const,
+    whatsappTemplateName: 'vence_hoy',
+    messageTemplate:
+      '¡Hola {{customerName}}! Hoy vence su factura por {{amount}}. Si ya realizó su pago, compártanos su comprobante para dejarlo registrado.',
+  },
+  {
+    daysAfterDue: tpl('aviso_vencida').defaultDaysAfterDue,
+    channel: 'WHATSAPP' as const,
+    tone: 'STANDARD' as const,
+    whatsappTemplateName: 'aviso_vencida',
+    messageTemplate:
+      'Hola {{customerName}}, su factura por {{amount}}, con vencimiento el {{dueDate}}, sigue abierta en nuestros registros. Si ya pagó, compártanos su comprobante para actualizarlo.',
+  },
+  {
+    daysAfterDue: tpl('seguimiento_vencida').defaultDaysAfterDue,
+    channel: 'WHATSAPP' as const,
+    tone: 'STANDARD' as const,
+    whatsappTemplateName: 'seguimiento_vencida',
+    messageTemplate:
+      'Hola {{customerName}}, seguimos con su factura por {{amount}} pendiente de cerrar. ¿Hay algo en lo que podamos apoyarle?',
+  },
+  {
+    // Etapa C: notificación formal por correo (no requiere plantilla de Meta).
+    daysAfterDue: 20,
+    channel: 'EMAIL' as const,
+    tone: 'FIRM' as const,
+    whatsappTemplateName: null,
+    messageTemplate:
+      'Estimados {{customerName}}: su factura por {{amount}}, con vencimiento el {{dueDate}}, registra {{daysOverdue}} días de atraso. Les pedimos confirmar una fecha de pago esta semana para mantener su línea de crédito en condiciones normales.',
+  },
+  {
+    // Etapa D: negociación — pasa a una persona (llamada).
+    daysAfterDue: 35,
+    channel: 'PHONE' as const,
+    tone: 'FIRM' as const,
+    whatsappTemplateName: null,
+    escalatesToHuman: true,
+    messageTemplate:
+      'Llamar a {{customerName}}: factura por {{amount}} con {{daysOverdue}} días de atraso. Confirmar saldo, entender su situación y proponer un plan de pago.',
+  },
+];
 
 /** Resultado de una corrida de `advanceSequence` sobre una factura. */
 export type AdvanceOutcome =
@@ -63,6 +198,7 @@ export class CollectionSequencesService {
     private readonly whatsapp: WhatsappService,
     private readonly notifications: NotificationsService,
     private readonly aiDecision: CollectionSequencesAiDecisionService,
+    private readonly conversations: WhatsappConversationService,
   ) {}
 
   // ── CRUD de pasos (anidado bajo una CollectionPolicy) ─────
@@ -88,6 +224,7 @@ export class CollectionSequencesService {
           tone: dto.tone ?? 'STANDARD',
           messageTemplate: dto.messageTemplate,
           escalatesToHuman: dto.escalatesToHuman ?? false,
+          whatsappTemplateName: dto.whatsappTemplateName ?? null,
         },
       }),
     );
@@ -156,6 +293,7 @@ export class CollectionSequencesService {
           tone: dto.tone ?? undefined,
           messageTemplate: dto.messageTemplate ?? undefined,
           escalatesToHuman: dto.escalatesToHuman ?? undefined,
+          whatsappTemplateName: dto.whatsappTemplateName,
         },
       });
     });
@@ -196,6 +334,74 @@ export class CollectionSequencesService {
     });
 
     return { deleted: true, id };
+  }
+
+  /** Política activa con sus pasos (lo que muestra la pestaña de Plan). */
+  async currentPlan(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const policy = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.collectionPolicy.findFirst({
+        where: { organizationId, isActive: true, deletedAt: null },
+        include: { sequenceSteps: { where: { deletedAt: null }, orderBy: { stepOrder: 'asc' } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+    );
+    return { policy };
+  }
+
+  /**
+   * Crea (una sola vez) el plan de cobranza por niveles acordado: Nivel 0-4
+   * antes del vencimiento y Etapas A-D después, cada nivel de WhatsApp con
+   * su plantilla aprobada por Meta. Si la organización ya tiene una política
+   * activa con pasos, NO la toca (regresa la existente).
+   */
+  async ensureLevelPlan(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const existing = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.collectionPolicy.findFirst({
+        where: { organizationId, isActive: true, deletedAt: null },
+        include: { sequenceSteps: { where: { deletedAt: null }, orderBy: { stepOrder: 'asc' } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+    );
+    if (existing && existing.sequenceSteps.length > 0) {
+      return { created: false, policy: existing };
+    }
+
+    const policy = await this.prisma.withOrg(organizationId, async (tx) => {
+      const pol =
+        existing ??
+        (await tx.collectionPolicy.create({
+          data: {
+            organizationId,
+            name: 'Plan de cobranza por niveles',
+            maxContactsPerWeek: 3,
+            allowedContactStartHour: 9,
+            allowedContactEndHour: 19,
+            timezone: 'America/Mexico_City',
+            gracePeriodDays: 0,
+            escalationThresholdDays: 35,
+            preferredChannel: 'WHATSAPP',
+          },
+        }));
+      await tx.collectionSequenceStep.createMany({
+        data: LEVEL_PLAN_STEPS.map((st, i) => ({ ...st, stepOrder: i + 1, collectionPolicyId: pol.id })),
+      });
+      return tx.collectionPolicy.findUniqueOrThrow({
+        where: { id: pol.id },
+        include: { sequenceSteps: { where: { deletedAt: null }, orderBy: { stepOrder: 'asc' } } },
+      });
+    });
+
+    await this.activity.record({
+      organizationId,
+      userId: user.id,
+      action: 'COLLECTION_LEVEL_PLAN_CREATED',
+      entityType: 'CollectionPolicy',
+      entityId: policy.id,
+      metadata: { steps: policy.sequenceSteps.length },
+    });
+    return { created: true, policy };
   }
 
   // ── Ejecuciones (CollectionSequenceRun): consulta + control manual ──
@@ -394,13 +600,25 @@ export class CollectionSequencesService {
     });
 
     for (const org of orgs) {
+      // Planes por niveles (cobranza temprana): sus pasos tienen días
+      // NEGATIVOS (antes del vencimiento), así que también se evalúan las
+      // facturas que vencen dentro de ese horizonte. Sin pasos negativos el
+      // horizonte es 0 y se comporta exactamente como antes (solo vencidas).
+      const earliest = await this.prisma.collectionSequenceStep.aggregate({
+        where: {
+          deletedAt: null,
+          collectionPolicy: { organizationId: org.id, isActive: true, deletedAt: null },
+        },
+        _min: { daysAfterDue: true },
+      });
+      const horizonDays = Math.max(0, -(earliest._min.daysAfterDue ?? 0));
       const invoices = await this.prisma.invoice.findMany({
         where: {
           organizationId: org.id,
           direction: 'RECEIVABLE',
           deletedAt: null,
           status: InvoiceStatus.PENDING,
-          dueDate: { not: null, lt: new Date() },
+          dueDate: { not: null, lt: new Date(Date.now() + horizonDays * 86_400_000) },
         },
         select: { id: true },
       });
@@ -469,10 +687,13 @@ export class CollectionSequencesService {
     const daysOverdue = Math.floor(
       (now.getTime() - invoice.dueDate.getTime()) / 86_400_000,
     );
-    if (daysOverdue < 0) {
+    // Sin niveles previos al vencimiento (días negativos), una factura que
+    // aún no vence no tiene nada que hacer — comportamiento original.
+    if (daysOverdue < 0 && !policy.sequenceSteps.some((s) => s.daysAfterDue < 0)) {
       return { outcome: 'skipped', reason: 'not-yet-due' };
     }
-    if (daysOverdue < policy.gracePeriodDays) {
+    // La gracia es "después del vencimiento": no frena los niveles previos.
+    if (daysOverdue >= 0 && daysOverdue < policy.gracePeriodDays) {
       return { outcome: 'skipped', reason: 'within-grace-period' };
     }
 
@@ -495,8 +716,10 @@ export class CollectionSequencesService {
       return { outcome: 'skipped', reason: `run-${run.status.toLowerCase()}` };
     }
 
-    const nextStep = policy.sequenceSteps.find(
-      (s) => s.stepOrder === run!.currentStepOrder + 1,
+    const { step: nextStep, superseded } = pickNextStep(
+      policy.sequenceSteps,
+      run.currentStepOrder,
+      daysOverdue,
     );
     if (!nextStep) {
       // No hay más pasos definidos: la secuencia se dio por completada.
@@ -658,6 +881,7 @@ export class CollectionSequencesService {
 
     let channelSent = false;
     let manualChannelRequired = false;
+    let whatsappKind: 'TEMPLATE' | 'TEXT' | null = null;
     if (effectiveChannel === 'EMAIL' && invoice.customer.email) {
       const res = await this.email.sendCollectionSequenceStep(
         invoice.customer.email,
@@ -667,12 +891,22 @@ export class CollectionSequencesService {
         effectiveTone,
       );
       channelSent = res.sent;
-    } else if (effectiveChannel === 'WHATSAPP' && invoice.customer.phone) {
-      const res = await this.whatsapp.sendMessage(invoice.customer.phone, body, undefined, {
-        organizationId: invoice.organizationId,
-        usageTag: 'collection_reminder',
+    } else if (
+      effectiveChannel === 'WHATSAPP' &&
+      (invoice.customer.financeContactPhone ?? invoice.customer.phone)
+    ) {
+      // Ventana de 24h cerrada → plantilla aprobada del nivel; abierta (el
+      // cliente contestó hace poco) → texto libre. Lo decide el servicio de
+      // conversación, que además deja el mensaje en el hilo del cliente.
+      const res = await this.conversations.sendCollectionStep({
+        customer: invoice.customer,
+        invoice,
+        templateName: nextStep.whatsappTemplateName ?? null,
+        freeText: body,
+        locale,
       });
       channelSent = res.sent;
+      whatsappKind = res.kind;
     } else if (effectiveChannel === 'SMS' || effectiveChannel === 'PHONE') {
       // Sin proveedor automático para SMS/llamada: se notifica a los admins
       // para que hagan el contacto manualmente, pero el paso SÍ avanza (el
@@ -704,11 +938,20 @@ export class CollectionSequencesService {
         status: isLastStep ? 'COMPLETED' : 'ACTIVE',
       },
     });
+    // Niveles que ya no aplican (se cargó la factura tarde, o su día exacto
+    // ya pasó): quedan registrados como saltados, no se mandan atrasados.
+    for (const skipped of superseded) {
+      await this.logStep(invoice, run, skipped, 'COLLECTION_SEQUENCE_STEP_SKIPPED', {
+        reason: 'superseded',
+        daysOverdue,
+      });
+    }
     await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_STEP_SENT', {
       channel: effectiveChannel,
       tone: effectiveTone,
       daysOverdue,
       manualChannelRequired,
+      ...(whatsappKind ? { whatsappKind, template: nextStep.whatsappTemplateName } : {}),
       ...(aiDecision
         ? { aiReasoning: aiDecision.reasoning, aiDriven: aiDecision.aiDriven }
         : {}),

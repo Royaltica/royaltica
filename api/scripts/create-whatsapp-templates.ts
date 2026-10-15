@@ -16,58 +16,34 @@
 
 import 'dotenv/config';
 
-type Boton = { type: 'QUICK_REPLY'; text: string };
+import { COLLECTION_TEMPLATES } from '../src/whatsapp/collection-templates';
+
+/** Valores de ejemplo que Meta exige para aprobar cada variable. */
+const EJEMPLO = {
+  contacto: 'Patricia Salas',
+  folio: 'F-2841',
+  monto: '$284,500.00 MXN',
+  fecha: '17 de octubre',
+  liga: 'pagar.royaltica.com/f-2841',
+} as const;
 
 interface PlantillaDef {
   name: string;
   body: string;
   bodyExample: string[];
-  buttons?: Boton[];
+  buttons?: { type: 'QUICK_REPLY'; text: string }[];
 }
 
-const PLANTILLAS: PlantillaDef[] = [
-  {
-    name: 'confirmacion_factura',
-    body: '¡Hola {{1}}! Esperamos que el día le esté tratando bien. Le escribimos para confirmarle que recibió correctamente la factura {{2}} por {{3}}, con vencimiento el {{4}}. ¿Todo concuerda de su lado?',
-    bodyExample: ['Patricia Salas', 'F-2841', '$284,500.00 MXN', '17 de octubre'],
-    buttons: [{ type: 'QUICK_REPLY', text: 'Todo en orden' }, { type: 'QUICK_REPLY', text: 'Tengo una duda' }],
-  },
-  {
-    name: 'aviso_preventivo_pago',
-    body: '¡Hola {{1}}! Que tenga un excelente día. Le escribimos para avisarle que la factura {{2}} por {{3}} tiene como fecha de vencimiento el {{4}}. ¿La tiene ya en su radar? No hay ninguna prisa, solo queríamos comentárselo con tiempo.',
-    bodyExample: ['Patricia Salas', 'F-2841', '$284,500.00 MXN', '17 de octubre'],
-  },
-  {
-    name: 'recordatorio_cortesia_pago',
-    body: '¡Hola {{1}}! Esperamos que se encuentre muy bien. Le escribimos para recordarle que la factura {{2}} por {{3}} vence el {{4}}. Puede revisarla y pagarla aquí si le es conveniente: {{5}}. ¿Hay algo que podamos aclararle mientras tanto?',
-    bodyExample: ['Patricia Salas', 'F-2841', '$284,500.00 MXN', '17 de octubre', 'pagar.royaltica.com/f-2841'],
-    buttons: [{ type: 'QUICK_REPLY', text: 'Todo claro' }, { type: 'QUICK_REPLY', text: 'Tengo una pregunta' }],
-  },
-  {
-    name: 'vence_3_dias',
-    body: '¡Hola {{1}}! Ojalá tenga un buen día por allá. Le escribimos para comentarle que la factura {{2}} por {{3}} vence en 3 días, el {{4}}. Puede revisarla aquí: {{5}}. Si ya quedó programada, con gusto la esperamos; si necesita más tiempo, también podemos platicarlo.',
-    bodyExample: ['Patricia Salas', 'F-2841', '$284,500.00 MXN', '17 de octubre', 'pagar.royaltica.com/f-2841'],
-    buttons: [{ type: 'QUICK_REPLY', text: 'Ya quedó programada' }, { type: 'QUICK_REPLY', text: 'Me gustaría platicarlo' }],
-  },
-  {
-    name: 'vence_hoy',
-    body: '¡Hola {{1}}! Esperamos que su semana vaya muy bien. Le escribimos para avisarle que hoy vence la factura {{2}} por {{3}}. Puede liquidarla aquí: {{4}}. Si ya realizó su pago, compártanos su comprobante para dejarlo registrado al momento.',
-    bodyExample: ['Patricia Salas', 'F-2841', '$284,500.00 MXN', 'pagar.royaltica.com/f-2841'],
-    buttons: [{ type: 'QUICK_REPLY', text: 'Ya pagué, comparto comprobante' }, { type: 'QUICK_REPLY', text: 'Tengo una duda' }],
-  },
-  {
-    name: 'aviso_vencida',
-    body: 'Hola {{1}}, le escribimos para comentarle que la factura {{2}} por {{3}}, con vencimiento el {{4}}, sigue abierta en nuestros registros. Puede revisarla aquí: {{5}}. Si ya pagó, compártanos su comprobante para actualizarlo de inmediato.',
-    bodyExample: ['Patricia Salas', 'F-2841', '$284,500.00 MXN', '17 de octubre', 'pagar.royaltica.com/f-2841'],
-    buttons: [{ type: 'QUICK_REPLY', text: 'Ya pagué, comparto comprobante' }, { type: 'QUICK_REPLY', text: 'Necesito ayuda' }],
-  },
-  {
-    name: 'seguimiento_vencida',
-    body: 'Hola {{1}}, le escribimos para comentarle que seguimos con la factura {{2}} por {{3}} pendiente de cerrar. Nos gustaría saber si hay algo en lo que podamos apoyarle, o si prefiere que lo platiquemos directamente.',
-    bodyExample: ['Patricia Salas', 'F-2841', '$284,500.00 MXN'],
-    buttons: [{ type: 'QUICK_REPLY', text: 'Sí, platiquemos' }, { type: 'QUICK_REPLY', text: 'Ya voy a pagar' }],
-  },
-];
+// Una sola fuente de verdad: src/whatsapp/collection-templates.ts (la usan
+// también el motor de secuencias y la pantalla de Cobranza IA).
+const PLANTILLAS: PlantillaDef[] = COLLECTION_TEMPLATES.map((t) => ({
+  name: t.name,
+  body: t.body,
+  bodyExample: t.vars.map((k) => EJEMPLO[k]),
+  buttons: t.buttons.length
+    ? t.buttons.map((text) => ({ type: 'QUICK_REPLY' as const, text }))
+    : undefined,
+}));
 
 async function crear(waba: string, token: string, p: PlantillaDef) {
   const components: unknown[] = [

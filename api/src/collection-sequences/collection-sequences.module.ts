@@ -3,6 +3,7 @@ import { CollectionSequencesService } from './collection-sequences.service';
 import { CollectionSequencesAiDecisionService } from './collection-sequences-ai-decision.service';
 import { SequenceStepsController } from './sequence-steps.controller';
 import { CollectionSequenceRunsController } from './collection-sequence-runs.controller';
+import { LevelPlanController } from './level-plan.controller';
 import { DashboardModule } from '../dashboard/dashboard.module';
 
 /**
@@ -18,7 +19,7 @@ import { DashboardModule } from '../dashboard/dashboard.module';
  */
 @Module({
   imports: [DashboardModule],
-  controllers: [SequenceStepsController, CollectionSequenceRunsController],
+  controllers: [SequenceStepsController, CollectionSequenceRunsController, LevelPlanController],
   providers: [CollectionSequencesService, CollectionSequencesAiDecisionService],
   exports: [CollectionSequencesService, CollectionSequencesAiDecisionService],
 })

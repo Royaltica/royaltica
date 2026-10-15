@@ -1653,6 +1653,58 @@ export const api = {
     return uploadForm<ExternalSyncResult>('/external-data-sync/receivables', form);
   },
 
+  // ── Cobranza IA: conversación de WhatsApp (plantilla → ventana 24h → IA) ──
+
+  async getWaConversations(): Promise<WaConversationSummary[]> {
+    return request<WaConversationSummary[]>('GET', '/whatsapp/conversations');
+  },
+
+  async getWaThread(customerId: string): Promise<WaThread> {
+    return request<WaThread>('GET', `/whatsapp/conversations/${customerId}`);
+  },
+
+  async sendWaTemplate(customerId: string, invoiceId: string, templateName: string): Promise<WaSendResult> {
+    return request<WaSendResult>('POST', `/whatsapp/conversations/${customerId}/template`, { invoiceId, templateName });
+  },
+
+  async draftWaReply(customerId: string): Promise<WaDraft> {
+    return request<WaDraft>('POST', `/whatsapp/conversations/${customerId}/draft`);
+  },
+
+  async sendWaText(customerId: string, text: string): Promise<WaSendResult> {
+    return request<WaSendResult>('POST', `/whatsapp/conversations/${customerId}/send`, { text });
+  },
+
+  /**
+   * SOLO DESARROLLO LOCAL: simula que el cliente contestó (o tocó un botón)
+   * mandando al webhook el mismo payload que mandaría Meta. En producción el
+   * webhook exige la firma de Meta (WHATSAPP_APP_SECRET) y esto se rechaza.
+   */
+  async simulateWaReplyDev(phone: string, text: string, kind: 'text' | 'button'): Promise<void> {
+    const from = phone.replace(/\D/g, '');
+    const id = `wamid.LOCAL-${Date.now()}`;
+    const message =
+      kind === 'button'
+        ? { from, id, type: 'button', button: { text, payload: text } }
+        : { from, id, type: 'text', text: { body: text } };
+    await fetch(`${BASE}/webhooks/whatsapp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        object: 'whatsapp_business_account',
+        entry: [{ changes: [{ value: { metadata: { phone_number_id: 'LOCAL' }, messages: [message] } }] }],
+      }),
+    });
+  },
+
+  async getLevelPlan(): Promise<{ policy: CollectionLevelPlan | null }> {
+    return request<{ policy: CollectionLevelPlan | null }>('GET', '/collection-sequences/level-plan');
+  },
+
+  async ensureLevelPlan(): Promise<{ created: boolean; policy: CollectionLevelPlan }> {
+    return request<{ created: boolean; policy: CollectionLevelPlan }>('POST', '/collection-sequences/level-plan');
+  },
+
   // ── Conciliación bancaria CxC ───────────────────────────
 
   async listBankImports(): Promise<BankImportSummary[]> {
@@ -2352,3 +2404,79 @@ export function mapSupplier(s: ApiSupplier): Supplier {
     sat69b: s.sat69b ?? null,
   };
 }
+
+// ── Cobranza IA: WhatsApp ──────────────────────────────────
+
+export type WaKind = 'TEXT' | 'TEMPLATE' | 'BUTTON' | 'MEDIA';
+
+export interface WaMessage {
+  id: string;
+  direction: 'INBOUND' | 'OUTBOUND';
+  kind: WaKind;
+  body: string;
+  templateName: string | null;
+  sent: boolean;
+  sentByUserId: string | null;
+  createdAt: string;
+}
+
+export interface WaWindow {
+  open: boolean;
+  expiresAt: string | null;
+  lastInboundAt: string | null;
+}
+
+export interface WaConversationSummary {
+  customerId: string;
+  name: string;
+  hasWhatsapp: boolean;
+  lastMessage: { direction: 'INBOUND' | 'OUTBOUND'; kind: WaKind; body: string; createdAt: string } | null;
+  windowOpen: boolean;
+  windowExpiresAt: string | null;
+}
+
+export interface WaTemplateInfo {
+  name: string;
+  level: 'N0' | 'N1' | 'N2' | 'N3' | 'N4' | 'A' | 'B';
+  label: string;
+  exactDay: boolean;
+  defaultDaysAfterDue: number;
+  buttons: string[];
+  body: string;
+  vars: ('contacto' | 'folio' | 'monto' | 'fecha' | 'liga')[];
+}
+
+export interface WaThread {
+  customer: { id: string; name: string; contact: string | null; phone: string | null; doNotContact: boolean };
+  window: WaWindow;
+  invoices: { id: string; folio: string; total: number; currency: string; dueDate: string | null; daysToDue: number | null }[];
+  templates: WaTemplateInfo[];
+  messages: WaMessage[];
+}
+
+export interface WaSendResult {
+  sent: boolean;
+  mode: 'meta' | 'twilio' | 'stub';
+  message: WaMessage;
+}
+
+export interface WaDraft {
+  draft: string;
+  source: 'ai' | 'fallback';
+  warnings: string[];
+  window: WaWindow;
+}
+
+export interface CollectionLevelPlan {
+  id: string;
+  name: string;
+  sequenceSteps: {
+    id: string;
+    stepOrder: number;
+    daysAfterDue: number;
+    channel: 'EMAIL' | 'WHATSAPP' | 'SMS' | 'PHONE';
+    whatsappTemplateName: string | null;
+    escalatesToHuman: boolean;
+  }[];
+}
+

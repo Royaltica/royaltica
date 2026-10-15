@@ -32,6 +32,7 @@ import { PlantillasPanel } from './cobranza/PlantillasPanel.tsx';
 import { ReportesPanel } from './cobranza/ReportesPanel.tsx';
 import { DatosPagosPanel, AsignacionPanel } from './cobranza/DatosPagosPanel.tsx';
 import { PagosPanel, AvisoPagos } from './cobranza/PagosPanel.tsx';
+import { WhatsappPanel } from './cobranza/WhatsappPanel.tsx';
 import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
 
 /**
@@ -56,7 +57,8 @@ type Section =
   | 'pagos'
   | 'estrategias'
   | 'segmentos'
-  | 'equipo';
+  | 'equipo'
+  | 'whatsapp';
 
 const LABEL: Record<Section, string> = {
   alertas: 'Alertas',
@@ -69,16 +71,17 @@ const LABEL: Record<Section, string> = {
   estrategias: 'Estrategias',
   segmentos: 'Segmentos',
   equipo: 'Equipo',
+  whatsapp: 'WhatsApp',
 };
 
 // Cada perfil ve solo sus pestañas, agrupadas en Operación y Configuración.
 // El Agente no tiene pestañas: una sola lista (ver AgenteVista).
 const SECCIONES_POR_ROL: Record<Exclude<Rol, 'agente'>, Section[][]> = {
   admin: [
-    ['recordatorios', 'alertas', 'campanas', 'pagos'],
+    ['recordatorios', 'whatsapp', 'alertas', 'campanas', 'pagos'],
     ['segmentos', 'plantillas', 'reportes', 'datos', 'estrategias', 'equipo'],
   ],
-  supervisor: [['recordatorios', 'campanas', 'pagos', 'equipo'], ['segmentos', 'reportes']],
+  supervisor: [['recordatorios', 'whatsapp', 'campanas', 'pagos', 'equipo'], ['segmentos', 'reportes']],
 };
 
 const ENCABEZADO: Record<Rol, { titulo: string; texto: string }> = {
@@ -467,9 +470,13 @@ function CobranzaIA() {
         </Reveal>
       )}
 
-      <Reveal delay={0.1}>
-        <PrototypeNotice />
-      </Reveal>
+      {/* WhatsApp ya usa datos reales del backend; el resto sigue siendo prototipo. */}
+      {(rol === 'agente' || section !== 'whatsapp') && (
+        <Reveal delay={0.1}>
+          <PrototypeNotice />
+        </Reveal>
+      )}
+      {rol !== 'agente' && section === 'whatsapp' && <div className="h-7" />}
 
       <motion.div
         key={`${rol}-${section}`}
@@ -483,6 +490,7 @@ function CobranzaIA() {
           <>
             {section === 'alertas' && <AlertasPanel />}
             {section === 'recordatorios' && <RecordatoriosPanel />}
+            {section === 'whatsapp' && <WhatsappPanel />}
             {section === 'campanas' && <CampanasPanel />}
             {section === 'plantillas' && <PlantillasPanel />}
             {section === 'reportes' && <ReportesPanel soloEquipo={rol === 'supervisor'} />}

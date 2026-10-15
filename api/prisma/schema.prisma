@@ -194,23 +194,24 @@ model Organization {
   /// Último `status` de Stripe recibido por webhook (ver Stripe.Subscription.status).
   subscriptionStatus   String?
 
-  users                  User[]
-  suppliers              Supplier[]
-  customers              Customer[]
-  invoices               Invoice[]
-  payments               Payment[]
-  diotDeclarations       DiotDeclaration[]
-  financialStatements    FinancialStatement[]
-  activityLogs           ActivityLog[]
-  webhookEndpoints       WebhookEndpoint[]
-  usageEvents            UsageEvent[]
-  collectionPolicies     CollectionPolicy[]
-  collectionSequenceRuns CollectionSequenceRun[]
-  customerPortalAccesses CustomerPortalAccess[]
+  users                     User[]
+  suppliers                 Supplier[]
+  customers                 Customer[]
+  invoices                  Invoice[]
+  payments                  Payment[]
+  diotDeclarations          DiotDeclaration[]
+  financialStatements       FinancialStatement[]
+  activityLogs              ActivityLog[]
+  webhookEndpoints          WebhookEndpoint[]
+  usageEvents               UsageEvent[]
+  collectionPolicies        CollectionPolicy[]
+  collectionSequenceRuns    CollectionSequenceRun[]
+  customerPortalAccesses    CustomerPortalAccess[]
   externalSyncFieldMappings ExternalSyncFieldMapping[]
   bankStatementImports      BankStatementImport[]
   bankTransactions          BankTransaction[]
   virtualNumbers            VirtualNumber[]
+  whatsappMessages          WhatsappMessage[]
 
   @@index([isActive])
 }
@@ -242,34 +243,34 @@ model VirtualNumber {
 }
 
 model User {
-  id             String     @id @default(uuid())
-  firebaseUid    String     @unique
-  organizationId String?
-  role           UserRole
-  email          String     @unique
-  name           String
-  avatarUrl      String?
-  isActive       Boolean    @default(true)
-  status         UserStatus @default(ACTIVE)
+  id                 String              @id @default(uuid())
+  firebaseUid        String              @unique
+  organizationId     String?
+  role               UserRole
+  email              String              @unique
+  name               String
+  avatarUrl          String?
+  isActive           Boolean             @default(true)
+  status             UserStatus          @default(ACTIVE)
   // Áreas a las que el usuario tiene acceso (CORPORATE_USER).
   // CORPORATE_ADMIN ignora esto y ve todo. Ej: ["finanzas","factoraje"]
-  permissions    String[]   @default([])
+  permissions        String[]            @default([])
   // Perfil operativo (Administrador/Data, Supervisor/Gerente,
   // Agente/Ejecutivo). Null = cuenta sin perfil asignado (portal completo,
   // comportamiento igual que antes de este campo).
   operationalProfile OperationalProfile?
-  invitedById    String?
-  lastLoginAt    DateTime?
-  supplierId     String?    @unique
+  invitedById        String?
+  lastLoginAt        DateTime?
+  supplierId         String?             @unique
   // Alertas críticas por WhatsApp (opt-in por usuario, ver Prompt 8C).
   // Solo se envían si optIn=true y hay teléfono; en E.164 (ej. +5215512345678).
-  whatsappPhone  String?
-  whatsappOptIn  Boolean    @default(false)
+  whatsappPhone      String?
+  whatsappOptIn      Boolean             @default(false)
   // 2FA TOTP (RFC 6238). El secreto se guarda CIFRADO (AES-256-GCM).
-  totpSecret     String?
-  totpEnabled    Boolean    @default(false)
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  totpSecret         String?
+  totpEnabled        Boolean             @default(false)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 
   organization        Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   supplier            Supplier?            @relation(fields: [supplierId], references: [id], onDelete: SetNull)
@@ -326,38 +327,38 @@ model Supplier {
 // Cliente de la empresa (contraparte de CxC). Espejo de Supplier pero para
 // las cuentas por cobrar: a quién le factura y le cobra la organización.
 model Customer {
-  id              String    @id @default(uuid())
-  organizationId  String
-  name            String
-  rfc             String
-  legalName       String
-  contact         String?
-  email           String?
+  id                   String    @id @default(uuid())
+  organizationId       String
+  name                 String
+  rfc                  String
+  legalName            String
+  contact              String?
+  email                String?
   // Teléfono en E.164 (ej. +5215512345678) para recordatorios de cobro por
   // WhatsApp. Null = no se le puede contactar por ese canal.
-  phone           String?
-  category        String?
+  phone                String?
+  category             String?
   // Opt-out explícito de contacto de cobranza (email, WhatsApp, SMS o
   // llamada): si es true, ningún canal automatizado debe contactar a este
   // cliente, sin importar la política/secuencia. Requisito de cumplimiento
   // (CONDUSEF/REDECO) para el guardrail de "lista de exclusión".
-  doNotContact       Boolean   @default(false)
-  doNotContactReason String?
-  doNotContactAt     DateTime?
+  doNotContact         Boolean   @default(false)
+  doNotContactReason   String?
+  doNotContactAt       DateTime?
   // Días de crédito otorgados (informativo; el vencimiento real vive en la
   // factura). Null = contado / sin crédito definido.
-  creditLimitDays Int?
+  creditLimitDays      Int?
   // Llave de idempotencia para importar desde un sistema externo (Tradespace
   // y otros clientes CxC cuyos datos viven fuera de Royáltica): el ID del
   // registro en ESE sistema. Null = cliente creado nativamente en Royáltica.
   // Único por organización (no global): dos orgs pueden compartir el mismo
   // externalId si vienen de sistemas distintos.
-  externalId      String?
-  isActive        Boolean   @default(true)
+  externalId           String?
+  isActive             Boolean   @default(true)
   // Agente/Ejecutivo (User.operationalProfile = AGENTE_EJECUTIVO) responsable
   // de gestionar este contacto. Null = sin asignar (no aparece en la bandeja
   // de ningún agente; lo sigue viendo Supervisor/Admin normalmente).
-  assignedAgentId String?
+  assignedAgentId      String?
   // Score de puntualidad 0-100 (FR-04, spec "Mejoras V1"): % de facturas CxC
   // pagadas en o antes de su vencimiento. Misma fórmula que
   // DashboardService.computeCustomerStats (onTimePct), pero persistida para
@@ -365,30 +366,31 @@ model Customer {
   // al vuelo y no tiene memoria del valor anterior. Null hasta el primer
   // cálculo (CustomerScoringService, cron diario). >95 = "buen pagador":
   // CollectionSequencesService lo excluye de pasos agresivos (FR-05).
-  score          Int?
-  scoreUpdatedAt DateTime?
+  score                Int?
+  scoreUpdatedAt       DateTime?
   // FR-02 (spec "Mejoras V1"): el sistema debe priorizar el contacto con
   // Finanzas/Tesorería sobre el Director General, porque ese es quien
   // realmente ejecuta la firma o la transferencia. Si están capturados,
   // ReceivablesService.dispatchReminder los usa EN VEZ de phone/email
   // (que suelen apuntar al contacto comercial/dirección general). Null =
   // no se capturó un contacto de Finanzas/Tesorería; se usa el genérico.
-  financeContactName  String?
-  financeContactEmail String?
-  financeContactPhone String?
+  financeContactName   String?
+  financeContactEmail  String?
+  financeContactPhone  String?
   // FR-06 (spec "Mejoras V1"): última vez que se le mandó el mensaje de
   // "mantenimiento de datos" (validar vigencia de contacto, SIN mencionar
   // deuda) a un cliente con score > GOOD_PAYER_SCORE_THRESHOLD. Null =
   // nunca se le ha mandado. JobsService lo reenvía cada ~6 meses.
   lastServiceMessageAt DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  deletedAt       DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  deletedAt            DateTime?
 
-  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  assignedAgent  User?                  @relation("AssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
-  invoices       Invoice[]
-  portalAccesses CustomerPortalAccess[]
+  organization     Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignedAgent    User?                  @relation("AssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  invoices         Invoice[]
+  portalAccesses   CustomerPortalAccess[]
+  whatsappMessages WhatsappMessage[]
 
   @@unique([organizationId, rfc])
   @@unique([organizationId, externalId])
@@ -520,6 +522,7 @@ model Invoice {
   payments               Payment[]               @relation("PaymentInvoices")
   collectionSequenceRuns CollectionSequenceRun[]
   bankTransactions       BankTransaction[]
+  WhatsappMessage        WhatsappMessage[]
 
   @@unique([organizationId, externalId])
   @@index([organizationId])
@@ -804,23 +807,28 @@ enum CollectionSequenceRunStatus {
 // configurable con auditoría completa (cada ejecución se registra en
 // ActivityLog desde CollectionSequencesService).
 model CollectionSequenceStep {
-  id                 String                   @id @default(uuid())
-  collectionPolicyId String
+  id                   String                   @id @default(uuid())
+  collectionPolicyId   String
   // Orden del paso dentro de la secuencia (1, 2, 3...).
-  stepOrder          Int
+  stepOrder            Int
   // Días de atraso (respecto a dueDate) a partir de los cuales este paso
   // puede dispararse.
-  daysAfterDue       Int
-  channel            CollectionContactChannel
-  tone               CollectionSequenceTone   @default(STANDARD)
+  daysAfterDue         Int
+  channel              CollectionContactChannel
+  tone                 CollectionSequenceTone   @default(STANDARD)
   // Plantilla del mensaje con placeholders simples: {{customerName}},
   // {{amount}}, {{dueDate}}, {{daysOverdue}}. Se resuelven con reemplazo de
   // texto plano (sin motor de templates) al enviar el paso.
-  messageTemplate    String
+  messageTemplate      String
   // Si es true, este paso NO envía un mensaje automático: crea una
   // notificación de handoff para los admins de la organización y la
   // ejecución (CollectionSequenceRun) pasa a estado ESCALATED.
-  escalatesToHuman   Boolean                  @default(false)
+  escalatesToHuman     Boolean                  @default(false)
+  // Plantilla de WhatsApp aprobada por Meta (nombre exacto, ver
+  // src/whatsapp/collection-templates.ts) para el PRIMER contacto de este
+  // paso cuando la ventana de 24h está cerrada. Null = paso sin plantilla:
+  // fuera de ventana se intenta texto libre (comportamiento previo).
+  whatsappTemplateName String?
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -1042,35 +1050,81 @@ model BankStatementImport {
 /// Una línea (depósito/transacción) parseada de un BankStatementImport,
 /// candidata a conciliarse contra una Invoice RECEIVABLE pendiente.
 model BankTransaction {
-  id                     String                      @id @default(uuid())
-  bankStatementImportId  String
+  id                    String                     @id @default(uuid())
+  bankStatementImportId String
   // Denormalizado a propósito para RLS directa sobre esta tabla (mismo
   // patrón que CollectionSequenceRun/CustomerPortalAccess): evita un JOIN
   // contra BankStatementImport solo para resolver el tenant.
-  organizationId         String
-  transactionDate        DateTime
-  amount                 Decimal                     @db.Decimal(15, 2)
+  organizationId        String
+  transactionDate       DateTime
+  amount                Decimal                    @db.Decimal(15, 2)
   // Texto crudo de la línea (concepto/descripción bancaria); usado para
   // fuzzy-match contra folio/nombre del cliente cuando el monto no alcanza.
-  description            String
-  referenceNumber        String?
+  description           String
+  referenceNumber       String?
   // Fila original tal como la parseó el conector (CSV hoy, OFX/REST del
   // banco específico después), para auditoría/debug sin volver a parsear.
-  rawRowData              Json
-  matchStatus            BankTransactionMatchStatus @default(UNMATCHED)
-  matchedInvoiceId        String?
+  rawRowData            Json
+  matchStatus           BankTransactionMatchStatus @default(UNMATCHED)
+  matchedInvoiceId      String?
   // 0-1. Null hasta que el motor corra matchTransaction/runAutoMatch.
-  matchConfidence         Float?
-  matchedAt               DateTime?
-  matchedBy               String?
-  createdAt               DateTime                   @default(now())
+  matchConfidence       Float?
+  matchedAt             DateTime?
+  matchedBy             String?
+  createdAt             DateTime                   @default(now())
 
-  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  bankStatementImport  BankStatementImport  @relation(fields: [bankStatementImportId], references: [id], onDelete: Cascade)
-  matchedInvoice       Invoice?             @relation(fields: [matchedInvoiceId], references: [id], onDelete: SetNull)
+  organization        Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  bankStatementImport BankStatementImport @relation(fields: [bankStatementImportId], references: [id], onDelete: Cascade)
+  matchedInvoice      Invoice?            @relation(fields: [matchedInvoiceId], references: [id], onDelete: SetNull)
 
   @@index([organizationId])
   @@index([bankStatementImportId])
   @@index([matchStatus])
   @@index([matchedInvoiceId])
+}
+
+enum WhatsappMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum WhatsappMessageKind {
+  TEXT // texto libre (entrante, o saliente dentro de la ventana de 24h)
+  TEMPLATE // plantilla aprobada por Meta (saliente, abre conversación)
+  BUTTON // el cliente tocó un botón de respuesta rápida de una plantilla
+  MEDIA // imagen/documento (p. ej. comprobante); no se descarga el archivo
+}
+
+// Hilo de WhatsApp con un cliente deudor (CxC). Es la fuente de verdad de
+// la ventana de 24h de Meta: está ABIERTA si existe un INBOUND de ese
+// cliente en las últimas 24h — dentro de ella se permite texto libre
+// (redactado con IA y revisado por una persona); fuera, solo plantillas.
+model WhatsappMessage {
+  id             String                   @id @default(uuid())
+  organizationId String
+  customerId     String
+  invoiceId      String?
+  direction      WhatsappMessageDirection
+  kind           WhatsappMessageKind
+  body           String
+  templateName   String?
+  // ID del mensaje en Meta (wamid). Único: Meta reintenta webhooks y así
+  // un mismo mensaje entrante nunca se registra dos veces.
+  waMessageId    String?                  @unique
+  // phone_number_id de Meta por el que entró/salió el mensaje: las
+  // respuestas en texto libre salen por el MISMO número al que escribió el
+  // cliente (si no, le llegarían en otro chat).
+  phoneNumberId  String?
+  // OUTBOUND: false si el proveedor no lo aceptó (o modo stub).
+  sent           Boolean                  @default(true)
+  // OUTBOUND manual (persona que lo mandó). Null = motor automático o INBOUND.
+  sentByUserId   String?
+  createdAt      DateTime                 @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  invoice      Invoice?     @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, customerId, createdAt])
+  @@index([customerId, direction, createdAt])
 }

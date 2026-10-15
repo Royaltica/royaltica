@@ -1,6 +1,7 @@
 import {
   IsBoolean,
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -12,6 +13,7 @@ import {
   CollectionContactChannel,
   CollectionSequenceTone,
 } from '@prisma/client';
+import { TEMPLATE_NAMES } from '../../whatsapp/collection-templates';
 
 /**
  * Un paso de la cadena de escalamiento de cobranza (CollectionSequenceStep),
@@ -26,9 +28,13 @@ export class CreateSequenceStepDto {
   @Max(50)
   stepOrder!: number;
 
-  /** Días de atraso a partir de los cuales este paso puede dispararse. */
+  /**
+   * Días respecto al vencimiento a partir de los cuales este paso puede
+   * dispararse. Negativo = antes de vencer (niveles de cobranza temprana:
+   * -14, -7, -3); 0 = el día del vencimiento.
+   */
   @IsInt()
-  @Min(0)
+  @Min(-120)
   @Max(365)
   daysAfterDue!: number;
 
@@ -54,4 +60,12 @@ export class CreateSequenceStepDto {
   @IsOptional()
   @IsBoolean()
   escalatesToHuman?: boolean;
+
+  /**
+   * Plantilla de WhatsApp aprobada por Meta para el primer contacto de este
+   * paso (ver src/whatsapp/collection-templates.ts). Null = sin plantilla.
+   */
+  @IsOptional()
+  @IsIn([...TEMPLATE_NAMES, null])
+  whatsappTemplateName?: string | null;
 }

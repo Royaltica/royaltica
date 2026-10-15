@@ -5,6 +5,8 @@ import { EmailService } from '../email/email.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CollectionSequencesAiDecisionService } from './collection-sequences-ai-decision.service';
+import { WhatsappConversationService } from '../whatsapp/whatsapp-conversation.service';
+import { pickNextStep } from './collection-sequences.service';
 
 /** Política base: ventana 9-17 UTC, sin gracia, sin tope de contactos. */
 const basePolicy = {
@@ -77,6 +79,7 @@ describe('CollectionSequencesService', () => {
   let whatsapp: { sendMessage: jest.Mock };
   let notifications: { notifyOrgAdmins: jest.Mock };
   let aiDecision: { decideNextAction: jest.Mock };
+  let conversations: { sendCollectionStep: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -124,6 +127,9 @@ describe('CollectionSequencesService', () => {
     // Por defecto no se llama (aiDecisionEnabled=false en basePolicy); las
     // pruebas que activan el flag configuran su propio mockResolvedValue.
     aiDecision = { decideNextAction: jest.fn() };
+    conversations = {
+      sendCollectionStep: jest.fn().mockResolvedValue({ sent: true, kind: 'TEMPLATE' }),
+    };
 
     service = new CollectionSequencesService(
       prisma as unknown as PrismaService,
@@ -132,6 +138,7 @@ describe('CollectionSequencesService', () => {
       whatsapp as unknown as WhatsappService,
       notifications as unknown as NotificationsService,
       aiDecision as unknown as CollectionSequencesAiDecisionService,
+      conversations as unknown as WhatsappConversationService,
     );
   });
 
@@ -171,7 +178,7 @@ describe('CollectionSequencesService', () => {
     expect(result.outcome).toBe('skipped');
     expect(result.reason).toBe('outside-contact-window');
     expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
-    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
+    expect(conversations.sendCollectionStep).not.toHaveBeenCalled();
     expect(prisma.collectionSequenceRun.update).not.toHaveBeenCalled();
     expect(activity.record).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -208,7 +215,7 @@ describe('CollectionSequencesService', () => {
       expect.objectContaining({ type: 'COLLECTION_SEQUENCE_ESCALATED' }),
     );
     expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
-    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
+    expect(conversations.sendCollectionStep).not.toHaveBeenCalled();
     expect(prisma.collectionSequenceRun.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'ESCALATED' }) }),
     );
@@ -240,7 +247,7 @@ describe('CollectionSequencesService', () => {
       data: { status: 'COMPLETED' },
     });
     expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
-    expect(whatsapp.sendMessage).not.toHaveBeenCalled();
+    expect(conversations.sendCollectionStep).not.toHaveBeenCalled();
   });
 
   it('run pausado: no avanza ni envía mensajes', async () => {
@@ -391,7 +398,7 @@ describe('CollectionSequencesService', () => {
     const result = await service.advanceSequence('inv-1');
 
     expect(result.outcome).toBe('sent');
-    expect(whatsapp.sendMessage).toHaveBeenCalledTimes(1);
+    expect(conversations.sendCollectionStep).toHaveBeenCalledTimes(1);
     expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
     expect(activity.record).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -460,6 +467,73 @@ describe('CollectionSequencesService', () => {
       await expect(
         service.updateStep(user, 'pol-1', 'step-1', badDto),
       ).rejects.toThrow(/no cumple con la regulación jurídica/);
+    });
+  });
+
+  describe('plan por niveles (cobranza temprana con plantillas de Meta)', () => {
+    const lvl = (stepOrder: number, daysAfterDue: number, whatsappTemplateName: string | null) => ({
+      ...step1,
+      id: `s-${stepOrder}`,
+      stepOrder,
+      daysAfterDue,
+      channel: 'WHATSAPP',
+      whatsappTemplateName,
+    });
+    const plan = [
+      lvl(1, -90, 'confirmacion_factura'),
+      lvl(2, -14, 'aviso_preventivo_pago'),
+      lvl(3, -7, 'recordatorio_cortesia_pago'),
+      lvl(4, -3, 'vence_3_dias'),
+      lvl(5, 0, 'vence_hoy'),
+      lvl(6, 1, 'aviso_vencida'),
+    ];
+
+    it('primer contacto antes del vencimiento: manda la confirmación aunque otros niveles ya apliquen', () => {
+      const r = pickNextStep(plan, 0, -10);
+      expect(r.step?.whatsappTemplateName).toBe('confirmacion_factura');
+      expect(r.superseded).toHaveLength(0);
+    });
+
+    it('niveles previos que ya no aplican se saltan (no se manda el aviso de 14 días a 6 días de vencer)', () => {
+      const r = pickNextStep(plan, 1, -6);
+      expect(r.step?.whatsappTemplateName).toBe('recordatorio_cortesia_pago');
+      expect(r.superseded.map((s) => s.whatsappTemplateName)).toEqual(['aviso_preventivo_pago']);
+    });
+
+    it('"vence en 3 días" solo se manda ese día exacto; si ya pasó, espera al siguiente nivel', () => {
+      const r = pickNextStep(plan, 3, -1);
+      // vence_3_dias quedó atrás y vence_hoy (día 0) aún no toca
+      expect(r.step?.whatsappTemplateName).toBe('vence_hoy');
+      expect(r.superseded.map((s) => s.whatsappTemplateName)).toEqual(['vence_3_dias']);
+    });
+
+    it('sin pasos negativos se comporta igual que antes: siguiente en orden si ya le toca', () => {
+      const legacy = [{ ...step1, whatsappTemplateName: null }];
+      expect(pickNextStep(legacy, 0, 3).step?.stepOrder).toBe(1);
+      expect(pickNextStep(legacy, 1, 3).step).toBeUndefined();
+    });
+
+    it('advanceSequence antes del vencimiento manda el nivel por WhatsApp con su plantilla', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-07-18T12:00:00Z')); // 7 días antes del 25
+      prisma.collectionPolicy.findFirst.mockResolvedValue({ ...basePolicy, sequenceSteps: plan });
+      prisma.collectionSequenceRun.findUnique.mockResolvedValue({
+        id: 'run-1',
+        currentStepOrder: 2,
+        status: 'ACTIVE',
+      });
+
+      const result = await service.advanceSequence('inv-1');
+
+      expect(result).toEqual({ outcome: 'sent', stepOrder: 3 });
+      expect(conversations.sendCollectionStep).toHaveBeenCalledWith(
+        expect.objectContaining({ templateName: 'recordatorio_cortesia_pago' }),
+      );
+    });
+
+    it('sin niveles previos, una factura que aún no vence se omite (comportamiento original)', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-07-18T12:00:00Z'));
+      const result = await service.advanceSequence('inv-1');
+      expect(result).toEqual({ outcome: 'skipped', reason: 'not-yet-due' });
     });
   });
 });

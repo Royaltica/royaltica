@@ -6,10 +6,27 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { WhatsappService } from './whatsapp.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../email/email.service';
+import { WhatsappConversationService } from './whatsapp-conversation.service';
 import type { Env } from '../config/env.validation';
 
 const makeConfig = (vals: Record<string, string>) =>
   ({ get: (k: string) => vals[k] ?? '' }) as unknown as ConfigService<Env, true>;
+
+/** Payload de Meta cuando el cliente toca un botón de respuesta rápida de una plantilla. */
+const buttonPayload = (from: string, text: string, id = 'wamid.BTN') => ({
+  entry: [
+    {
+      changes: [
+        {
+          value: {
+            metadata: { phone_number_id: 'PN-1' },
+            messages: [{ from, id, type: 'button', button: { text, payload: text } }],
+          },
+        },
+      ],
+    },
+  ],
+});
 
 const metaPayload = (from: string, body: string) => ({
   entry: [
@@ -37,6 +54,7 @@ describe('WhatsappWebhookService', () => {
   let whatsapp: { notifyOrgAdmins: jest.Mock };
   let notifications: { notifyOrgAdmins: jest.Mock };
   let email: Record<string, jest.Mock>;
+  let conversations: { recordInbound: jest.Mock };
 
   const build = (env: Record<string, string> = {}) => {
     prisma = {
@@ -47,12 +65,14 @@ describe('WhatsappWebhookService', () => {
     whatsapp = { notifyOrgAdmins: jest.fn().mockResolvedValue({ recipients: 1, sent: 0 }) };
     notifications = { notifyOrgAdmins: jest.fn().mockResolvedValue(1) };
     email = {};
+    conversations = { recordInbound: jest.fn().mockResolvedValue({ id: 'msg-1' }) };
     return new WhatsappWebhookService(
       makeConfig(env),
       prisma as unknown as PrismaService,
       whatsapp as unknown as WhatsappService,
       notifications as unknown as NotificationsService,
       email as unknown as EmailService,
+      conversations as unknown as WhatsappConversationService,
     );
   };
 
@@ -153,6 +173,62 @@ describe('WhatsappWebhookService', () => {
       expect(res.processed).toBe(1); // procesado (sin error), pero sin efectos
       expect(prisma.invoiceAuditLog.create).not.toHaveBeenCalled();
       expect(notifications.notifyOrgAdmins).not.toHaveBeenCalled();
+    });
+
+    const acme = { id: 'c-1', name: 'ACME', organizationId: 'org-1', phone: '+5215512345678', financeContactPhone: null };
+
+    it('guarda el mensaje en el hilo (abre la ventana de 24h) con el número de Meta que lo recibió', async () => {
+      const svc = build();
+      prisma.customer.findMany.mockResolvedValue([acme]);
+      await svc.handleIncoming(buttonPayload('5215512345678', 'Todo en orden'));
+      expect(conversations.recordInbound).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customerId: 'c-1',
+          kind: 'BUTTON',
+          body: 'Todo en orden',
+          phoneNumberId: 'PN-1',
+        }),
+      );
+    });
+
+    it('botón "Ya pagué, comparto comprobante" = afirmación de pago', async () => {
+      const svc = build();
+      prisma.customer.findMany.mockResolvedValue([acme]);
+      prisma.invoice.findFirst.mockResolvedValue({ id: 'inv-1', folio: 'F-1', cfdiUuid: 'x', total: 10 });
+      await svc.handleIncoming(buttonPayload('5215512345678', 'Ya pagué, comparto comprobante'));
+      expect(notifications.notifyOrgAdmins).toHaveBeenCalledWith(
+        'org-1',
+        expect.objectContaining({ type: 'RECEIVABLE_PAYMENT_CLAIMED' }),
+      );
+    });
+
+    it('botón "Ya quedó programada" es una promesa, NO un pago', async () => {
+      const svc = build();
+      prisma.customer.findMany.mockResolvedValue([acme]);
+      await svc.handleIncoming(buttonPayload('5215512345678', 'Ya quedó programada'));
+      expect(notifications.notifyOrgAdmins).toHaveBeenCalledWith(
+        'org-1',
+        expect.objectContaining({ type: 'RECEIVABLE_CUSTOMER_REPLY' }),
+      );
+    });
+
+    it('reintento de Meta (mismo wamid ya registrado): no vuelve a avisar', async () => {
+      const svc = build();
+      prisma.customer.findMany.mockResolvedValue([acme]);
+      conversations.recordInbound.mockResolvedValue(null);
+      await svc.handleIncoming(buttonPayload('5215512345678', 'Tengo una duda'));
+      expect(notifications.notifyOrgAdmins).not.toHaveBeenCalled();
+    });
+
+    it('empata también por el teléfono de Finanzas/Tesorería', async () => {
+      const svc = build();
+      prisma.customer.findMany.mockResolvedValue([
+        { ...acme, phone: '+5213300000000', financeContactPhone: '+52 1 55 1234 5678' },
+      ]);
+      await svc.handleIncoming(metaPayload('5215512345678', '¿Me reenvían el PDF?'));
+      expect(conversations.recordInbound).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: 'c-1', kind: 'TEXT' }),
+      );
     });
   });
 });

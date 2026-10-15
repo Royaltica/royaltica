@@ -130,6 +130,7 @@ export class WhatsappService implements OnModuleInit {
     templateName: string,
     languageCode = 'es_MX',
     variables: string[] = [],
+    opts?: WhatsappSendOptions & { phoneIdOverride?: string },
   ): Promise<WhatsappSendResult> {
     if (!this.isConfigured) {
       this.logger.debug(
@@ -144,7 +145,7 @@ export class WhatsappService implements OnModuleInit {
       return { sent: false, mode: this.provider };
     }
     try {
-      const url = `https://graph.facebook.com/v21.0/${this.phoneId}/messages`;
+      const url = `https://graph.facebook.com/v21.0/${opts?.phoneIdOverride || this.phoneId}/messages`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -175,6 +176,16 @@ export class WhatsappService implements OnModuleInit {
         throw new Error(`Meta API respondió ${res.status}: ${body}`);
       }
       const data = (await res.json()) as { messages?: { id?: string }[] };
+      // Cost tracking: mismo criterio que sendMessage (una plantilla también
+      // es un mensaje cobrado por Meta).
+      if (opts?.organizationId) {
+        void this.usage.record({
+          organizationId: opts.organizationId,
+          feature: 'WHATSAPP_SENT',
+          units: 1,
+          metadata: { tag: opts.usageTag ?? 'template', template: templateName },
+        });
+      }
       return { sent: true, mode: 'meta', id: data.messages?.[0]?.id };
     } catch (err) {
       this.logger.warn(
