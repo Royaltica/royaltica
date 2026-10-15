@@ -522,7 +522,7 @@ model Invoice {
   payments               Payment[]               @relation("PaymentInvoices")
   collectionSequenceRuns CollectionSequenceRun[]
   bankTransactions       BankTransaction[]
-  WhatsappMessage        WhatsappMessage[]
+  whatsappMessages       WhatsappMessage[]
 
   @@unique([organizationId, externalId])
   @@index([organizationId])

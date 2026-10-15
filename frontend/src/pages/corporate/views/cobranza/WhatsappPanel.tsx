@@ -1,258 +1,92 @@
 import React from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import {
-  AlertTriangle,
-  Check,
-  Clock,
-  Loader2,
-  Lock,
-  MessageSquare,
-  Send,
-  Sparkles,
-  Unlock,
-} from 'lucide-react';
-import { EASE, Reveal, BlockTitle } from './primitives.tsx';
-import {
-  api,
-  type CollectionLevelPlan,
-  type WaConversationSummary,
-  type WaDraft,
-  type WaTemplateInfo,
-  type WaThread,
-} from '../../../../services/apiClient.ts';
+import { AlertTriangle, Check, Clock, Loader2, Lock, Send, Sparkles, Unlock } from 'lucide-react';
+import { EASE, BlockTitle } from './primitives.tsx';
+import { planCuenta, type CuentaViva } from './store.tsx';
+import type { PasoPlan } from './plan.tsx';
+import { api, type WaConversationSummary, type WaTemplateInfo, type WaThread, type WaDraft } from '../../../../services/apiClient.ts';
 
 /**
- * WhatsApp de cobranza con DATOS REALES (primera pieza del Módulo 2 conectada
- * al backend). El flujo acordado:
+ * Subpestaña WhatsApp del expediente de un cliente (DATOS REALES del
+ * backend). No repite el plan: solo lo usa para preseleccionar la plantilla
+ * del paso que le toca hoy. El flujo:
  *
- *   1. Primer contacto de cada nivel → plantilla aprobada por Meta.
- *   2. El cliente contesta o toca un botón → se abre la ventana de 24h.
- *   3. Dentro de la ventana → borrador con IA que una persona revisa y envía.
- *
- * La ventana la calcula el backend (último mensaje del cliente); aquí solo se
- * muestra. Si está cerrada, el backend rechaza el texto libre aunque se
- * intentara desde otro lado.
+ *   1. Primer contacto → plantilla aprobada por Meta del paso del plan.
+ *   2. El cliente contesta o toca un botón → ventana de 24h abierta.
+ *   3. Borrador con IA que una persona revisa y envía.
  */
 
 const MXN = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' });
 
-export function WhatsappPanel() {
-  const [plan, setPlan] = React.useState<CollectionLevelPlan | null | undefined>(undefined);
-  const [lista, setLista] = React.useState<WaConversationSummary[] | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-  const [selId, setSelId] = React.useState<string | null>(null);
-
-  const cargarLista = React.useCallback(async () => {
-    try {
-      const l = await api.getWaConversations();
-      setLista(l);
-      setSelId((prev) => prev ?? l.find((c) => c.hasWhatsapp)?.customerId ?? l[0]?.customerId ?? null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo cargar la bandeja.');
-    }
-  }, []);
-
-  React.useEffect(() => {
-    api.getLevelPlan().then((r) => setPlan(r.policy)).catch(() => setPlan(null));
-    void cargarLista();
-  }, [cargarLista]);
-
-  return (
-    <div className="space-y-5">
-      <Reveal>
-        <PlanNiveles plan={plan} onActivado={setPlan} />
-      </Reveal>
-
-      {error && <Aviso tono="error" texto={error} />}
-
-      <Reveal delay={0.05}>
-        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4">
-          <Bandeja lista={lista} selId={selId} onSel={setSelId} />
-          {selId ? (
-            // key en el Fragment: al cambiar de cliente se reinicia el hilo completo.
-            <React.Fragment key={selId}>
-              <Hilo customerId={selId} onCambio={cargarLista} />
-            </React.Fragment>
-          ) : (
-            <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-10 text-center text-sm text-brand-ink/45">
-              {lista && lista.length === 0
-                ? 'Aún no hay clientes. Cárgalos en la pestaña Datos (CSV) para empezar.'
-                : 'Elige un cliente.'}
-            </div>
-          )}
-        </div>
-      </Reveal>
-    </div>
-  );
-}
-
-// ─── Plan por niveles ───────────────────────────────────────────────
-
-const NIVEL_CORTO: Record<string, string> = {
-  confirmacion_factura: 'N0',
-  aviso_preventivo_pago: 'N1',
-  recordatorio_cortesia_pago: 'N2',
-  vence_3_dias: 'N3',
-  vence_hoy: 'N4',
-  aviso_vencida: 'A',
-  seguimiento_vencida: 'B',
+/** Paso del plan (Cobranza IA) → plantilla de Meta. C y D no van por WhatsApp. */
+const PLANTILLA_DE_PASO: Partial<Record<PasoPlan['id'], string>> = {
+  N0: 'confirmacion_factura',
+  N1: 'aviso_preventivo_pago',
+  N2: 'recordatorio_cortesia_pago',
+  N3: 'vence_3_dias',
+  N4: 'vence_hoy',
+  A: 'aviso_vencida',
+  B: 'seguimiento_vencida',
 };
 
-function PlanNiveles({
-  plan,
-  onActivado,
-}: {
-  plan: CollectionLevelPlan | null | undefined;
-  onActivado: (p: CollectionLevelPlan) => void;
-}) {
-  const [cargando, setCargando] = React.useState(false);
+// Una sola consulta de la bandeja para todo el panel: sirve para enlazar el
+// cliente de la lista con su registro real (por nombre).
+let bandejaCache: Promise<WaConversationSummary[]> | null = null;
+const bandeja = () =>
+  (bandejaCache ??= api.getWaConversations().catch((e) => {
+    bandejaCache = null;
+    throw e;
+  }));
+
+export function SubWhatsapp({ cuenta }: { cuenta: CuentaViva }) {
+  const [customerId, setCustomerId] = React.useState<string | null | undefined>(undefined);
   const [error, setError] = React.useState<string | null>(null);
-  if (plan === undefined) return null;
 
-  const activar = async () => {
-    setCargando(true);
-    setError(null);
-    try {
-      const r = await api.ensureLevelPlan();
-      onActivado(r.policy);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'No se pudo activar el plan.');
-    } finally {
-      setCargando(false);
-    }
-  };
+  React.useEffect(() => {
+    let vivo = true;
+    bandeja()
+      .then((l) => vivo && setCustomerId(l.find((c) => c.name === cuenta.cliente)?.customerId ?? null))
+      .catch((e) => vivo && setError(e instanceof Error ? e.message : 'No se pudo conectar con el servidor.'));
+    return () => {
+      vivo = false;
+    };
+  }, [cuenta.cliente]);
 
-  if (!plan) {
+  if (error) return <div className="px-7 py-6"><Aviso tono="error" texto={error} /></div>;
+  if (customerId === undefined) return <Cargando />;
+  if (customerId === null) {
     return (
-      <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h4 className="text-lg font-serif text-brand-ink">El plan por niveles no está activo</h4>
-          <p className="text-[13px] text-brand-ink/60 mt-1 max-w-[70ch]">
-            Al activarlo, cada factura sigue los niveles 0-4 antes de vencer y las etapas A-D después. El primer
-            contacto de cada nivel usa la plantilla aprobada por Meta.
-          </p>
-          {error && <p className="text-[12px] text-rose-600 mt-2">{error}</p>}
-        </div>
-        <button
-          onClick={activar}
-          disabled={cargando}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold hover:bg-brand-ink/85 disabled:opacity-60"
-        >
-          {cargando ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-          Activar plan por niveles
-        </button>
-      </div>
+      <p className="px-7 py-8 text-sm text-brand-ink/45">
+        Este cliente todavía no está en tu base de datos, así que no tiene conversación de WhatsApp. Aparecerá aquí en
+        cuanto se cargue tu cartera.
+      </p>
     );
   }
-
-  return (
-    <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl px-6 py-4">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <BlockTitle>Plan activo</BlockTitle>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {plan.sequenceSteps.map((s) => {
-            const corto = s.whatsappTemplateName
-              ? NIVEL_CORTO[s.whatsappTemplateName] ?? s.whatsappTemplateName
-              : s.channel === 'EMAIL'
-                ? 'C'
-                : 'D';
-            const dia = s.daysAfterDue === 0 ? 'día 0' : s.daysAfterDue < 0 ? `${s.daysAfterDue}d` : `+${s.daysAfterDue}d`;
-            return (
-              <span
-                key={s.id}
-                className={`px-2 py-1 rounded-lg text-[11px] font-semibold border ${
-                  s.daysAfterDue < 0 || s.daysAfterDue === 0
-                    ? 'bg-sky-50 border-sky-200 text-sky-800'
-                    : 'bg-amber-50 border-amber-200 text-amber-800'
-                }`}
-                title={s.whatsappTemplateName ?? s.channel}
-              >
-                {corto} · {s.daysAfterDue <= -90 ? 'al cargar' : dia}
-              </span>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
+  return <Conversacion customerId={customerId} cuenta={cuenta} />;
 }
 
-// ─── Bandeja ────────────────────────────────────────────────────────
-
-function Bandeja({
-  lista,
-  selId,
-  onSel,
-}: {
-  lista: WaConversationSummary[] | null;
-  selId: string | null;
-  onSel: (id: string) => void;
-}) {
-  return (
-    <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-3 h-fit">
-      <div className="px-3 pt-2 pb-3">
-        <BlockTitle icon={<MessageSquare size={13} />}>Conversaciones</BlockTitle>
-      </div>
-      {lista === null ? (
-        <div className="p-6 flex justify-center">
-          <Loader2 size={16} className="animate-spin text-brand-ink/40" />
-        </div>
-      ) : (
-        <ul className="space-y-1">
-          {lista.map((c) => {
-            const activa = c.customerId === selId;
-            return (
-              <li key={c.customerId}>
-                <button
-                  onClick={() => onSel(c.customerId)}
-                  className={`w-full text-left px-3 py-2.5 rounded-2xl transition-colors ${
-                    activa ? 'bg-brand-bone' : 'hover:bg-brand-bone/60'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[13px] font-semibold text-brand-ink truncate">{c.name}</span>
-                    {c.windowOpen ? (
-                      <span className="shrink-0 flex items-center gap-1 text-[10px] font-semibold text-emerald-700">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        {restante(c.windowExpiresAt)}
-                      </span>
-                    ) : !c.hasWhatsapp ? (
-                      <span className="shrink-0 text-[10px] text-brand-ink/35">sin WhatsApp</span>
-                    ) : null}
-                  </div>
-                  <p className="text-[11px] text-brand-ink/45 truncate mt-0.5">
-                    {c.lastMessage
-                      ? `${c.lastMessage.direction === 'INBOUND' ? 'Cliente: ' : 'Tú: '}${c.lastMessage.body}`
-                      : 'Sin mensajes todavía'}
-                  </p>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-// ─── Hilo ───────────────────────────────────────────────────────────
-
-function Hilo({ customerId, onCambio }: { customerId: string; onCambio: () => void }) {
+function Conversacion({ customerId, cuenta }: { customerId: string; cuenta: CuentaViva }) {
   const reduce = useReducedMotion();
   const [hilo, setHilo] = React.useState<WaThread | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [facturaId, setFacturaId] = React.useState<string | null>(null);
+  const [plantilla, setPlantilla] = React.useState<string | null>(null);
   const [texto, setTexto] = React.useState('');
   const [borrador, setBorrador] = React.useState<WaDraft | null>(null);
   const [ocupado, setOcupado] = React.useState<null | 'plantilla' | 'ia' | 'enviar' | 'simular'>(null);
   const [aviso, setAviso] = React.useState<string | null>(null);
-  const finRef = React.useRef<HTMLDivElement>(null);
+  const listaRef = React.useRef<HTMLDivElement>(null);
+
+  const { pasos, actual } = planCuenta(cuenta);
+  // Pasos del plan que se pueden mandar por WhatsApp (los omitidos por la
+  // regla del segmento no aparecen: el plan ya decidió no usarlos).
+  const pasosWa = pasos.filter((p) => PLANTILLA_DE_PASO[p.id] && p.estado !== 'omitido');
+  const sugerido =
+    (actual && PLANTILLA_DE_PASO[actual.id] ? actual : pasosWa.find((p) => p.estado === 'programado')) ?? null;
+  const sugeridoNombre = sugerido ? PLANTILLA_DE_PASO[sugerido.id] ?? null : null;
 
   const cargar = React.useCallback(async () => {
     try {
-      const h = await api.getWaThread(customerId);
-      setHilo(h);
-      setFacturaId((prev) => prev ?? h.invoices[0]?.id ?? null);
+      setHilo(await api.getWaThread(customerId));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo cargar la conversación.');
     }
@@ -260,28 +94,27 @@ function Hilo({ customerId, onCambio }: { customerId: string; onCambio: () => vo
 
   React.useEffect(() => {
     void cargar();
-    // La respuesta del cliente llega por el webhook: se refresca solo.
+    // Las respuestas del cliente llegan por el webhook: se refresca solo.
     const t = setInterval(() => void cargar(), 15_000);
     return () => clearInterval(t);
   }, [cargar]);
 
   React.useEffect(() => {
-    finRef.current?.scrollIntoView({ block: 'nearest' });
+    if (plantilla === null && sugeridoNombre) setPlantilla(sugeridoNombre);
+  }, [plantilla, sugeridoNombre]);
+
+  React.useEffect(() => {
+    const el = listaRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [hilo?.messages.length]);
 
-  if (error) return <Aviso tono="error" texto={error} />;
-  if (!hilo) {
-    return (
-      <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-10 flex justify-center">
-        <Loader2 size={16} className="animate-spin text-brand-ink/40" />
-      </div>
-    );
-  }
+  if (error) return <div className="px-7 py-6"><Aviso tono="error" texto={error} /></div>;
+  if (!hilo) return <Cargando />;
 
-  const factura = hilo.invoices.find((i) => i.id === facturaId) ?? null;
-  const sugerida = factura ? nivelSugerido(hilo.templates, factura.daysToDue) : null;
-  const ventana = hilo.window;
-  const sinTelefono = !hilo.customer.phone;
+  // La factura del expediente (la del plan) si está pendiente; si no, la más antigua.
+  const factura = hilo.invoices.find((i) => i.folio === cuenta.folio) ?? hilo.invoices[0] ?? null;
+  const tpl = hilo.templates.find((t) => t.name === plantilla) ?? null;
+  const bloqueado = hilo.customer.doNotContact || !hilo.customer.phone;
 
   const correr = async (tipo: NonNullable<typeof ocupado>, fn: () => Promise<string | void>) => {
     setOcupado(tipo);
@@ -290,7 +123,6 @@ function Hilo({ customerId, onCambio }: { customerId: string; onCambio: () => vo
       const msg = await fn();
       if (msg) setAviso(msg);
       await cargar();
-      onCambio();
     } catch (e) {
       setAviso(e instanceof Error ? e.message : 'Algo falló.');
     } finally {
@@ -298,13 +130,13 @@ function Hilo({ customerId, onCambio }: { customerId: string; onCambio: () => vo
     }
   };
 
-  const enviarPlantilla = (t: WaTemplateInfo) =>
+  const enviarPlantilla = () =>
     correr('plantilla', async () => {
-      if (!factura) return 'Elige una factura pendiente.';
-      const r = await api.sendWaTemplate(customerId, factura.id, t.name);
+      if (!factura || !tpl) return 'Elige el paso del plan y verifica que haya una factura pendiente.';
+      const r = await api.sendWaTemplate(customerId, factura.id, tpl.name);
       return r.sent
-        ? `Plantilla "${t.label}" enviada.`
-        : `Quedó registrada, pero no salió a WhatsApp (modo ${r.mode}: falta configurar el token de Meta en este entorno).`;
+        ? 'Plantilla enviada.'
+        : `Quedó registrada, pero no salió a WhatsApp (modo ${r.mode}: falta el token de Meta en este entorno).`;
     });
 
   const redactar = () =>
@@ -324,221 +156,248 @@ function Hilo({ customerId, onCambio }: { customerId: string; onCambio: () => vo
     });
 
   return (
-    <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl flex flex-col min-h-[560px]">
-      {/* Encabezado */}
-      <div className="px-6 pt-5 pb-4 border-b border-brand-ink/8 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h4 className="text-lg font-serif text-brand-ink">{hilo.customer.name}</h4>
-          <p className="text-[12px] text-brand-ink/50 mt-0.5">
-            {hilo.customer.contact ? `${hilo.customer.contact} · ` : ''}
-            {hilo.customer.phone ?? 'Sin teléfono de WhatsApp'}
-          </p>
-        </div>
-        <VentanaBadge abierta={ventana.open} expira={ventana.expiresAt} />
+    <div className="px-7 py-6 space-y-5">
+      {/* Estado de la conversación */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[12px] text-brand-ink/50">
+          {hilo.customer.contact ? `${hilo.customer.contact} · ` : ''}
+          {hilo.customer.phone ?? 'Sin teléfono de WhatsApp'}
+        </p>
+        <VentanaBadge abierta={hilo.window.open} expira={hilo.window.expiresAt} />
       </div>
 
       {hilo.customer.doNotContact && (
-        <div className="px-6 pt-4">
-          <Aviso tono="error" texto="Este cliente pidió no ser contactado (lista de exclusión). No se le puede escribir." />
+        <Aviso tono="error" texto="Este cliente pidió no ser contactado (lista de exclusión). No se le puede escribir." />
+      )}
+      {aviso && <Aviso tono="info" texto={aviso} />}
+
+      {/* Mensajes */}
+      <div
+        ref={listaRef}
+        className="rounded-2xl bg-brand-bone/50 border border-brand-ink/6 px-4 py-4 space-y-2.5 max-h-[340px] overflow-y-auto scrollbar-custom"
+      >
+        {hilo.messages.length === 0 ? (
+          <p className="text-center text-[12px] text-brand-ink/40 py-8">
+            Sin mensajes todavía. El primer contacto siempre es la plantilla del paso del plan.
+          </p>
+        ) : (
+          hilo.messages.map((m) => {
+            const sale = m.direction === 'OUTBOUND';
+            const etiqueta =
+              m.kind === 'TEMPLATE'
+                ? `Plantilla · ${hilo.templates.find((t) => t.name === m.templateName)?.label ?? m.templateName}`
+                : m.kind === 'BUTTON'
+                  ? 'Tocó un botón'
+                  : m.kind === 'MEDIA'
+                    ? 'Archivo'
+                    : null;
+            return (
+              <motion.div
+                key={m.id}
+                initial={reduce ? false : { opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25, ease: EASE }}
+                className={`flex ${sale ? 'justify-end' : 'justify-start'}`}
+              >
+                <div
+                  className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 ${
+                    sale
+                      ? 'bg-brand-ink text-brand-paper rounded-br-md'
+                      : 'bg-brand-paper border border-brand-ink/8 text-brand-ink rounded-bl-md'
+                  }`}
+                >
+                  {etiqueta && (
+                    <p
+                      className={`text-[10px] uppercase tracking-wider font-semibold mb-1 ${
+                        sale ? 'text-brand-paper/55' : 'text-brand-ink/45'
+                      }`}
+                    >
+                      {etiqueta}
+                    </p>
+                  )}
+                  <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{m.body}</p>
+                  <p className={`text-[10px] mt-1 ${sale ? 'text-brand-paper/45' : 'text-brand-ink/35'}`}>
+                    {hora(m.createdAt)}
+                    {sale && !m.sent && ' · no salió (modo prueba)'}
+                    {sale && m.sentByUserId === null && ' · automático'}
+                  </p>
+                </div>
+              </motion.div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Contestó (ventana abierta) → respuesta personalizada; si no → plantilla del plan */}
+      {hilo.window.open ? (
+        <div className="space-y-2">
+          <BlockTitle>Responder</BlockTitle>
+          <textarea
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            rows={4}
+            maxLength={1000}
+            placeholder="Escribe la respuesta o pide un borrador a la IA…"
+            className="w-full text-[13px] leading-relaxed border border-brand-ink/12 rounded-2xl px-4 py-3 bg-brand-paper text-brand-ink outline-none focus:border-brand-gold/60"
+          />
+          {borrador?.warnings.map((w) => (
+            <p key={w} className="flex items-center gap-1.5 text-[11px] text-amber-700">
+              <AlertTriangle size={12} /> {w}
+            </p>
+          ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={redactar}
+              disabled={!!ocupado}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-paper text-[12px] font-semibold text-brand-ink/75 hover:bg-brand-bone disabled:opacity-50"
+            >
+              {ocupado === 'ia' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+              Redactar con IA
+            </button>
+            <button
+              onClick={enviarTexto}
+              disabled={!!ocupado || !texto.trim() || bloqueado}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold hover:bg-brand-ink/85 disabled:opacity-50"
+            >
+              {ocupado === 'enviar' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+              Enviar
+            </button>
+            <span className="text-[11px] text-brand-ink/40">La IA propone; tú decides qué se envía.</span>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <BlockTitle>Recordatorio según el plan</BlockTitle>
+          {pasosWa.length === 0 || !factura ? (
+            <p className="text-[12px] text-brand-ink/45">
+              {!factura ? 'Sin facturas pendientes.' : 'El plan de este cliente no tiene pasos por WhatsApp.'}
+            </p>
+          ) : (
+            <>
+              {actual && !PLANTILLA_DE_PASO[actual.id] && (
+                <p className="text-[12px] text-brand-ink/55">
+                  Hoy le toca {actual.etiqueta} ({actual.nombre}), que va por {actual.canal.toLowerCase()}. Por WhatsApp
+                  solo aplican los pasos con plantilla.
+                </p>
+              )}
+              <div className="flex flex-wrap gap-1.5">
+                {pasosWa.map((p) => {
+                  const nombre = PLANTILLA_DE_PASO[p.id]!;
+                  const elegido = plantilla === nombre;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setPlantilla(nombre)}
+                      aria-pressed={elegido}
+                      className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-colors ${
+                        elegido
+                          ? 'bg-brand-ink text-brand-paper border-brand-ink'
+                          : p.estado === 'actual'
+                            ? 'bg-brand-gold/15 border-brand-gold text-brand-ink'
+                            : 'border-brand-ink/12 bg-brand-paper text-brand-ink/60 hover:bg-brand-bone'
+                      }`}
+                    >
+                      {p.etiqueta}
+                      <span className={elegido ? 'text-brand-paper/60' : 'text-brand-ink/40'}>
+                        {' · '}
+                        {p.estado === 'actual' ? 'hoy' : p.estado === 'hecho' ? 'hecho' : `en ${p.faltan} d`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {tpl && (
+                <div className="rounded-2xl border border-brand-ink/10 px-4 py-3">
+                  <p className="text-[13px] text-brand-ink/75 leading-relaxed">{vistaPrevia(tpl, hilo, factura)}</p>
+                  {tpl.buttons.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2.5">
+                      {tpl.buttons.map((b) => (
+                        <span key={b} className="px-2 py-1 rounded-lg bg-brand-bone text-[11px] font-semibold text-sky-800">
+                          {b}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={enviarPlantilla}
+                  disabled={!!ocupado || !tpl || bloqueado}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold hover:bg-brand-ink/85 disabled:opacity-50"
+                >
+                  {ocupado === 'plantilla' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                  Enviar plantilla
+                </button>
+                <span className="flex items-center gap-1.5 text-[11px] text-brand-ink/40">
+                  <Lock size={11} /> Cuando conteste, podrás responder con un mensaje personalizado.
+                </span>
+              </div>
+            </>
+          )}
         </div>
       )}
 
-      {/* Mensajes */}
-      <div className="flex-1 px-6 py-5 space-y-3 overflow-y-auto max-h-[420px] scrollbar-custom">
-        {hilo.messages.length === 0 && (
-          <p className="text-center text-[12px] text-brand-ink/40 py-10">
-            Todavía no hay mensajes. El primer contacto siempre es una plantilla del nivel que le toca.
-          </p>
-        )}
-        {hilo.messages.map((m) => {
-          const sale = m.direction === 'OUTBOUND';
-          return (
-            <motion.div
-              key={m.id}
-              initial={reduce ? false : { opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25, ease: EASE }}
-              className={`flex ${sale ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-[78%] rounded-2xl px-4 py-2.5 ${
-                  sale ? 'bg-brand-ink text-brand-paper rounded-br-md' : 'bg-brand-bone text-brand-ink rounded-bl-md'
-                }`}
-              >
-                {(m.kind === 'TEMPLATE' || m.kind === 'BUTTON' || m.kind === 'MEDIA') && (
-                  <p className={`text-[10px] uppercase tracking-wider font-semibold mb-1 ${sale ? 'text-brand-paper/55' : 'text-brand-ink/45'}`}>
-                    {m.kind === 'TEMPLATE'
-                      ? `Plantilla · ${hilo.templates.find((t) => t.name === m.templateName)?.label ?? m.templateName}`
-                      : m.kind === 'BUTTON'
-                        ? 'Tocó un botón'
-                        : 'Archivo'}
-                  </p>
-                )}
-                <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{m.body}</p>
-                <p className={`text-[10px] mt-1 ${sale ? 'text-brand-paper/45' : 'text-brand-ink/35'}`}>
-                  {hora(m.createdAt)}
-                  {sale && !m.sent && ' · no salió (modo prueba)'}
-                  {sale && m.sentByUserId === null && m.kind !== 'BUTTON' && ' · automático'}
-                </p>
-              </div>
-            </motion.div>
-          );
-        })}
-        <div ref={finRef} />
-      </div>
-
-      {/* Acciones */}
-      <div className="border-t border-brand-ink/8 px-6 py-5 space-y-4">
-        {aviso && <Aviso tono="info" texto={aviso} />}
-
-        {/* 1 · Plantilla del nivel */}
-        <div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <BlockTitle>1 · Recordatorio del nivel (plantilla de Meta)</BlockTitle>
-            {hilo.invoices.length > 0 && (
-              <select
-                value={facturaId ?? ''}
-                onChange={(e) => setFacturaId(e.target.value)}
-                className="text-[12px] border border-brand-ink/12 rounded-lg px-2 py-1 bg-brand-paper text-brand-ink"
-              >
-                {hilo.invoices.map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.folio} · {MXN.format(i.total)} · {textoDias(i.daysToDue)}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-          {hilo.invoices.length === 0 ? (
-            <p className="text-[12px] text-brand-ink/45 mt-2">Sin facturas pendientes.</p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5 mt-3">
-              {hilo.templates.map((t) => {
-                const esSugerida = sugerida?.name === t.name;
-                return (
-                  <button
-                    key={t.name}
-                    onClick={() => enviarPlantilla(t)}
-                    disabled={!!ocupado || sinTelefono || hilo.customer.doNotContact}
-                    title={vistaPrevia(t, hilo, factura)}
-                    className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition-colors disabled:opacity-40 ${
-                      esSugerida
-                        ? 'bg-brand-gold/15 border-brand-gold text-brand-ink'
-                        : 'border-brand-ink/12 bg-brand-paper text-brand-ink/70 hover:bg-brand-bone'
-                    }`}
-                  >
-                    {t.label}
-                    {esSugerida && ' · le toca hoy'}
-                  </button>
-                );
-              })}
-              {ocupado === 'plantilla' && <Loader2 size={14} className="animate-spin text-brand-ink/40 self-center" />}
-            </div>
-          )}
-          {sugerida && (
-            <p className="text-[11px] text-brand-ink/45 mt-2 leading-relaxed">
-              Vista previa (pasa el cursor sobre otro nivel para verlo): {vistaPrevia(sugerida, hilo, factura)}
-            </p>
-          )}
-        </div>
-
-        {/* 2 · Respuesta libre con IA */}
-        <div>
-          <BlockTitle>2 · Respuesta personalizada (solo con la ventana abierta)</BlockTitle>
-          {!ventana.open ? (
-            <div className="mt-2 flex items-start gap-2 text-[12px] text-brand-ink/55">
-              <Lock size={13} className="mt-0.5 shrink-0" />
-              <span>
-                El cliente no ha contestado en las últimas 24 horas. Cuando conteste o toque un botón de la plantilla, aquí
-                podrás redactar con IA y enviar un mensaje personalizado.
-              </span>
-            </div>
-          ) : (
-            <div className="mt-3 space-y-2">
-              <textarea
-                value={texto}
-                onChange={(e) => setTexto(e.target.value)}
-                rows={4}
-                maxLength={1000}
-                placeholder="Escribe la respuesta o pide un borrador a la IA…"
-                className="w-full text-[13px] leading-relaxed border border-brand-ink/12 rounded-2xl px-4 py-3 bg-brand-paper text-brand-ink focus:outline-none focus:border-brand-ink/30"
-              />
-              {borrador?.warnings.map((w) => (
-                <p key={w} className="flex items-center gap-1.5 text-[11px] text-amber-700">
-                  <AlertTriangle size={12} /> {w}
-                </p>
-              ))}
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={redactar}
-                  disabled={!!ocupado}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-paper text-[12px] font-semibold text-brand-ink/75 hover:bg-brand-bone disabled:opacity-50"
-                >
-                  {ocupado === 'ia' ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                  Redactar con IA
-                </button>
-                <button
-                  onClick={enviarTexto}
-                  disabled={!!ocupado || !texto.trim() || hilo.customer.doNotContact}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold hover:bg-brand-ink/85 disabled:opacity-50"
-                >
-                  {ocupado === 'enviar' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                  Enviar
-                </button>
-                <span className="text-[11px] text-brand-ink/40">La IA solo propone; siempre lo envía una persona.</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Solo en local: simular la respuesta del cliente sin Meta */}
-        {import.meta.env.DEV && hilo.customer.phone && (
-          <div className="pt-3 border-t border-dashed border-brand-ink/10 flex flex-wrap items-center gap-2">
-            <span className="text-[10px] uppercase tracking-wider font-semibold text-brand-ink/35">Prueba local</span>
-            {['Ya pagué, comparto comprobante', 'Tengo una duda'].map((b) => (
-              <button
-                key={b}
-                disabled={!!ocupado}
-                onClick={() =>
-                  correr('simular', async () => {
-                    await api.simulateWaReplyDev(hilo.customer.phone!, b, 'button');
-                    return `Simulado: el cliente tocó "${b}".`;
-                  })
-                }
-                className="px-2.5 py-1.5 rounded-lg border border-dashed border-brand-ink/20 text-[11px] font-semibold text-brand-ink/55 hover:bg-brand-bone disabled:opacity-40"
-              >
-                Cliente toca “{b}”
-              </button>
-            ))}
-            <button
+      {/* Solo en local: simula la respuesta del cliente sin pasar por Meta */}
+      {import.meta.env.DEV && hilo.customer.phone && (
+        <div className="pt-3 border-t border-dashed border-brand-ink/10 flex flex-wrap items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wider font-semibold text-brand-ink/35">Prueba local</span>
+          {(tpl?.buttons.length ? tpl.buttons : ['Tengo una duda']).map((b) => (
+            <BotonSimular
+              key={b}
               disabled={!!ocupado}
               onClick={() =>
                 correr('simular', async () => {
-                  await api.simulateWaReplyDev(hilo.customer.phone!, '¿Me pueden dar unos días más? La transferencia sale el viernes.', 'text');
-                  return 'Simulado: el cliente escribió un mensaje.';
+                  await api.simulateWaReplyDev(hilo.customer.phone!, b, 'button');
+                  return `Simulado: el cliente tocó "${b}".`;
                 })
               }
-              className="px-2.5 py-1.5 rounded-lg border border-dashed border-brand-ink/20 text-[11px] font-semibold text-brand-ink/55 hover:bg-brand-bone disabled:opacity-40"
             >
-              Cliente escribe
-            </button>
-          </div>
-        )}
-      </div>
+              Toca “{b}”
+            </BotonSimular>
+          ))}
+          <BotonSimular
+            disabled={!!ocupado}
+            onClick={() =>
+              correr('simular', async () => {
+                await api.simulateWaReplyDev(
+                  hilo.customer.phone!,
+                  '¿Me pueden dar unos días más? La transferencia sale el viernes.',
+                  'text',
+                );
+                return 'Simulado: el cliente escribió un mensaje.';
+              })
+            }
+          >
+            Escribe un mensaje
+          </BotonSimular>
+        </div>
+      )}
     </div>
   );
 }
 
 // ─── Piezas ─────────────────────────────────────────────────────────
 
+function BotonSimular({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      {...props}
+      className="px-2.5 py-1.5 rounded-lg border border-dashed border-brand-ink/20 text-[11px] font-semibold text-brand-ink/55 hover:bg-brand-bone disabled:opacity-40"
+    >
+      {children}
+    </button>
+  );
+}
+
 function VentanaBadge({ abierta, expira }: { abierta: boolean; expira: string | null }) {
   return abierta ? (
     <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] font-semibold text-emerald-800">
-      <Unlock size={12} /> Ventana abierta · cierra en {restante(expira)}
+      <Unlock size={12} /> Contestó · puedes responder {restante(expira)}
     </span>
   ) : (
     <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand-bone border border-brand-ink/10 text-[11px] font-semibold text-brand-ink/55">
-      <Clock size={12} /> Ventana cerrada · solo plantillas
+      <Clock size={12} /> Esperando respuesta · solo plantillas
     </span>
   );
 }
@@ -546,34 +405,30 @@ function VentanaBadge({ abierta, expira }: { abierta: boolean; expira: string | 
 function Aviso({ tono, texto }: { tono: 'info' | 'error'; texto: string }) {
   return (
     <div
-      className={`text-[12px] rounded-xl px-3.5 py-2.5 border ${
+      className={`flex items-start gap-2 text-[12px] rounded-xl px-3.5 py-2.5 border ${
         tono === 'error' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-sky-50 border-sky-200 text-sky-900'
       }`}
     >
+      {tono === 'info' && <Check size={13} className="mt-0.5 shrink-0" />}
       {texto}
     </div>
   );
 }
 
-/**
- * Nivel que le toca hoy a la factura, con la misma regla del motor: el de
- * mayor día que ya llegó, sin proponer niveles de día exacto si no es su día.
- */
-function nivelSugerido(templates: WaTemplateInfo[], daysToDue: number | null): WaTemplateInfo | null {
-  if (daysToDue == null) return null;
-  const atraso = -daysToDue;
-  const candidatas = templates
-    .filter((t) => t.defaultDaysAfterDue <= atraso && (!t.exactDay || t.defaultDaysAfterDue === atraso))
-    .sort((a, b) => b.defaultDaysAfterDue - a.defaultDaysAfterDue);
-  return candidatas[0] ?? null;
+function Cargando() {
+  return (
+    <div className="px-7 py-10 flex justify-center">
+      <Loader2 size={16} className="animate-spin text-brand-ink/40" />
+    </div>
+  );
 }
 
-function vistaPrevia(t: WaTemplateInfo, hilo: WaThread, factura: WaThread['invoices'][number] | null): string {
+function vistaPrevia(t: WaTemplateInfo, hilo: WaThread, factura: WaThread['invoices'][number]): string {
   const valores: Record<string, string> = {
     contacto: hilo.customer.contact ?? hilo.customer.name,
-    folio: factura?.folio ?? '—',
-    monto: factura ? `${MXN.format(factura.total)} ${factura.currency}` : '—',
-    fecha: factura?.dueDate
+    folio: factura.folio,
+    monto: `${MXN.format(factura.total)} ${factura.currency}`,
+    fecha: factura.dueDate
       ? new Date(factura.dueDate).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', timeZone: 'UTC' })
       : '—',
     liga: '(liga de pago)',
@@ -581,20 +436,13 @@ function vistaPrevia(t: WaTemplateInfo, hilo: WaThread, factura: WaThread['invoi
   return t.body.replace(/\{\{(\d+)\}\}/g, (_, n: string) => valores[t.vars[Number(n) - 1]] ?? '');
 }
 
-function textoDias(d: number | null): string {
-  if (d == null) return 'sin fecha';
-  if (d > 0) return `vence en ${d} d`;
-  if (d === 0) return 'vence hoy';
-  return `vencida hace ${-d} d`;
-}
-
+/** "por 23 h", "por 40 min": cuánto queda de la ventana de 24h. */
 function restante(iso: string | null): string {
   if (!iso) return '';
   const ms = new Date(iso).getTime() - Date.now();
-  if (ms <= 0) return '0 min';
+  if (ms <= 0) return '';
   const h = Math.floor(ms / 3_600_000);
-  const m = Math.floor((ms % 3_600_000) / 60_000);
-  return h > 0 ? `${h} h ${m} min` : `${m} min`;
+  return h > 0 ? `por ${h} h` : `por ${Math.max(1, Math.floor(ms / 60_000))} min`;
 }
 
 function hora(iso: string): string {

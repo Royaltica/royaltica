@@ -32,7 +32,7 @@ import { PlantillasPanel } from './cobranza/PlantillasPanel.tsx';
 import { ReportesPanel } from './cobranza/ReportesPanel.tsx';
 import { DatosPagosPanel, AsignacionPanel } from './cobranza/DatosPagosPanel.tsx';
 import { PagosPanel, AvisoPagos } from './cobranza/PagosPanel.tsx';
-import { WhatsappPanel } from './cobranza/WhatsappPanel.tsx';
+import { SubWhatsapp } from './cobranza/WhatsappPanel.tsx';
 import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
 
 /**
@@ -57,8 +57,7 @@ type Section =
   | 'pagos'
   | 'estrategias'
   | 'segmentos'
-  | 'equipo'
-  | 'whatsapp';
+  | 'equipo';
 
 const LABEL: Record<Section, string> = {
   alertas: 'Alertas',
@@ -71,17 +70,16 @@ const LABEL: Record<Section, string> = {
   estrategias: 'Estrategias',
   segmentos: 'Segmentos',
   equipo: 'Equipo',
-  whatsapp: 'WhatsApp',
 };
 
 // Cada perfil ve solo sus pestañas, agrupadas en Operación y Configuración.
 // El Agente no tiene pestañas: una sola lista (ver AgenteVista).
 const SECCIONES_POR_ROL: Record<Exclude<Rol, 'agente'>, Section[][]> = {
   admin: [
-    ['recordatorios', 'whatsapp', 'alertas', 'campanas', 'pagos'],
+    ['recordatorios', 'alertas', 'campanas', 'pagos'],
     ['segmentos', 'plantillas', 'reportes', 'datos', 'estrategias', 'equipo'],
   ],
-  supervisor: [['recordatorios', 'whatsapp', 'campanas', 'pagos', 'equipo'], ['segmentos', 'reportes']],
+  supervisor: [['recordatorios', 'campanas', 'pagos', 'equipo'], ['segmentos', 'reportes']],
 };
 
 const ENCABEZADO: Record<Rol, { titulo: string; texto: string }> = {
@@ -470,13 +468,9 @@ function CobranzaIA() {
         </Reveal>
       )}
 
-      {/* WhatsApp ya usa datos reales del backend; el resto sigue siendo prototipo. */}
-      {(rol === 'agente' || section !== 'whatsapp') && (
-        <Reveal delay={0.1}>
-          <PrototypeNotice />
-        </Reveal>
-      )}
-      {rol !== 'agente' && section === 'whatsapp' && <div className="h-7" />}
+      <Reveal delay={0.1}>
+        <PrototypeNotice />
+      </Reveal>
 
       <motion.div
         key={`${rol}-${section}`}
@@ -490,7 +484,6 @@ function CobranzaIA() {
           <>
             {section === 'alertas' && <AlertasPanel />}
             {section === 'recordatorios' && <RecordatoriosPanel />}
-            {section === 'whatsapp' && <WhatsappPanel />}
             {section === 'campanas' && <CampanasPanel />}
             {section === 'plantillas' && <PlantillasPanel />}
             {section === 'reportes' && <ReportesPanel soloEquipo={rol === 'supervisor'} />}
@@ -664,11 +657,12 @@ const RESULTADO_STYLES = {
 
 type RecordatorioItem = (typeof MOCK.recordatorios)[number];
 
-type SubSeccion = 'facturas' | 'plan' | 'historial' | 'resumen' | 'simulador';
+type SubSeccion = 'facturas' | 'plan' | 'whatsapp' | 'historial' | 'resumen' | 'simulador';
 
 const SUB_SECCIONES: { id: SubSeccion; label: string }[] = [
   { id: 'facturas', label: 'Facturas' },
   { id: 'plan', label: 'Plan' },
+  { id: 'whatsapp', label: 'WhatsApp' },
   { id: 'historial', label: 'Historial' },
   { id: 'resumen', label: 'Riesgo' },
   { id: 'simulador', label: 'Simulador' },
@@ -899,6 +893,7 @@ function RecordatoriosPanel() {
             {sub === 'facturas' && <SubFacturas cuenta={activoVivo} />}
             {sub === 'resumen' && <SubResumen cuenta={cuenta} />}
             {sub === 'plan' && <SubPlan registro={activo} />}
+            {sub === 'whatsapp' && <SubWhatsapp cuenta={activoVivo} />}
             {sub === 'historial' && <SubHistorial registro={activo} reduce={reduce} />}
             {sub === 'simulador' && cuenta && <SimuladorCuenta cuenta={cuenta} />}
             {sub === 'simulador' && !cuenta && (
