@@ -13,6 +13,8 @@ import {
 import { AdminService } from './admin.service';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { QueryCostsDto } from './dto/query-costs.dto';
@@ -49,13 +51,30 @@ export class AdminController {
   updateOrganization(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateOrganizationDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.admin.updateOrganization(id, dto);
+    return this.admin.updateOrganization(id, dto, { id: user.id, email: user.email });
   }
 
   @Delete('organizations/:id')
-  removeOrganization(@Param('id', ParseUUIDPipe) id: string) {
-    return this.admin.removeOrganization(id);
+  removeOrganization(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.admin.removeOrganization(id, { id: user.id, email: user.email });
+  }
+
+  /**
+   * "Entrar como este cliente": emite una sesión real del admin de esa
+   * organización para que el SUPERADMIN vea/opere su portal tal cual lo ve
+   * él. Queda auditado en la bitácora de actividad (ver AuthService).
+   */
+  @Post('organizations/:id/impersonate')
+  impersonate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.admin.impersonate(id, { id: user.id, email: user.email });
   }
 
   // ── Métricas globales ─────────────────────────────────────
@@ -69,6 +88,28 @@ export class AdminController {
   @Get('activity')
   activity(@Query('limit') limit?: string) {
     return this.admin.recentActivity(limit ? Number(limit) : 50);
+  }
+
+  /** ¿Está vivo el agente de recordatorios de cobranza, o se trabó/falló? */
+  @Get('jobs/collection-engine')
+  collectionEngineHealth() {
+    return this.admin.collectionEngineHealth();
+  }
+
+  /** Historial de accesos (quién entró y cuándo). SUPERADMIN. */
+  @Get('access-log')
+  loginHistory(@Query('limit') limit?: string) {
+    return this.admin.loginHistory(limit ? Number(limit) : 50);
+  }
+
+  /**
+   * Histórico de latencia/uptime de DB/Redis (snapshots cada 10 min, no solo
+   * el snapshot del momento en que se abre el dashboard). `hours` acota la
+   * ventana (máx 168 = 7 días).
+   */
+  @Get('health-history')
+  healthHistory(@Query('hours') hours?: string) {
+    return this.admin.healthHistory(hours ? Number(hours) : 24);
   }
 
   // ── Cost tracking ─────────────────────────────────────────
@@ -87,6 +128,12 @@ export class AdminController {
   @Get('costs/by-feature')
   costsByFeature(@Query() query: QueryCostsDto) {
     return this.admin.globalCostByFeature(query);
+  }
+
+  /** Costo aislado de recordatorios de cobranza (toda la plataforma). Declarado ANTES de :orgId. */
+  @Get('costs/reminders')
+  remindersCostGlobal(@Query() query: QueryCostsDto) {
+    return this.admin.remindersCostGlobal(query);
   }
 
   @Get('costs/:orgId')

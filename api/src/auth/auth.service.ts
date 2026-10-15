@@ -34,7 +34,15 @@ export interface AuthResult {
     avatarUrl: string | null;
     totpEnabled: boolean;
     operationalProfile: User['operationalProfile'];
+    /** Producto contratado por la organización (CXP|CXC|null = legacy, ve
+     * todo). Ver admin/dto/update-organization.dto.ts#PRODUCTS. */
+    organizationProduct: string | null;
   };
+  /** Presente solo cuando esta sesión es un SUPERADMIN viendo el portal de
+   * un cliente ("Entrar como este cliente" — ver AdminService#impersonate).
+   * El frontend usa esto para mostrar el banner "estás viendo como X" y el
+   * botón de volver a su propia sesión. */
+  impersonation?: { organizationName: string };
 }
 
 @Injectable()
@@ -289,7 +297,61 @@ export class AuthService {
   async getProfile(userId: string): Promise<AuthResult['user']> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('Usuario no encontrado.');
-    return this.toPublicUser(user);
+    return this.toPublicUser(user); // ya async, el caller hace await
+  }
+
+  /**
+   * "Entrar como este cliente" — emite un JWT real del CORPORATE_ADMIN de la
+   * organización para que un SUPERADMIN pueda ver/operar el portal tal cual
+   * lo ve el cliente (impersonation). Solo la llama AdminService, que ya
+   * exige rol SUPERADMIN vía @Roles('SUPERADMIN') en AdminController.
+   *
+   * No crea una sesión "especial": es el JWT normal de ese usuario (mismas
+   * reglas de permisos de siempre), marcado con `impersonation` solo para
+   * que el FRONTEND sepa mostrar el banner "viendo como X / volver" — el
+   * backend no distingue esta sesión de un login real de ese usuario. Por
+   * eso la bitácora (abajo) es la única forma real de auditar que pasó.
+   */
+  async impersonateOrganizationAdmin(
+    organizationId: string,
+    actingSuperadmin: { id: string; email: string },
+  ): Promise<AuthResult> {
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, name: true, deletedAt: true },
+    });
+    if (!org || org.deletedAt) {
+      throw new UnauthorizedException('Organización no encontrada.');
+    }
+    // El admin MÁS ANTIGUO activo: es, por construcción (ver admin.service.ts
+    // #createOrganization), la cuenta original que Royáltica le dio al
+    // cliente al contratar — la más representativa de "entrar como él".
+    const target = await this.prisma.user.findFirst({
+      where: { organizationId, role: 'CORPORATE_ADMIN', isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!target) {
+      throw new UnauthorizedException(
+        'Esta organización no tiene un administrador activo al cual entrar.',
+      );
+    }
+
+    // Auditoría: esto es lo único que distingue esta sesión de un login
+    // real — debe quedar trazado quién, cuándo y a cuál cliente.
+    void this.activity.record({
+      organizationId,
+      userId: actingSuperadmin.id,
+      action: 'SUPERADMIN_IMPERSONATION_STARTED',
+      entityType: 'Organization',
+      entityId: organizationId,
+      metadata: {
+        superadminEmail: actingSuperadmin.email,
+        impersonatedUserEmail: target.email,
+      },
+    });
+
+    const result = await this.buildAuthResult(target);
+    return { ...result, impersonation: { organizationName: org.name } };
   }
 
   /**
@@ -319,7 +381,7 @@ export class AuthService {
    * Si el usuario tiene 2FA activo, NO emite la sesión: devuelve un token
    * temporal (5 min) que solo sirve para POST /auth/2fa/complete.
    */
-  private gateTwoFactor(user: User): AuthResult {
+  private async gateTwoFactor(user: User): Promise<AuthResult> {
     void this.activity.record({
       organizationId: user.organizationId,
       userId: user.id,
@@ -333,7 +395,7 @@ export class AuthService {
       expiresIn: '5m',
       twoFactorRequired: true,
       tempToken: this.jwt.sign({ sub: user.id, twofa: true }, { expiresIn: '5m' }),
-      user: this.toPublicUser(user),
+      user: await this.toPublicUser(user),
     };
   }
 
@@ -346,7 +408,26 @@ export class AuthService {
     return isFullAccess ? [WILDCARD_PERMISSION] : user.permissions;
   }
 
-  private toPublicUser(user: User): AuthResult['user'] {
+  /** Lee settings.product de la organización del usuario (null si no
+   * aplica — proveedor/superadmin sin org, o org legacy sin producto
+   * asignado). Una query extra por login/refresh es aceptable: no está en
+   * un hot path de alto volumen. */
+  private async getOrganizationProduct(
+    organizationId: string | null,
+  ): Promise<string | null> {
+    if (!organizationId) return null;
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { settings: true },
+    });
+    const settings = (org?.settings ?? {}) as Record<string, unknown>;
+    return (settings.product as string | undefined) ?? null;
+  }
+
+  private async toPublicUser(user: User): Promise<AuthResult['user']> {
+    const organizationProduct = await this.getOrganizationProduct(
+      user.organizationId,
+    );
     return {
       id: user.id,
       email: user.email,
@@ -358,10 +439,11 @@ export class AuthService {
       avatarUrl: user.avatarUrl,
       totpEnabled: user.totpEnabled,
       operationalProfile: user.operationalProfile,
+      organizationProduct,
     };
   }
 
-  private buildAuthResult(user: User): AuthResult {
+  private async buildAuthResult(user: User): Promise<AuthResult> {
     const payload: JwtPayload = {
       sub: user.id,
       firebaseUid: user.firebaseUid,
@@ -375,7 +457,7 @@ export class AuthService {
     const accessToken = this.jwt.sign(payload);
     const expiresIn = this.config.get('JWT_EXPIRES_IN', { infer: true });
 
-    return { accessToken, expiresIn, user: this.toPublicUser(user) };
+    return { accessToken, expiresIn, user: await this.toPublicUser(user) };
   }
 }
 

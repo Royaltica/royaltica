@@ -668,7 +668,10 @@ export class CollectionSequencesService {
       );
       channelSent = res.sent;
     } else if (effectiveChannel === 'WHATSAPP' && invoice.customer.phone) {
-      const res = await this.whatsapp.sendMessage(invoice.customer.phone, body);
+      const res = await this.whatsapp.sendMessage(invoice.customer.phone, body, undefined, {
+        organizationId: invoice.organizationId,
+        usageTag: 'collection_reminder',
+      });
       channelSent = res.sent;
     } else if (effectiveChannel === 'SMS' || effectiveChannel === 'PHONE') {
       // Sin proveedor automático para SMS/llamada: se notifica a los admins

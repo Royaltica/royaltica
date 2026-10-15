@@ -68,6 +68,7 @@ describe('AdminService.createOrganization', () => {
       email as unknown as EmailService,
       usage as unknown as UsageService,
       config as unknown as ConfigService<Env, true>,
+      { impersonateOrganizationAdmin: jest.fn() } as never,
     );
   });
 

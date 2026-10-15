@@ -172,6 +172,14 @@ export const envSchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .default('true'),
+
+  // ── Alertas proactivas al EQUIPO de Royáltica (no a los clientes) ──
+  // A dónde avisar cuando algo crítico pasa en la plataforma: el motor de
+  // recordatorios se traba/falla, un cliente lleva 30+ días sin entrar, o
+  // hay un pico anómalo de costo operativo. Si ambas quedan vacías, el
+  // chequeo diario sigue corriendo pero no manda nada (modo stub).
+  SUPERADMIN_ALERT_EMAIL: z.string().optional().default(''),
+  SUPERADMIN_ALERT_WHATSAPP: z.string().optional().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;

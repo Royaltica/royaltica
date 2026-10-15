@@ -884,6 +884,7 @@ enum UsageFeature {
   GEMINI_CHAT // tokens del asistente IA (/ai/chat)
   GEMINI_WHATSAPP // tokens de redacción de alertas críticas por WhatsApp
   EMAIL_SENT // correos enviados vía Resend
+  WHATSAPP_SENT // mensajes de WhatsApp enviados (antes NO se registraba ningún costo de WhatsApp)
   GCS_UPLOAD // bytes subidos a Google Cloud Storage
   SAT_QUERY // consultas al SAT (69-B / verificación CFDI)
   JOB_RUN // ejecuciones de jobs programados

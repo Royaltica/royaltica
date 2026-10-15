@@ -2,23 +2,14 @@
 <html lang="es">
 <head>
 <meta charset="utf-8" />
-<title>Política de privacidad · Royáltica</title>
+<title>Política de Privacidad · Royaltica</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="description" content="Cómo Royáltica recopila, usa y protege los datos de las personas que visitan el sitio o solicitan una demo." />
+<meta name="description" content="Versión 1.2 · Octubre 2026 · Aplica únicamente al módulo de Cuentas por Cobrar (CxC). No cubre Cuentas por Pagar ni datos financieros/bancarios propios." />
 <link rel="canonical" href="https://royaltica.com/privacidad" />
 <meta property="og:type" content="website" />
-<meta property="og:title" content="Política de privacidad · Royáltica" />
+<meta property="og:title" content="Política de Privacidad · Royaltica" />
 <meta property="og:image" content="https://royaltica.com/og-image.png" />
 <meta name="twitter:card" content="summary_large_image" />
-
-<!-- Google Analytics (GA4) — TODO: reemplaza GA_MEASUREMENT_ID por tu Measurement ID real (G-XXXXXXX). -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=GA_MEASUREMENT_ID"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-  gtag('config', 'GA_MEASUREMENT_ID');
-</script>
 
 <style>
   :root {
@@ -36,14 +27,18 @@
   .breadcrumb a:hover { color: var(--cyan); }
   main { padding: 3rem 0 4rem; }
   h1 { font-family: var(--serif); font-weight: 400; font-size: clamp(1.8rem, 4vw, 2.4rem); margin: 0 0 0.5rem; }
-  .updated { color: var(--ink-faint); font-size: 0.85rem; margin-bottom: 2rem; }
   .notice {
     border: 1px solid rgba(6,182,212,0.35); background: rgba(6,182,212,0.06);
-    border-radius: 12px; padding: 1rem 1.2rem; font-size: 0.88rem; color: var(--ink-soft); margin-bottom: 2.5rem;
+    border-radius: 12px; padding: 1rem 1.2rem; font-size: 0.88rem; color: var(--ink-soft);
+    margin: 1.2rem 0 2.5rem;
   }
-  h2 { font-family: var(--serif); font-weight: 400; font-size: 1.3rem; margin: 2rem 0 0.7rem; color: var(--ink); }
+  h2 { font-family: var(--serif); font-weight: 400; font-size: 1.3rem; margin: 2.4rem 0 0.7rem; color: var(--ink); }
+  /* Las subsecciones numeradas (4.1, 5.2, 6.2) necesitan un escalon propio
+     entre el h2 y el cuerpo para que la numeracion legal se lea sin ambiguedad. */
+  h3 { font-family: var(--sans); font-weight: 600; font-size: 0.97rem; margin: 1.5rem 0 0.5rem; color: var(--ink); }
   p, li { color: var(--ink-soft); }
   ul { padding-left: 1.2rem; }
+  li { margin-bottom: 0.4rem; }
   a.inline { color: var(--cyan); text-decoration: underline; }
   footer { padding: 1.5rem 0; border-top: 1px solid var(--line); font-size: 0.78rem; color: var(--ink-faint); }
 </style>
@@ -51,42 +46,85 @@
 <body>
   <header class="nav">
     <div class="wrap breadcrumb">
-      <a href="/">Inicio</a> / Política de privacidad
+      <a href="/">Inicio</a> / Política de Privacidad
     </div>
   </header>
   <main class="wrap">
-    <h1>Política de privacidad</h1>
-    <div class="updated">Última actualización: agosto de 2026</div>
+    <h1>Política de Privacidad Royaltica</h1>
+    <div class="notice">Versión 1.2 · Octubre 2026 · Aplica únicamente al módulo de Cuentas por Cobrar (CxC). No cubre Cuentas por Pagar ni datos financieros/bancarios propios.</div>
 
-    <div class="notice">
-      Este es un borrador inicial pensado para cubrir lo básico del sitio de marketing (formularios de demo/contacto y analítica web). No sustituye una revisión legal: antes de publicarlo, un abogado debería confirmar que cumple con la Ley Federal de Protección de Datos Personales en Posesión de los Particulares (LFPDPPP) y, si aplica, el Reglamento General de Protección de Datos (RGPD) u otras normas de los países donde tengan usuarios.
-    </div>
-
-    <h2>¿Qué datos recopilamos?</h2>
-    <p>Cuando agendas una demo o nos contactas desde este sitio, recopilamos los datos que nos das voluntariamente en el formulario: nombre, empresa, correo electrónico y, opcionalmente, teléfono. También usamos Google Analytics para entender de forma agregada cómo se navega el sitio (páginas vistas, origen del tráfico, dispositivo), sin identificarte individualmente.</p>
-
-    <h2>¿Para qué usamos tus datos?</h2>
+    <h2>1. Identidad y domicilio del Responsable</h2>
+    <p>Royaltica S.A.S de C.V con domicilio en Manuel López Cotilla #855, 03100, CDMX, RFC ROY260824R65, es responsable del tratamiento de los datos personales que se describen en este documento, de conformidad con la Ley Federal de Protección de Datos Personales en Posesión de los Particulares (LFPDPPP), vigente desde el 21 de marzo de 2025, y su Reglamento. La autoridad garante de esta ley es la Secretaría Anticorrupción y Buen Gobierno.</p>
+    <h2>2. Alcance: solo Cuentas por Cobrar</h2>
+    <p>Este aviso cubre exclusivamente los datos que Royáltica trata como parte de su módulo de Cuentas por Cobrar (CxC): el seguimiento y la cobranza de facturas que la empresa cliente de Royáltica tiene pendientes de cobro frente a sus propios clientes deudores. No cubre Cuentas por Pagar. Royáltica no recaba ni almacena datos bancarios propios de Royáltica en este módulo (cuentas, CLABE, tarjetas) ese tipo de dato no forma parte de lo que necesita el producto de CxC. La única excepción documentada está en la sección 6.2.</p>
+    <h2>3. Dos roles: cuándo somos Responsable y cuándo Encargado</h2>
+    <p>Responsable: respecto de los datos de la persona que usa la plataforma (nombre, correo, teléfono de la cuenta, credenciales, rol/perfil operativo). Encargado: respecto de los datos de los clientes deudores de la empresa que contrató Royáltica. La empresa cliente es la Responsable original de esos datos; Royáltica los trata solo siguiendo sus instrucciones, para operar la cobranza que le encargó.</p>
+    <h2>4. Datos personales que se tratan</h2>
+    <h3>4.1 De la persona que usa la plataforma</h3>
     <ul>
-      <li>Contactarte para agendar y dar seguimiento a la demo o consulta que solicitaste.</li>
-      <li>Entender y mejorar el contenido y funcionamiento del sitio (analítica agregada).</li>
-      <li>Cumplir obligaciones legales cuando aplique.</li>
+      <li>Nombre, correo, teléfono de contacto, credenciales de acceso.</li>
+      <li>Perfil operativo (Administrador, Supervisor o Agente/Ejecutivo) y, en el caso de agentes, qué clientes deudores tiene asignados.</li>
     </ul>
-    <p>No vendemos tus datos personales a terceros.</p>
-
-    <h2>¿Con quién compartimos datos?</h2>
-    <p>Usamos proveedores de infraestructura para operar el sitio y procesar formularios (por ejemplo, hosting y correo transaccional) y Google Analytics para analítica web. Estos proveedores procesan los datos en nuestro nombre, bajo sus propios términos de privacidad y seguridad.</p>
-
-    <h2>Tus derechos (ARCO)</h2>
-    <p>Puedes solicitar acceso, rectificación, cancelación u oposición (derechos ARCO) sobre tus datos personales, así como revocar tu consentimiento, escribiéndonos a <a class="inline" href="mailto:hola@royaltica.com">hola@royaltica.com</a>.</p>
-
-    <h2>Cookies y analítica</h2>
-    <p>Este sitio usa cookies de Google Analytics para medir tráfico y uso. Puedes bloquear estas cookies desde la configuración de tu navegador; el sitio seguirá funcionando sin ellas.</p>
-
-    <h2>Contacto</h2>
-    <p>Si tienes dudas sobre esta política, escríbenos a <a class="inline" href="mailto:hola@royaltica.com">hola@royaltica.com</a>.</p>
+    <h3>4.2 Del cliente deudor (tratados como Encargado)</h3>
+    <ul>
+      <li>Nombre o razón social, RFC, correo y teléfono (incluido WhatsApp) para recordatorios de cobranza.</li>
+      <li>Nombre, correo y teléfono del contacto de finanzas/tesorería, cuando la empresa lo captura (se usa de preferencia sobre el contacto general, porque es quien autoriza el pago).</li>
+      <li>Folio, UUID fiscal, monto, fecha de vencimiento, saldo y estatus de cada factura por cobrar.</li>
+      <li>Historial de mensajes de cobranza enviados y la respuesta del cliente deudor (texto libre o botón de respuesta rápida que haya tocado).</li>
+      <li>Un puntaje de puntualidad de pago (0-100), calculado automáticamente a partir de si sus facturas se pagaron en tiempo o no.</li>
+      <li>Si pidió no ser contactado (opt-out) y por qué. Explícitamente no se recaban: número de cuenta, CLABE o tarjeta del cliente deudor. Ver también la sección 6.2 sobre el proceso de conciliación de pagos.</li>
+    </ul>
+    <h2>5. Finalidades</h2>
+    <h3>5.1 Primarias</h3>
+    <ul>
+      <li>Enviar recordatorios y avisos de cobranza por WhatsApp o correo, según el plan de contacto configurado.</li>
+      <li>Registrar y clasificar las respuestas del cliente deudor para dar seguimiento (por ejemplo, detectar cuando reporta que ya pagó).</li>
+      <li>Calcular el puntaje de puntualidad, usado únicamente para decidir el tono y la frecuencia de los recordatorios (a un cliente puntual se le escribe distinto que a uno que suele atrasarse) — nunca para negarle servicio ni compartirlo con terceros.</li>
+      <li>Generar reportes de cartera vencida para la empresa que contrató Royaltica.</li>
+    </ul>
+    <h3>5.2 Secundarias (puedes oponerte sin afectar el servicio)</h3>
+    <ul>
+      <li>Medir el uso de la plataforma para mejorar el producto.</li>
+      <li>Comunicaciones sobre nuevas funciones de Royaltica. Para oponerte a las finalidades secundarias: <a class="inline" href="mailto:paolovillasenorceo@royaltica.com">paolovillasenorceo@royaltica.com</a></li>
+    </ul>
+    <h2>6. Uso de WhatsApp Business API (Meta)</h2>
+    <h3>6.1 Cómo se usa</h3>
+    <ul>
+      <li>Royáltica usa plantillas de mensaje pre-aprobadas por Meta para el primer contacto de cada etapa de cobranza (por ejemplo, el aviso de que una factura está por vencer), y texto libre bajo reglas establecidas solo dentro de la ventana de 24 horas que se abre cuando el cliente responde o toca un botón de respuesta rápida.</li>
+      <li>Esta información se usa para comprender cómo la aplicación usa, divulga y administra los datos de los usuarios conforme a los requisitos de la Plataforma de Meta, y para operar el envío y la recepción de los recordatorios.</li>
+      <li>Royaltica no vende ni comparte estos datos con terceros ajenos a la operación del servicio, ni los usa para elaborar perfiles de crédito, empleo o vivienda, ni para fines de cobranza agresiva (no se usa lenguaje de &quot;deuda&quot; ni de presión).</li>
+    </ul>
+    <h3>6.2 Comprobantes de pago por WhatsApp</h3>
+    <p>Si un cliente deudor comparte por WhatsApp una imagen o captura de un comprobante de transferencia, ese archivo puede contener datos bancarios del propio cliente (por ejemplo, los últimos dígitos de una cuenta). Royaltica lo recibe únicamente para que una persona lo coteje contra el banco antes de aplicar el pago — nunca se procesa automáticamente. Los comprobantes de pago que un cliente comparte por WhatsApp se conservan únicamente durante 30 días naturales después de que el pago correspondiente queda conciliado, o 30 días desde su recepción si nunca llega a conciliarse. Transcurrido ese plazo, el archivo se elimina de forma automática.</p>
+    <h2>7. Terceros y proveedores (subencargados)</h2>
+    <ul>
+      <li>Meta / WhatsApp Business API — envío y recepción de mensajes de cobranza.</li>
+      <li>Google Cloud / Vertex AI (Gemini) — redacción asistida del texto de los recordatorios, dentro de reglas fijas que no permiten inventar, omitir ni cambiar montos, fechas, nombres o folios.</li>
+      <li>Firebase (Google) — autenticación de las cuentas de usuario.</li>
+      <li>Resend.com— envío de recordatorios por correo electrónico. Royaltica no vende datos personales a terceros ni los comparte con fines distintos a los descritos en este aviso.</li>
+    </ul>
+    <h2>8. Transferencias internacionales</h2>
+    <p>Los proveedores de la sección 7 pueden procesar información en servidores fuera de México (principalmente Estados Unidos), únicamente para las finalidades descritas en este aviso y bajo obligaciones contractuales de confidencialidad y seguridad.</p>
+    <h2>9. Medidas de seguridad</h2>
+    <ul>
+      <li>Cifrado en tránsito (TLS) en todas las comunicaciones con la plataforma.</li>
+      <li>Autenticación de dos factores (2FA) disponible para las cuentas de usuario.</li>
+      <li>Control de acceso por rol y por perfil operativo: un Agente/Ejecutivo solo ve los clientes deudores que tiene asignados, no toda la cartera.</li>
+      <li>Registro de auditoría de las acciones relevantes sobre facturas y cobranza.</li>
+    </ul>
+    <h2>10. Derechos ARCO</h2>
+    <p>Puedes ejercer en cualquier momento tus derechos de Acceso, Rectificación, Cancelación y Oposición, así como revocar tu consentimiento, escribiendo a: Correo: <a class="inline" href="mailto:paolovillasenorceo@royaltica.com">paolovillasenorceo@royaltica.com</a> Encargado de datos personales: Paolo Leonardo Villaseñor Cortes La solicitud debe incluir: nombre completo, documento que acredite tu identidad, descripción clara de los datos sobre los que se ejerce el derecho y cualquier documento que facilite su localización. Se dará respuesta dentro de los plazos de la LFPDPPP. Si tus datos fueron proporcionados por la empresa que te factura (Royaltica los trata como Encargado, ver sección 3), también puedes dirigir tu solicitud directamente a esa empresa.</p>
+    <h2>11. Cookies y analítica</h2>
+    <p>La plataforma usa PostHog para analizar el uso del producto. La plataforma usa PostHog para analizar el uso del producto (qué pantallas se visitan, qué funciones se usan) y así mejorarlo. Esta analítica solo se activa si usted la autoriza expresamente: al iniciar sesión por primera vez se le pregunta si acepta o no. Mientras no responda, o si rechaza, no se activa ningún rastreo. Puede cambiar esta decisión en cualquier momento desde Configuración → Privacidad. No se registran contraseñas ni el contenido de los campos de texto libre de la plataforma (notas, comentarios, montos capturados a mano).</p>
+    <h2>12. Menores de edad</h2>
+    <p>Los servicios de Royaltica están dirigidos a personas mayores de edad que actúan en representación de una empresa. No se recaban intencionalmente datos de menores de edad.</p>
+    <h2>13. Cambios a este aviso</h2>
+    <p>Este aviso puede actualizarse. La versión vigente siempre estará disponible en royaltica.com. Última actualización: 13/10/2026</p>
+    <h2>14. Contacto</h2>
+    <p>Dudas sobre este aviso a <a class="inline" href="mailto:paolovillasenorceo@royaltica.com">paolovillasenorceo@royaltica.com</a> y lo resolvemos manualmente</p>
   </main>
   <footer>
-    <div class="wrap">© 2026 Royáltica.</div>
+    <div class="wrap">© 2026 Royaltica.</div>
   </footer>
 </body>
 </html>

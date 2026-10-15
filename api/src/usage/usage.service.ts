@@ -205,6 +205,57 @@ export class UsageService {
     };
   }
 
+  /**
+   * Costo aislado de UsageEvents etiquetados con `metadata.tag` (p. ej.
+   * 'collection_reminder'): separa el gasto de recordatorios de cobranza del
+   * resto de correos/WhatsApp (invitaciones, facturas, alertas) que comparten
+   * el mismo feature EMAIL_SENT/WHATSAPP_SENT — pedido explícito de Paolo
+   * ("cuánto cuesta cada cliente" debe poder aislar solo recordatorios.
+   * `organizationId` opcional: sin él, es el total de toda la plataforma.
+   */
+  async costByTag(tag: string, organizationId?: string, period: UsagePeriod = {}) {
+    const where: Prisma.UsageEventWhereInput = {
+      ...this.periodWhere(period),
+      ...(organizationId ? { organizationId } : {}),
+      metadata: { path: ['tag'], equals: tag },
+    };
+    const run = () =>
+      this.prisma.usageEvent.aggregate({
+        where,
+        _sum: { estimatedCostMxn: true, units: true },
+        _count: { _all: true },
+      });
+    const agg = organizationId
+      ? await this.prisma.withOrg(organizationId, () => run())
+      : await run();
+    return {
+      tag,
+      events: agg._count._all,
+      units: agg._sum.units ?? 0,
+      estimatedCostMxn: num(agg._sum.estimatedCostMxn),
+    };
+  }
+
+  /** Mismo costByTag, pero desglosado por organización (vista SUPERADMIN). */
+  async costByTagPerOrganization(tag: string, period: UsagePeriod = {}) {
+    const grouped = await this.prisma.usageEvent.groupBy({
+      by: ['organizationId'],
+      where: { ...this.periodWhere(period), metadata: { path: ['tag'], equals: tag } },
+      _sum: { estimatedCostMxn: true, units: true },
+      _count: { _all: true },
+    });
+    return new Map(
+      grouped.map((g) => [
+        g.organizationId,
+        {
+          events: g._count._all,
+          units: g._sum.units ?? 0,
+          estimatedCostMxn: num(g._sum.estimatedCostMxn),
+        },
+      ]),
+    );
+  }
+
   private periodWhere(period: UsagePeriod): Prisma.UsageEventWhereInput {
     if (!period.from && !period.to) return {};
     const createdAt: Prisma.DateTimeFilter = {};

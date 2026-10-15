@@ -399,7 +399,27 @@
      congelando el barrido de las palabras. `clip` recorta sin ese efecto. */
   .video-bg { overflow: clip; background: var(--navy-900); color: var(--on-navy); }
   .video-bg .bg-media { position: absolute; inset: 0; z-index: 0; overflow: clip; }
-  .video-bg .bg-media video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .video-bg .bg-media video { width: 100%; height: 100%; object-fit: cover; display: block; transform: scale(1.14); will-change: transform; }
+
+  /* Fondo a la deriva, muy tenue, detras del contenido de la seccion de
+     ponderacion. Capa distinta al brillo de cursor de .pane: aqui se mueve
+     solo, lento, para dar vida ambiental sin competir con las tarjetas. */
+  .drift-bg { position: relative; isolation: isolate; }
+  .drift-bg::before {
+    content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(46% 40% at var(--dx1,18%) var(--dy1,20%), rgba(6,182,212,0.08), transparent 60%),
+      radial-gradient(38% 34% at var(--dx2,82%) var(--dy2,72%), rgba(10,26,46,0.05), transparent 62%);
+    animation: driftBg 26s ease-in-out infinite alternate;
+  }
+  @keyframes driftBg {
+    to { --dx1: 32%; --dy1: 38%; --dx2: 68%; --dy2: 55%; }
+  }
+  @property --dx1 { syntax: '<percentage>'; inherits: false; initial-value: 18%; }
+  @property --dy1 { syntax: '<percentage>'; inherits: false; initial-value: 20%; }
+  @property --dx2 { syntax: '<percentage>'; inherits: false; initial-value: 82%; }
+  @property --dy2 { syntax: '<percentage>'; inherits: false; initial-value: 72%; }
+  @media (prefers-reduced-motion: reduce) { .drift-bg::before { animation: none; } }
   .video-bg .bg-scrim {
     position: absolute; inset: 0; z-index: 1;
     background:
@@ -1814,14 +1834,14 @@
     </div>
   </section>
 
-  <section class="sec on-paper">
+  <section class="sec on-paper drift-bg">
     <div class="wrap">
       <div class="narrow">
         <h2 class="t-h2 en"><span class="soft">No todos los clientes valen lo mismo.</span> El sistema lo pondera.</h2>
         <p class="t-lead en" style="--d:0.08s; margin-top:1.2rem;">Antes de decidir qué tan lejos llegar con una cuenta pesa tres cosas: cómo te ha pagado, qué tipo de relación es y cuánto representa. De ahí sale la recomendación, y se recalcula sola.</p>
       </div>
       <div class="pond js-pond">
-        <div class="pane pcase en" style="--d:0.1s;">
+        <div class="pane pcase en" style="--d:0.1s;" data-lift>
           <div class="who"><b>Comercial del Valle</b><em>Riesgo 18</em></div>
           <div class="pfac">
             <div class="f"><span>Historial de pago</span><b>Puntual</b><i style="--w:92%; --s:0; --bar:#3ec98c;"></i></div>
@@ -1830,7 +1850,7 @@
           </div>
           <div class="verdict"><p>Cuenta que conviene cuidar. Sostén el trato, y si pide aire, dáselo condicionado a fecha.</p></div>
         </div>
-        <div class="pane pcase warn en" style="--d:0.18s;">
+        <div class="pane pcase warn en" style="--d:0.18s;" data-lift>
           <div class="who"><b>Distribuidora Norte</b><em>Riesgo 54</em></div>
           <div class="pfac">
             <div class="f"><span>Historial de pago</span><b>Irregular</b><i style="--w:48%; --s:0; --bar:#f0a01e;"></i></div>
@@ -1839,7 +1859,7 @@
           </div>
           <div class="verdict"><p>Vale la relación, no el riesgo actual. Sigue vendiendo, con la línea de crédito ajustada a la baja.</p></div>
         </div>
-        <div class="pane pcase stop en" style="--d:0.26s;">
+        <div class="pane pcase stop en" style="--d:0.26s;" data-lift>
           <div class="who"><b>Grupo Rivera</b><em>Riesgo 81</em></div>
           <div class="pfac">
             <div class="f"><span>Historial de pago</span><b>Se deteriora</b><i style="--w:24%; --s:0; --bar:#e0685c;"></i></div>
@@ -1859,7 +1879,7 @@
         <p class="t-lead en" style="--d:0.08s; margin-top:1.1rem;">Primero el sistema decide qué conviene hacer con cada cuenta. Solo entonces el agente escribe, y lo hace dentro de las reglas que tú pusiste.</p>
       </div>
       <div class="feat js-feat">
-        <div class="pane en" style="--d:0.1s;">
+        <div class="pane en" style="--d:0.1s;" data-lift>
           <span class="k">Prioriza</span>
           <h3>Te dice a quién cobrarle hoy, y por qué.</h3>
           <p>Ordena la lista de trabajo por monto, probabilidad de recuperación y riesgo de que la cuenta empeore. Lo que más mueve tu efectivo sube solo, sin que nadie decida por antigüedad ni por corazonada.</p>
@@ -1871,7 +1891,7 @@
             </div>
           </div>
         </div>
-        <div class="pane en" style="--d:0.18s;">
+        <div class="pane en" style="--d:0.18s;" data-lift>
           <span class="k">Mide</span>
           <h3>Un riesgo que se mueve, no una etiqueta.</h3>
           <p>El score de cada cliente se recalcula con su comportamiento. No es una marca que se pone una vez: te dice si la cuenta se está volviendo más o menos confiable mientras todavía puedes hacer algo.</p>
@@ -1882,7 +1902,7 @@
             </div>
           </div>
         </div>
-        <div class="pane en" style="--d:0.26s;">
+        <div class="pane en" style="--d:0.26s;" data-lift>
           <span class="k">Anticipa</span>
           <h3>Levanta la mano antes del vencimiento.</h3>
           <p>Detecta patrones tempranos de atraso: pagos que se van recorriendo, promesas que se cumplen cada vez más tarde. Te avisa mientras sigue siendo una conversación y no una cobranza.</p>
@@ -1893,7 +1913,7 @@
             </div>
           </div>
         </div>
-        <div class="pane en" style="--d:0.34s;">
+        <div class="pane en" style="--d:0.34s;" data-lift>
           <span class="k">Distingue</span>
           <h3>Una disputa no es una morosidad.</h3>
           <p>Separa al cliente que no paga porque algo salió mal en el pedido del que simplemente no está pagando. Cada caso sigue su camino, y ninguno recibe el mensaje que le tocaba al otro.</p>
@@ -1929,21 +1949,21 @@
         </div>
       </div>
       <div class="rep js-feat">
-        <div class="pane big en" style="--d:0.1s;">
+        <div class="pane big en" style="--d:0.1s;" data-lift>
           <span class="k">Pronóstico</span>
           <h3>Cuánto vas a cobrar el próximo periodo.</h3>
           <p>No es un promedio del mes pasado. Se calcula con el comportamiento de cada cuenta y con qué tan probable es que cada promesa se cumpla.</p>
           <div class="n"><span data-count>$1,714,000</span></div>
           <p class="n-cap">Proyectado para el periodo en curso</p>
         </div>
-        <div class="pane en" style="--d:0.2s;">
+        <div class="pane en" style="--d:0.2s;" data-lift>
           <span class="k">Resultado</span>
           <h3>Qué se recuperó y con qué.</h3>
           <p>Cuánto entró, qué estrategias funcionaron mejor y cómo vas contra tus propios objetivos.</p>
           <div class="n"><span data-count>$1,340,000</span></div>
           <p class="n-cap">Recuperado en lo que va del mes</p>
         </div>
-        <div class="pane en" style="--d:0.3s;">
+        <div class="pane en" style="--d:0.3s;" data-lift>
           <span class="k">Salud</span>
           <h3>Un solo número para entender todo.</h3>
           <p>Para saber cómo va tu cartera en segundos, sin abrir el reporte completo.</p>
@@ -2798,6 +2818,46 @@
 
   var init = (location.hash || '').replace('#', '');
   show(panels[init] ? init : 'overview', false);
+})();
+</script>
+<!-- GSAP + ScrollTrigger: dos efectos aditivos, nada del sistema de reveal
+     existente se toca. Version fija para que un cambio en el CDN no rompa
+     produccion sin aviso. -->
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/ScrollTrigger.min.js"></script>
+<script>
+(function () {
+  if (typeof gsap === 'undefined' || typeof ScrollTrigger === 'undefined') return;
+  gsap.registerPlugin(ScrollTrigger);
+
+  /* Respeta reduced motion igual que el resto de la pagina: sin scrub,
+     sin parallax, el layout queda en su estado final estatico. */
+  gsap.matchMedia().add('(prefers-reduced-motion: no-preference)', function () {
+
+    /* 1) Los videos de fondo se desescalan conforme se recorre su seccion:
+       lectura de profundidad, motivo = jerarquia (el video respira, no
+       compite con el texto que va encima). */
+    document.querySelectorAll('.video-bg .bg-media video').forEach(function (v) {
+      gsap.to(v, {
+        scale: 1, ease: 'none',
+        scrollTrigger: { trigger: v.closest('.video-bg'), start: 'top bottom', end: 'bottom top', scrub: true }
+      });
+    });
+
+    /* 2) La marca de agua del caballo se desplaza mas lento que el scroll
+       (parallax clasico): motivo = profundidad de marca sin distraer del
+       titular, que sigue quieto en primer plano. */
+    document.querySelectorAll('.hero .mark').forEach(function (m) {
+      gsap.to(m, {
+        yPercent: 14, ease: 'none',
+        scrollTrigger: { trigger: m.closest('.hero'), start: 'top top', end: 'bottom top', scrub: true }
+      });
+    });
+
+    return function () {
+      ScrollTrigger.getAll().forEach(function (t) { t.kill(); });
+    };
+  });
 })();
 </script>
 </body>

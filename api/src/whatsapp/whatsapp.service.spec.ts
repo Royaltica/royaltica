@@ -2,6 +2,7 @@ import { WhatsappService } from './whatsapp.service';
 import type { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../common/prisma/prisma.service';
 import type { GeminiService } from '../gemini/gemini.service';
+import type { UsageService } from '../usage/usage.service';
 import type { Env } from '../config/env.validation';
 
 const makeConfig = (vals: Record<string, string>) =>
@@ -15,6 +16,11 @@ const makeGemini = (overrides: Partial<GeminiService> = {}) =>
     ...overrides,
   }) as unknown as GeminiService;
 
+/** Stub de cost tracking — la mayoría de los tests mockean sendMessage directo
+ * y nunca llegan a tocarlo, pero se inyecta siempre para que `this.usage`
+ * nunca sea undefined si algún test ejercita el envío real. */
+const makeUsage = () => ({ record: jest.fn().mockResolvedValue(undefined) }) as unknown as UsageService;
+
 describe('WhatsappService', () => {
   it('sin WHATSAPP_TOKEN corre en modo stub y no envía', async () => {
     const prisma = { user: { findMany: jest.fn() } };
@@ -22,6 +28,7 @@ describe('WhatsappService', () => {
       makeConfig({ WHATSAPP_PROVIDER: 'meta' }),
       prisma as unknown as PrismaService,
       makeGemini(),
+      makeUsage(),
     );
     service.onModuleInit();
     expect(service.isConfigured).toBe(false);
@@ -35,6 +42,7 @@ describe('WhatsappService', () => {
       makeConfig({ WHATSAPP_PROVIDER: 'meta', WHATSAPP_TOKEN: 'tok' }),
       prisma as unknown as PrismaService,
       makeGemini(),
+      makeUsage(),
     );
     service.onModuleInit();
     expect(service.isConfigured).toBe(false); // falta phoneId
@@ -52,6 +60,7 @@ describe('WhatsappService', () => {
       makeConfig({ WHATSAPP_PROVIDER: 'meta' }),
       prisma as unknown as PrismaService,
       makeGemini(),
+      makeUsage(),
     );
     service.onModuleInit(); // stub mode
 
@@ -78,6 +87,7 @@ describe('WhatsappService', () => {
       makeConfig({ WHATSAPP_PROVIDER: 'meta' }),
       prisma as unknown as PrismaService,
       gemini,
+      makeUsage(),
     );
     service.onModuleInit();
 
@@ -107,6 +117,7 @@ describe('WhatsappService', () => {
       }),
       prisma as unknown as PrismaService,
       gemini,
+      makeUsage(),
     );
     service.onModuleInit();
     jest
@@ -144,6 +155,7 @@ describe('WhatsappService', () => {
       }),
       prisma as unknown as PrismaService,
       gemini,
+      makeUsage(),
     );
     service.onModuleInit();
     jest
@@ -165,6 +177,7 @@ describe('WhatsappService', () => {
         makeConfig({ WHATSAPP_PROVIDER: 'meta', WHATSAPP_TOKEN: 'tok', WHATSAPP_PHONE_ID: 'pid-global' }),
         prisma as unknown as PrismaService,
         makeGemini(),
+        makeUsage(),
       );
       service.onModuleInit();
       jest
@@ -176,7 +189,12 @@ describe('WhatsappService', () => {
       expect(prisma.virtualNumber.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { organizationId: 'org-1', isActive: true } }),
       );
-      expect(service.sendMessage).toHaveBeenCalledWith('+5215511112222', 'hola');
+      expect(service.sendMessage).toHaveBeenCalledWith(
+        '+5215511112222',
+        'hola',
+        undefined,
+        { organizationId: 'org-1', usageTag: undefined },
+      );
     });
 
     it('con un número activo, envía con ese phoneId y actualiza lastUsedAt', async () => {
@@ -192,6 +210,7 @@ describe('WhatsappService', () => {
         makeConfig({ WHATSAPP_PROVIDER: 'meta', WHATSAPP_TOKEN: 'tok', WHATSAPP_PHONE_ID: 'pid-global' }),
         prisma as unknown as PrismaService,
         makeGemini(),
+        makeUsage(),
       );
       service.onModuleInit();
       jest
@@ -204,6 +223,7 @@ describe('WhatsappService', () => {
         '+5215511112222',
         'hola',
         'pid-pool-1',
+        { organizationId: 'org-1', usageTag: undefined },
       );
       expect(prisma.virtualNumber.update).toHaveBeenCalledWith({
         where: { id: 'vn-1' },

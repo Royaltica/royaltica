@@ -48,8 +48,21 @@ const TAB_AREA: Record<CorporateTab, string> = {
   financing: 'factoraje',
   settings: 'configuracion',
 };
+/**
+ * Producto al que pertenece cada área (punto 5c de José: "cxp y cxc no se
+ * tienen que combinar por nada del mundo" — cada cliente solo tiene un
+ * producto contratado, y su gente solo ve las pestañas de ese producto).
+ * Las áreas que no aparecen aquí (dashboard, estados, configuración) son
+ * compartidas entre ambos productos y nunca se ocultan por esto.
+ */
+const AREA_PRODUCT: Partial<Record<string, 'CXP' | 'CXC'>> = {
+  proveedores: 'CXP',
+  finanzas: 'CXP',
+  factoraje: 'CXP',
+  cxc: 'CXC',
+};
 
-export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, permissions = [], role = '' }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, sessionStartedAt?: Date, permissions?: string[], role?: string }) {
+export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStartedAt, permissions = [], role = '', organizationProduct = null, isImpersonating = false, impersonatedOrgName = null, onExitImpersonation }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, sessionStartedAt?: Date, permissions?: string[], role?: string, organizationProduct?: string | null, isImpersonating?: boolean, impersonatedOrgName?: string | null, onExitImpersonation?: () => void }) {
   // La pestaña activa vive en la URL (react-router), no en useState: permite
   // recargar, compartir el link, y usar atrás/adelante del navegador para
   // moverse entre secciones del portal corporativo.
@@ -64,7 +77,15 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
   // Filtro de pestañas por permisos del JWT. Admin ve todo; el operativo solo
   // las áreas que se le asignaron al invitarlo (comodín '*' = acceso total).
   const isFullAccess = role === 'CORPORATE_ADMIN' || role === 'SUPERADMIN' || permissions.includes('*');
-  const canSee = (area: string) => isFullAccess || permissions.includes(area);
+  // Si la org tiene un producto asignado (CXP|CXC), un área del OTRO
+  // producto se oculta SIEMPRE, incluso para el admin de esa organización
+  // — es el producto que contrató, no un permiso que se le pueda dar. Sin
+  // producto asignado (null = legacy), no se oculta nada por esto.
+  const productBlocked = (area: string) =>
+    organizationProduct != null &&
+    AREA_PRODUCT[area] != null &&
+    AREA_PRODUCT[area] !== organizationProduct;
+  const canSee = (area: string) => !productBlocked(area) && (isFullAccess || permissions.includes(area));
 
   // Si la URL no corresponde a ninguna pestaña conocida (o el usuario no
   // tiene permiso para verla), redirige a /dashboard en vez de mostrar una
@@ -308,7 +329,22 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
   );
 
   return (
-    <div className="h-screen w-full bg-brand-bone flex overflow-hidden">
+    <div className="h-screen w-full bg-brand-bone flex overflow-hidden" style={isImpersonating ? { paddingTop: 28 } : undefined}>
+      {/* Banner "Entrar como este cliente": visible solo mientras un SUPERADMIN
+          está viendo el portal de un cliente desde el panel admin. */}
+      {isImpersonating && (
+        <div className="fixed top-0 left-0 right-0 z-[200] h-7 bg-amber-500 text-black flex items-center justify-center gap-3">
+          <span className="text-[11px] font-bold uppercase tracking-wide">
+            Viendo como: {impersonatedOrgName ?? 'cliente'} · modo Superadmin
+          </span>
+          <button
+            onClick={onExitImpersonation}
+            className="text-[11px] font-bold underline cursor-pointer hover:no-underline"
+          >
+            Volver a mi cuenta
+          </button>
+        </div>
+      )}
       <NotificationBell />
       {/* Document Manager Modal */}
       {viewingDocs && (

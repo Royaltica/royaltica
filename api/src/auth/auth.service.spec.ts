@@ -44,6 +44,9 @@ describe('AuthService', () => {
       findUnique: jest.Mock;
       update: jest.Mock;
     };
+    organization: {
+      findUnique: jest.Mock;
+    };
   };
   let jwt: { sign: jest.Mock; verifyAsync: jest.Mock };
   let firebase: { verifyIdToken: jest.Mock };
@@ -51,6 +54,9 @@ describe('AuthService', () => {
   beforeEach(() => {
     prisma = {
       user: { findUnique: jest.fn(), update: jest.fn() },
+      // getOrganizationProduct() la consulta en cada login/refresh — sin
+      // paquete/producto asignado (org legacy), null -> organizationProduct null.
+      organization: { findUnique: jest.fn().mockResolvedValue({ settings: {} }) },
     };
     jwt = { sign: jest.fn().mockReturnValue('signed.jwt'), verifyAsync: jest.fn() };
     firebase = { verifyIdToken: jest.fn() };

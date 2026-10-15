@@ -2,7 +2,16 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { GeminiService } from '../gemini/gemini.service';
+import { UsageService } from '../usage/usage.service';
 import type { Env } from '../config/env.validation';
+
+/** Opciones de cost tracking para sendMessage: sin organizationId no se
+ * registra UsageEvent (p. ej. mensajes de prueba o sin contexto de tenant). */
+export interface WhatsappSendOptions {
+  organizationId?: string;
+  /** Etiqueta libre para desglosar el gasto después (ver UsageService#costByTag). */
+  usageTag?: string;
+}
 
 export interface WhatsappSendResult {
   sent: boolean;
@@ -41,6 +50,7 @@ export class WhatsappService implements OnModuleInit {
     private readonly config: ConfigService<Env, true>,
     private readonly prisma: PrismaService,
     private readonly gemini: GeminiService,
+    private readonly usage: UsageService,
   ) {}
 
   onModuleInit(): void {
@@ -71,15 +81,28 @@ export class WhatsappService implements OnModuleInit {
     phone: string,
     text: string,
     fromOverride?: string,
+    opts?: WhatsappSendOptions,
   ): Promise<WhatsappSendResult> {
     if (!this.isConfigured) {
       this.logger.debug(`[stub] WhatsApp NO enviado a ${phone}: "${text}".`);
       return { sent: false, mode: 'stub' };
     }
     try {
-      return this.provider === 'meta'
+      const res = this.provider === 'meta'
         ? await this.sendViaMeta(phone, text, fromOverride)
         : await this.sendViaTwilio(phone, text, fromOverride);
+      // Cost tracking: antes NO se registraba ningún UsageEvent por WhatsApp
+      // (a diferencia de EmailService). Sin esto el costo real de los
+      // recordatorios enviados por WhatsApp siempre aparecía en $0.
+      if (res.sent && opts?.organizationId) {
+        void this.usage.record({
+          organizationId: opts.organizationId,
+          feature: 'WHATSAPP_SENT',
+          units: 1,
+          metadata: opts.usageTag ? { tag: opts.usageTag } : undefined,
+        });
+      }
+      return res;
     } catch (err) {
       this.logger.warn(
         `Fallo al enviar WhatsApp a ${phone}: ${
@@ -176,14 +199,16 @@ export class WhatsappService implements OnModuleInit {
     organizationId: string,
     phone: string,
     text: string,
+    usageTag?: string,
   ): Promise<WhatsappSendResult> {
+    const opts: WhatsappSendOptions = { organizationId, usageTag };
     const next = await this.prisma.virtualNumber.findFirst({
       where: { organizationId, isActive: true },
       orderBy: [{ lastUsedAt: 'asc' }],
     });
-    if (!next) return this.sendMessage(phone, text);
+    if (!next) return this.sendMessage(phone, text, undefined, opts);
 
-    const res = await this.sendMessage(phone, text, next.phoneId);
+    const res = await this.sendMessage(phone, text, next.phoneId, opts);
     // Best-effort: si falla el update de lastUsedAt no vale la pena tumbar
     // el envío — la rotación se desbalancea un poco pero sigue funcionando.
     this.prisma.virtualNumber

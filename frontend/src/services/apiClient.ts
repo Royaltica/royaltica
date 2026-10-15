@@ -12,6 +12,10 @@
 import type { Invoice, Supplier } from '../types';
 
 const TOKEN_KEY = 'royaltica_jwt';
+/** JWT original del SUPERADMIN mientras está "viendo como" un cliente. */
+const IMPERSONATION_STASH_KEY = 'royaltica_jwt_superadmin_stash';
+/** Nombre de la organización que se está impersonando (solo para el banner). */
+const IMPERSONATION_ORG_KEY = 'royaltica_impersonating_org';
 const BASE = '/api';
 
 /**
@@ -29,6 +33,34 @@ export const isRealId = (id: string): boolean => UUID_RE.test(id);
 export const getToken = (): string | null => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t: string): void => localStorage.setItem(TOKEN_KEY, t);
 export const clearToken = (): void => localStorage.removeItem(TOKEN_KEY);
+
+// ── Impersonation ("Entrar como este cliente") ──────────────
+// Guarda el JWT del SUPERADMIN aparte para poder "volver a mi cuenta" sin
+// tener que iniciar sesión otra vez.
+
+/** True si la sesión activa es una impersonation (hay un JWT de superadmin guardado). */
+export const isImpersonating = (): boolean =>
+  localStorage.getItem(IMPERSONATION_STASH_KEY) !== null;
+
+export const getImpersonatedOrgName = (): string | null =>
+  localStorage.getItem(IMPERSONATION_ORG_KEY);
+
+/** Guarda el JWT actual del SUPERADMIN y activa la sesión del cliente. */
+export const startImpersonation = (clientToken: string, organizationName: string): void => {
+  const current = getToken();
+  if (current) localStorage.setItem(IMPERSONATION_STASH_KEY, current);
+  localStorage.setItem(IMPERSONATION_ORG_KEY, organizationName);
+  setToken(clientToken);
+};
+
+/** Restaura el JWT original del SUPERADMIN y sale del modo impersonation. */
+export const endImpersonation = (): void => {
+  const original = localStorage.getItem(IMPERSONATION_STASH_KEY);
+  localStorage.removeItem(IMPERSONATION_STASH_KEY);
+  localStorage.removeItem(IMPERSONATION_ORG_KEY);
+  if (original) setToken(original);
+  else clearToken();
+};
 
 // ── Núcleo de peticiones ───────────────────────────────────
 
@@ -142,15 +174,19 @@ export interface ApiUser {
   avatarUrl: string | null;
   totpEnabled?: boolean;
   operationalProfile?: OperationalProfile | null;
+  /** Producto contratado por la organización (CXP|CXC); null = legacy, ve todo. */
+  organizationProduct?: string | null;
 }
 
-interface ApiAuthResult {
+export interface ApiAuthResult {
   accessToken: string;
   expiresIn: string;
   user: ApiUser;
   /** Presentes cuando la cuenta tiene 2FA activo: falta el código TOTP. */
   twoFactorRequired?: true;
   tempToken?: string;
+  /** Presente solo cuando esta sesión viene de "Entrar como este cliente". */
+  impersonation?: { organizationName: string };
 }
 
 export interface LoginResult {
@@ -1125,6 +1161,26 @@ export const api = {
     return request<AdminCostByFeature>('GET', '/admin/costs/by-feature');
   },
 
+  /** ¿Está vivo el agente de recordatorios de cobranza, o se trabó/falló? */
+  async adminCollectionEngineHealth(): Promise<AdminCollectionEngineHealth> {
+    return request<AdminCollectionEngineHealth>('GET', '/admin/jobs/collection-engine');
+  },
+
+  /** Costo aislado de recordatorios de cobranza de toda la plataforma. */
+  async adminRemindersCostGlobal(): Promise<AdminRemindersCost> {
+    return request<AdminRemindersCost>('GET', '/admin/costs/reminders');
+  },
+
+  /** Historial de accesos (quién entró y cuándo). */
+  async adminLoginHistory(limit = 50): Promise<AdminLoginEvent[]> {
+    return request<AdminLoginEvent[]>('GET', `/admin/access-log?limit=${limit}`);
+  },
+
+  /** Histórico de latencia/uptime de DB/Redis (snapshots cada 10 min). */
+  async adminHealthHistory(hours = 24): Promise<AdminHealthHistory> {
+    return request<AdminHealthHistory>('GET', `/admin/health-history?hours=${hours}`);
+  },
+
   /** Gasto por cliente (organización). */
   async adminCosts(): Promise<AdminCostOrg[]> {
     return request<AdminCostOrg[]>('GET', '/admin/costs');
@@ -1154,6 +1210,26 @@ export const api = {
     emailSent: boolean;
   }> {
     return request('POST', '/admin/organizations', payload);
+  },
+
+  /** Asigna paquete de licencias, producto (CXP/CXC) y/o plan/estado de una
+   * organización (solo SUPERADMIN). */
+  async adminUpdateOrganization(
+    id: string,
+    payload: {
+      plan?: 'FREE' | 'PRO' | 'ENTERPRISE';
+      seatPackage?: 'PAQUETE_1' | 'PAQUETE_2' | 'PAQUETE_3';
+      product?: 'CXP' | 'CXC';
+      isActive?: boolean;
+    },
+  ): Promise<{ id: string; name: string; plan: string; isActive: boolean }> {
+    return request('PATCH', `/admin/organizations/${id}`, payload);
+  },
+
+  /** "Entrar como este cliente": pide una sesión real del admin de esa
+   * organización (solo SUPERADMIN). Queda auditado en la bitácora. */
+  async adminImpersonate(orgId: string): Promise<ApiAuthResult> {
+    return request<ApiAuthResult>('POST', `/admin/organizations/${orgId}/impersonate`);
   },
 
   // ── Configuración de la organización (completa) ─────────
@@ -1681,7 +1757,30 @@ export interface AdminOrg {
   deleted: boolean;
   createdAt: string;
   amount: number;
+  /** Recordatorios de cobranza enviados (histórico completo). */
+  remindersSent: number;
+  /** Costo SOLO de recordatorios (aislado del resto de correos/WhatsApp). */
+  remindersCostMxn: number;
+  /** Último login REAL de cualquier usuario de esta organización (null = nadie ha entrado). */
+  lastLoginAt: string | null;
+  /** Costo operativo TOTAL (todos los features), para calcular margen. */
+  totalCostMxn: number;
+  /** Ingreso mensual aproximado según el plan (no es el monto real de Stripe). */
+  revenueMxn: number;
+  /** revenueMxn - totalCostMxn. */
+  marginMxn: number;
+  subscriptionStatus: string | null;
+  /** Salud real calculada en backend (pagos fallidos, facturas vencidas, inactividad). */
+  healthScore: number;
   counts: { users: number; suppliers: number; invoices: number };
+  /** Paquete de licencias de CxC asignado (PAQUETE_1/2/3) o null si no tiene. */
+  seatPackage: string | null;
+  /** Producto contratado (CXP|CXC) o null si no tiene asignado (ve todo). */
+  product: string | null;
+  /** Subcuentas ya usadas por bucket. */
+  seats: { admin: number; supervisor: number; agente: number };
+  /** Tope por bucket según el paquete; null = sin tope. */
+  seatLimits: { admin: number | null; supervisor: number | null; agente: number | null };
 }
 
 /** Gasto de un servicio/feature (Gemini, correos, etc.). */
@@ -1713,6 +1812,51 @@ export interface AdminCostOrg {
   events: number;
   units: number;
   estimatedCostMxn: number;
+}
+
+/** Costo aislado de recordatorios de cobranza (GET /admin/costs/reminders). */
+export interface AdminRemindersCost {
+  tag: string;
+  events: number;
+  units: number;
+  estimatedCostMxn: number;
+}
+
+/** Un evento de login (GET /admin/access-log). */
+export interface AdminLoginEvent {
+  id: string;
+  action: string;
+  user: string;
+  userEmail: string | null;
+  organization: string;
+  ipAddress: string | null;
+  createdAt: string;
+}
+
+/** Estado del agente/motor de recordatorios de cobranza (GET /admin/jobs/collection-engine). */
+export interface AdminCollectionEngineHealth {
+  status: 'ok' | 'failed' | 'stuck' | 'unknown';
+  lastRunAt: string | null;
+  lastRunSuccess: boolean | null;
+  lastRunResult: Record<string, unknown> | null;
+  hoursSinceLastRun: number | null;
+}
+
+/** Un snapshot periódico de salud (GET /admin/health-history). */
+export interface AdminHealthSample {
+  at: string;
+  dbOk: boolean;
+  dbLatencyMs: number | null;
+  redisOk: boolean;
+  redisLatencyMs: number | null;
+}
+
+/** Histórico de latencia/uptime de DB/Redis en una ventana de tiempo. */
+export interface AdminHealthHistory {
+  windowHours: number;
+  samples: AdminHealthSample[];
+  uptimePct: { db: number; redis: number };
+  avgLatencyMs: { db: number | null; redis: number | null };
 }
 
 /** Un evento de la bitácora global del panel SUPERADMIN (GET /admin/activity). */

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InvoiceStatus, PaymentType } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
+import { RedisService } from '../common/redis/redis.service';
 import { SettingsService } from '../settings/settings.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../email/email.service';
@@ -13,12 +14,38 @@ import { DashboardService } from '../dashboard/dashboard.service';
 import { ReportsService } from '../reports/reports.service';
 import { CollectionSequencesService } from '../collection-sequences/collection-sequences.service';
 import { CustomerScoringService } from '../customers/scoring/customer-scoring.service';
+import { ActivityLogService } from '../activity/activity-log.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
 import {
   DEFAULT_CURRENCY,
   DEFAULT_LOCALE,
 } from '../organization/organization.constants';
+
+/**
+ * Acción de bitácora (ActivityLog, organizationId=null = evento de
+ * plataforma) que registra cada corrida del motor de cobranza (cron
+ * 'collection-sequence-engine'), éxito o falla. AdminService la lee para
+ * armar el indicador "¿está trabado el agente de recordatorios?" del panel
+ * SUPERADMIN — pedido explícito de Paolo.
+ */
+export const COLLECTION_ENGINE_JOB_RUN_ACTION = 'JOB_RUN_COLLECTION_ENGINE';
+
+/**
+ * Acción de bitácora para cada snapshot periódico de salud del sistema
+ * (latencia de DB/Redis). Antes el panel SUPERADMIN solo medía esto al
+ * cargar la página (snapshot único, sin histórico) — esto guarda una
+ * muestra cada 10 minutos para poder calcular uptime % y tendencia de
+ * latencia en una ventana de tiempo. Ver AdminService#healthHistory.
+ */
+export const SYSTEM_HEALTH_SNAPSHOT_ACTION = 'SYSTEM_HEALTH_SNAPSHOT';
+
+/** Acción de bitácora: se mandó una alerta proactiva al equipo (no al cliente). */
+export const SUPERADMIN_ALERT_SENT_ACTION = 'SUPERADMIN_ALERT_SENT';
+
+/** Mismo umbral que AdminService#COLLECTION_ENGINE_STALE_HOURS (ver admin.service.ts)
+ * — duplicado a propósito para no crear una dependencia circular Jobs↔Admin. */
+const COLLECTION_ENGINE_STALE_HOURS_FOR_ALERT = 26;
 
 /**
  * Tareas programadas (recordatorios) basadas en @nestjs/schedule.
@@ -50,10 +77,160 @@ export class JobsService {
     private readonly collectionSequences: CollectionSequencesService,
     private readonly customerScoring: CustomerScoringService,
     private readonly config: ConfigService<Env, true>,
+    private readonly activity: ActivityLogService,
+    private readonly redis: RedisService,
   ) {}
 
   private get enabled(): boolean {
     return this.config.get('JOBS_ENABLED', { infer: true }) === 'true';
+  }
+
+  // ── Histórico de latencia/uptime (panel SUPERADMIN → Salud) ─
+  /**
+   * Mide latencia real de DB y Redis cada 10 minutos y lo guarda en
+   * ActivityLog (acción SYSTEM_HEALTH_SNAPSHOT, plataforma completa, sin
+   * organizationId). Corre siempre, incluso si JOBS_ENABLED=false — es un
+   * chequeo de infraestructura, no un recordatorio de negocio.
+   */
+  @Cron(CronExpression.EVERY_10_MINUTES, { name: 'system-health-snapshot' })
+  async systemHealthSnapshot(): Promise<{
+    dbOk: boolean;
+    dbLatencyMs: number;
+    redisOk: boolean;
+    redisLatencyMs: number;
+  }> {
+    const dbStart = Date.now();
+    const dbOk = await this.prisma.isHealthy();
+    const dbLatencyMs = Date.now() - dbStart;
+
+    const redisStart = Date.now();
+    const redisOk = await this.redis.isHealthy();
+    const redisLatencyMs = Date.now() - redisStart;
+
+    const result = { dbOk, dbLatencyMs, redisOk, redisLatencyMs };
+    await this.activity.record({
+      action: SYSTEM_HEALTH_SNAPSHOT_ACTION,
+      entityType: 'SystemHealth',
+      metadata: result,
+    });
+    return result;
+  }
+
+  // ── Alertas proactivas al equipo (panel SUPERADMIN) ──────
+  /**
+   * Chequeo diario de eventos críticos de PLATAFORMA (no de un cliente en
+   * particular) y aviso proactivo al equipo de Royáltica por correo y/o
+   * WhatsApp — pedido explícito: "que nos avise solo si algo se traba",
+   * en vez de tener que entrar al panel a revisar. Cubre:
+   *   1) El motor de recordatorios de cobranza lleva trabado o la última
+   *      corrida falló (ver AdminService#collectionEngineHealth).
+   *   2) Clientes activos con 30+ días sin ningún login.
+   *   3) Pico de costo operativo: últimas 24h > 2x el promedio diario de
+   *      los 6 días previos.
+   * Si SUPERADMIN_ALERT_EMAIL y SUPERADMIN_ALERT_WHATSAPP están vacíos, el
+   * chequeo corre igual (queda en ActivityLog) pero no manda nada.
+   */
+  @Cron(CronExpression.EVERY_DAY_AT_9AM, { name: 'superadmin-critical-alerts' })
+  async superadminCriticalAlerts(): Promise<{ sent: boolean; reasons: string[] }> {
+    if (!this.enabled) return { sent: false, reasons: [] };
+
+    const reasons: string[] = [];
+
+    // 1) Motor de cobranza trabado/falló.
+    const lastEngineRun = await this.prisma.activityLog.findFirst({
+      where: { action: COLLECTION_ENGINE_JOB_RUN_ACTION },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (lastEngineRun) {
+      const meta = (lastEngineRun.metadata ?? {}) as Record<string, unknown>;
+      const hoursSince = (Date.now() - lastEngineRun.createdAt.getTime()) / 3_600_000;
+      if (hoursSince > COLLECTION_ENGINE_STALE_HOURS_FOR_ALERT) {
+        reasons.push(
+          `El motor de recordatorios de cobranza lleva ${Math.round(hoursSince)}h sin correr exitosamente.`,
+        );
+      } else if (meta.success === false) {
+        reasons.push('La última corrida del motor de recordatorios de cobranza falló.');
+      }
+    }
+
+    // 2) Clientes activos con 30+ días sin ningún login (se excluyen los
+    // dados de alta hace menos de 30 días: apenas están arrancando).
+    const staleCutoff = new Date(Date.now() - 30 * 86_400_000);
+    const candidateOrgs = await this.prisma.organization.findMany({
+      where: { isActive: true, deletedAt: null, createdAt: { lt: staleCutoff } },
+      select: { id: true, name: true },
+    });
+    if (candidateOrgs.length > 0) {
+      const lastLogins = await this.prisma.user.groupBy({
+        by: ['organizationId'],
+        where: {
+          organizationId: { in: candidateOrgs.map((o) => o.id) },
+          lastLoginAt: { not: null },
+        },
+        _max: { lastLoginAt: true },
+      });
+      const lastLoginByOrg = new Map(
+        lastLogins.map((l) => [l.organizationId, l._max.lastLoginAt as Date]),
+      );
+      const staleOrgs = candidateOrgs.filter((o) => {
+        const last = lastLoginByOrg.get(o.id);
+        return !last || last < staleCutoff;
+      });
+      if (staleOrgs.length > 0) {
+        const names = staleOrgs.slice(0, 5).map((o) => o.name).join(', ');
+        reasons.push(
+          `${staleOrgs.length} cliente(s) activo(s) sin ningún login en 30+ días: ${names}${
+            staleOrgs.length > 5 ? '…' : ''
+          }.`,
+        );
+      }
+    }
+
+    // 3) Pico de costo operativo (últimas 24h vs. promedio diario previo).
+    const since7d = new Date(Date.now() - 7 * 86_400_000);
+    const since1d = new Date(Date.now() - 1 * 86_400_000);
+    const [costPrev6d, costLast24h] = await Promise.all([
+      this.prisma.usageEvent.aggregate({
+        where: { createdAt: { gte: since7d, lt: since1d } },
+        _sum: { estimatedCostMxn: true },
+      }),
+      this.prisma.usageEvent.aggregate({
+        where: { createdAt: { gte: since1d } },
+        _sum: { estimatedCostMxn: true },
+      }),
+    ]);
+    const avgDailyCostPrev6d = Number(costPrev6d._sum.estimatedCostMxn ?? 0) / 6;
+    const latestDailyCost = Number(costLast24h._sum.estimatedCostMxn ?? 0);
+    if (avgDailyCostPrev6d > 0 && latestDailyCost > avgDailyCostPrev6d * 2) {
+      reasons.push(
+        `El costo operativo de las últimas 24h ($${latestDailyCost.toFixed(2)} MXN) ` +
+          `es más del doble del promedio diario de los 6 días previos ($${avgDailyCostPrev6d.toFixed(2)} MXN).`,
+      );
+    }
+
+    if (reasons.length === 0) return { sent: false, reasons: [] };
+
+    const title = 'Alertas críticas del panel Superadmin';
+    const body = reasons.map((r, i) => `${i + 1}. ${r}`).join('\n');
+    const alertEmail = this.config.get('SUPERADMIN_ALERT_EMAIL', { infer: true });
+    const alertWhatsapp = this.config.get('SUPERADMIN_ALERT_WHATSAPP', { infer: true });
+
+    if (alertEmail) {
+      await this.email.sendAlert(alertEmail, title, body).catch(() => undefined);
+    }
+    if (alertWhatsapp) {
+      await this.whatsapp
+        .sendMessage(alertWhatsapp, `Royáltica · ${title}\n${body}`)
+        .catch(() => undefined);
+    }
+
+    await this.activity.record({
+      action: SUPERADMIN_ALERT_SENT_ACTION,
+      entityType: 'SuperadminAlert',
+      metadata: { reasons, emailed: !!alertEmail, whatsapped: !!alertWhatsapp },
+    });
+
+    return { sent: true, reasons };
   }
 
   // ── Documentos KYC por vencer ─────────────────────────────
@@ -206,7 +383,33 @@ export class JobsService {
     skipped: number;
   }> {
     if (!this.enabled) return { evaluated: 0, sent: 0, escalated: 0, skipped: 0 };
-    return this.collectionSequences.runEngineScan();
+    const startedAt = Date.now();
+    try {
+      const result = await this.collectionSequences.runEngineScan();
+      // Evento de plataforma (sin organizationId): el panel SUPERADMIN lo lee
+      // para saber si el "agente de recordatorios" está vivo y al corriente,
+      // o si se quedó trabado/falló — pedido explícito de Paolo.
+      await this.activity.record({
+        action: COLLECTION_ENGINE_JOB_RUN_ACTION,
+        entityType: 'JobRun',
+        metadata: { success: true, durationMs: Date.now() - startedAt, ...result },
+      });
+      return result;
+    } catch (err) {
+      this.logger.error(
+        `collection-sequence-engine falló: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      await this.activity.record({
+        action: COLLECTION_ENGINE_JOB_RUN_ACTION,
+        entityType: 'JobRun',
+        metadata: {
+          success: false,
+          durationMs: Date.now() - startedAt,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      });
+      throw err;
+    }
   }
 
   // ── Resumen diario de notificaciones por WhatsApp (ROY-25) ──

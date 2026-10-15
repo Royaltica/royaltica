@@ -154,12 +154,44 @@ export type AiStreamEvent =
  * @google-cloud/vertexai se carga con import dinámico (igual que GeminiService)
  * para no penalizar el arranque cuando la IA no se usa.
  */
+/**
+ * TTL de la caché de respuestas repetidas. Corto a propósito: los datos
+ * financieros de la organización cambian seguido (pagos, facturas nuevas),
+ * así que cachear por mucho tiempo arriesga mostrar una cifra desactualizada.
+ * 10 minutos es suficiente para absorber ráfagas de la misma pregunta (p. ej.
+ * varios usuarios de la misma org preguntando "¿cuánto debo cobrar este mes?"
+ * en una sesión de trabajo) sin volverse una fuente de datos obsoletos.
+ */
+const RESPONSE_CACHE_TTL_MS = 10 * 60 * 1000;
+/** Tope de entradas en caché (protege memoria del proceso). */
+const RESPONSE_CACHE_MAX_ENTRIES = 500;
+
+interface CachedChatEntry {
+  reply: string;
+  toolsUsed: string[];
+  expiresAt: number;
+}
+
 @Injectable()
 export class AiService implements OnModuleInit {
   private readonly logger = new Logger(AiService.name);
-  private readonly modelName = 'gemini-2.5-flash';
+  // Modelo más económico que gemini-2.5-flash (ver comparación de costos
+  // pedida por José): Flash-Lite cuesta una fracción del precio por token.
+  // Si la calidad de tool-calling se degrada notablemente en uso real, es
+  // fácil volver a 'gemini-2.5-flash' cambiando solo esta constante.
+  private readonly modelName = 'gemini-2.5-flash-lite';
   private model: import('@google-cloud/vertexai').GenerativeModel | null =
     null;
+
+  /**
+   * Caché en memoria de respuestas a preguntas repetidas, por organización.
+   * Solo cachea turnos SIN historial previo (pregunta nueva de una conversación
+   * nueva): con historial, la misma pregunta puede significar algo distinto
+   * según el contexto previo, así que cachear ahí arriesgaría una respuesta
+   * incorrecta. Es un Map simple (proceso único de NestJS en Railway, no hay
+   * múltiples instancias que necesiten compartir caché todavía).
+   */
+  private readonly responseCache = new Map<string, CachedChatEntry>();
 
   constructor(
     private readonly config: ConfigService<Env, true>,
@@ -264,6 +296,37 @@ export class AiService implements OnModuleInit {
     return this.model !== null;
   }
 
+  // ── Caché de respuestas repetidas ────────────────────────────
+
+  /** Normaliza la pregunta para que variaciones triviales (espacios,
+   * mayúsculas) compartan la misma entrada de caché. */
+  private cacheKey(organizationId: string, message: string): string {
+    return `${organizationId}::${message.trim().toLowerCase()}`;
+  }
+
+  private getCached(key: string): CachedChatEntry | null {
+    const hit = this.responseCache.get(key);
+    if (!hit) return null;
+    if (hit.expiresAt < Date.now()) {
+      this.responseCache.delete(key);
+      return null;
+    }
+    return hit;
+  }
+
+  private setCached(key: string, reply: string, toolsUsed: string[]): void {
+    if (this.responseCache.size >= RESPONSE_CACHE_MAX_ENTRIES) {
+      // Desaloja la entrada más vieja (inserción en orden en un Map de JS).
+      const oldestKey = this.responseCache.keys().next().value;
+      if (oldestKey) this.responseCache.delete(oldestKey);
+    }
+    this.responseCache.set(key, {
+      reply,
+      toolsUsed,
+      expiresAt: Date.now() + RESPONSE_CACHE_TTL_MS,
+    });
+  }
+
   async chat(user: AuthenticatedUser, dto: ChatDto): Promise<ChatResult> {
     if (!this.model) {
       throw new ServiceUnavailableException(
@@ -279,6 +342,17 @@ export class AiService implements OnModuleInit {
       role: turn.role,
       parts: [{ text: turn.content }],
     }));
+
+    // Solo se intenta caché para preguntas "frescas" (sin historial previo):
+    // ver comentario de responseCache.
+    const cacheKey =
+      history.length === 0 ? this.cacheKey(organizationId, dto.message) : null;
+    if (cacheKey) {
+      const cached = this.getCached(cacheKey);
+      if (cached) {
+        return { reply: cached.reply, toolsUsed: cached.toolsUsed };
+      }
+    }
 
     try {
       const chat = this.model.startChat({ history });
@@ -329,6 +403,7 @@ export class AiService implements OnModuleInit {
       });
 
       const reply = this.finalizeReply(result.response, organizationId);
+      if (cacheKey) this.setCached(cacheKey, reply, toolsUsed);
       return { reply, toolsUsed };
     } catch (err) {
       this.logger.error(
@@ -389,6 +464,19 @@ export class AiService implements OnModuleInit {
       role: turn.role,
       parts: [{ text: turn.content }],
     }));
+
+    const cacheKey =
+      history.length === 0 ? this.cacheKey(organizationId, dto.message) : null;
+    if (cacheKey) {
+      const cached = this.getCached(cacheKey);
+      if (cached) {
+        // "Streamea" la respuesta cacheada de un jalón: no hay nada que
+        // esperar de Vertex AI, así que no tiene sentido fingir un delay.
+        yield { type: 'delta', text: cached.reply };
+        yield { type: 'done', reply: cached.reply, toolsUsed: cached.toolsUsed };
+        return;
+      }
+    }
 
     const toolsUsed: string[] = [];
     let inputTokens = 0;
@@ -454,6 +542,7 @@ export class AiService implements OnModuleInit {
       const reply = lastResponse
         ? this.finalizeReply(lastResponse, organizationId)
         : '';
+      if (cacheKey && reply) this.setCached(cacheKey, reply, toolsUsed);
       yield { type: 'done', reply, toolsUsed };
     } catch (err) {
       this.logger.error(

@@ -1,28 +1,50 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckCircle2, LogOut, ChevronRight, FileText, X, Plus, ChevronLeft, Activity, Loader2, DollarSign, Crown, Users, Server, Gauge, Handshake, HeartPulse } from 'lucide-react';
+import { CheckCircle2, LogOut, LogIn, ChevronRight, FileText, X, Plus, ChevronLeft, Activity, Loader2, DollarSign, Crown, Users, Server, Gauge, Handshake, HeartPulse } from 'lucide-react';
 import type { User as FirebaseUser } from 'firebase/auth';
-import { api, isRealId, type AdminOrg, type AdminActivity, type AdminCostByFeature, type AdminOrgCost } from '../../services/apiClient.ts';
+import { api, isRealId, type AdminOrg, type AdminActivity, type AdminCostByFeature, type AdminOrgCost, type AdminCollectionEngineHealth, type AdminRemindersCost, type AdminLoginEvent, type AdminHealthHistory } from '../../services/apiClient.ts';
 import { NotificationBell } from '../../components/NotificationBell.tsx';
 import { SidebarLink } from '../../components/SidebarLink.tsx';
 import { LeadsAdminPanel } from '../../features/admin/LeadsAdminPanel.tsx';
 
 // ─── Admin Dashboard (Royáltica CEO Portal) ──────────────────────────────────
+const EMPTY_SEATS = { admin: 0, supervisor: 0, agente: 0 };
+const EMPTY_SEAT_LIMITS = { admin: null, supervisor: null, agente: null };
 const MOCK_TENANTS = [
-  { id: 'T-001', name: 'Grupo Industrial Monterrey SA de CV', rfc: 'GIM901215AB3', plan: 'Enterprise', status: 'active' as const, invoicesProcessed: 1247, lastActive: '2026-06-12T08:30:00', monthlyVolume: 18_500_000, users: 12, healthScore: 97 },
-  { id: 'T-002', name: 'Distribuidora Nacional MX', rfc: 'DNM880430QR7', plan: 'Business', status: 'active' as const, invoicesProcessed: 583, lastActive: '2026-06-11T17:45:00', monthlyVolume: 6_200_000, users: 5, healthScore: 84 },
-  { id: 'T-003', name: 'Alimentos del Pacífico SA', rfc: 'APS950612KL0', plan: 'Starter', status: 'trial' as const, invoicesProcessed: 42, lastActive: '2026-06-10T12:00:00', monthlyVolume: 890_000, users: 2, healthScore: 71 },
-  { id: 'T-004', name: 'Constructora Vanguardia', rfc: 'CVA070823MN5', plan: 'Enterprise', status: 'active' as const, invoicesProcessed: 2104, lastActive: '2026-06-12T09:15:00', monthlyVolume: 32_400_000, users: 18, healthScore: 93 },
-  { id: 'T-005', name: 'Farmacéuticos del Bajío', rfc: 'FDB110517PQ2', plan: 'Business', status: 'suspended' as const, invoicesProcessed: 0, lastActive: '2026-05-28T10:00:00', monthlyVolume: 0, users: 7, healthScore: 0 },
+  { id: 'T-001', name: 'Grupo Industrial Monterrey SA de CV', rfc: 'GIM901215AB3', plan: 'Enterprise', status: 'active' as const, invoicesProcessed: 1247, customerSince: '2024-02-03T08:30:00', monthlyVolume: 18_500_000, users: 12, healthScore: 97, seatPackage: null, product: null, seats: EMPTY_SEATS, seatLimits: EMPTY_SEAT_LIMITS, remindersSent: 312, remindersCostMxn: 18.42, lastLoginAt: '2026-10-09T14:20:00', totalCostMxn: 142.10, revenueMxn: 4999, marginMxn: 4856.90, subscriptionStatus: 'active' },
+  { id: 'T-002', name: 'Distribuidora Nacional MX', rfc: 'DNM880430QR7', plan: 'Business', status: 'active' as const, invoicesProcessed: 583, customerSince: '2024-09-18T17:45:00', monthlyVolume: 6_200_000, users: 5, healthScore: 84, seatPackage: null, product: null, seats: EMPTY_SEATS, seatLimits: EMPTY_SEAT_LIMITS, remindersSent: 97, remindersCostMxn: 5.73, lastLoginAt: '2026-10-08T09:05:00', totalCostMxn: 61.20, revenueMxn: 1499, marginMxn: 1437.80, subscriptionStatus: 'active' },
+  { id: 'T-003', name: 'Alimentos del Pacífico SA', rfc: 'APS950612KL0', plan: 'Starter', status: 'trial' as const, invoicesProcessed: 42, customerSince: '2026-05-20T12:00:00', monthlyVolume: 890_000, users: 2, healthScore: 71, seatPackage: null, product: null, seats: EMPTY_SEATS, seatLimits: EMPTY_SEAT_LIMITS, remindersSent: 6, remindersCostMxn: 0.35, lastLoginAt: null, totalCostMxn: 4.10, revenueMxn: 0, marginMxn: -4.10, subscriptionStatus: 'trialing' },
+  { id: 'T-004', name: 'Constructora Vanguardia', rfc: 'CVA070823MN5', plan: 'Enterprise', status: 'active' as const, invoicesProcessed: 2104, customerSince: '2023-11-02T09:15:00', monthlyVolume: 32_400_000, users: 18, healthScore: 93, seatPackage: null, product: null, seats: EMPTY_SEATS, seatLimits: EMPTY_SEAT_LIMITS, remindersSent: 540, remindersCostMxn: 31.86, lastLoginAt: '2026-10-10T07:40:00', totalCostMxn: 238.50, revenueMxn: 4999, marginMxn: 4760.50, subscriptionStatus: 'active' },
+  { id: 'T-005', name: 'Farmacéuticos del Bajío', rfc: 'FDB110517PQ2', plan: 'Business', status: 'suspended' as const, invoicesProcessed: 0, customerSince: '2025-01-14T10:00:00', monthlyVolume: 0, users: 7, healthScore: 0, seatPackage: null, product: null, seats: EMPTY_SEATS, seatLimits: EMPTY_SEAT_LIMITS, remindersSent: 0, remindersCostMxn: 0, lastLoginAt: '2026-05-30T16:00:00', totalCostMxn: 0, revenueMxn: 0, marginMxn: 0, subscriptionStatus: 'canceled' },
 ];
 
 /** Forma de un cliente en el panel admin (mock y real comparten esta forma). */
 type AdminTenant = {
   id: string; name: string; rfc: string; plan: string;
   status: 'active' | 'trial' | 'suspended';
-  invoicesProcessed: number; lastActive: string; monthlyVolume: number;
+  // Fecha de alta del cliente ("antigüedad", pedida por Paolo) — NO es
+  // "último acceso": no hay tracking de sesiones/último login todavía.
+  invoicesProcessed: number; customerSince: string; monthlyVolume: number;
   users: number; healthScore: number;
+  // Recordatorios de cobranza enviados (histórico) — pedido por Paolo.
+  remindersSent: number;
+  // Costo SOLO de recordatorios, aislado del resto de correos/WhatsApp.
+  remindersCostMxn: number;
+  // Último login REAL de cualquier usuario de la organización (null = nadie ha entrado).
+  lastLoginAt: string | null;
+  // Costo operativo TOTAL (todos los features, no solo recordatorios).
+  totalCostMxn: number;
+  // Ingreso mensual aproximado según el plan (NO es el monto real de Stripe).
+  revenueMxn: number;
+  // revenueMxn - totalCostMxn.
+  marginMxn: number;
+  subscriptionStatus: string | null;
+  // ── Licencias de CxC (punto 5 de José: supervisión multi-cliente) ──
+  seatPackage: string | null;
+  product: string | null;
+  seats: { admin: number; supervisor: number; agente: number };
+  seatLimits: { admin: number | null; supervisor: number | null; agente: number | null };
 };
 
 /** Mapea una organización real del backend al shape que usa el panel. */
@@ -33,12 +55,30 @@ const mapOrgToTenant = (o: AdminOrg): AdminTenant => ({
   plan: o.plan === 'ENTERPRISE' ? 'Enterprise' : o.plan === 'PRO' ? 'Business' : 'Starter',
   status: o.deleted || !o.isActive ? 'suspended' : 'active',
   invoicesProcessed: o.counts.invoices,
-  lastActive: o.createdAt,
+  customerSince: o.createdAt,
   monthlyVolume: o.amount,
   users: o.counts.users,
-  // "Salud" no tiene backend de monitoreo aún: se deriva del estado/actividad.
-  healthScore: o.deleted || !o.isActive ? 0 : o.counts.invoices > 0 ? 95 : 75,
+  // "Salud" real, calculada en backend a partir de señales reales (pagos
+  // fallidos, facturas vencidas, inactividad) — ver common/health-score.ts.
+  healthScore: o.healthScore,
+  remindersSent: o.remindersSent,
+  remindersCostMxn: o.remindersCostMxn,
+  lastLoginAt: o.lastLoginAt,
+  totalCostMxn: o.totalCostMxn,
+  revenueMxn: o.revenueMxn,
+  marginMxn: o.marginMxn,
+  subscriptionStatus: o.subscriptionStatus,
+  seatPackage: o.seatPackage ?? null,
+  product: o.product ?? null,
+  seats: o.seats ?? { admin: 0, supervisor: 0, agente: 0 },
+  seatLimits: o.seatLimits ?? { admin: null, supervisor: null, agente: null },
 });
+
+const SEAT_PACKAGE_LABELS: Record<string, string> = {
+  PAQUETE_1: 'Paquete 1 (3/3/3)',
+  PAQUETE_2: 'Paquete 2 (4/4/4)',
+  PAQUETE_3: 'Paquete 3 (5/5/5)',
+};
 
 /** Traduce el código de acción de la bitácora a una frase legible en español. */
 const ACTIVITY_LABELS: Record<string, string> = {
@@ -54,13 +94,23 @@ const ACTIVITY_LABELS: Record<string, string> = {
   USER_INVITED: 'Invitó a un usuario',
   FACTORAJE_DISBURSED: 'Dispersó un factoraje',
   ERP_SYNC: 'Sincronizó con el ERP',
+  LOGIN_SUCCESS: 'Inició sesión',
+  LOGIN_2FA_PENDING: 'Inició sesión (pendiente 2FA)',
+  LOGIN_2FA_COMPLETED: 'Completó verificación 2FA',
+  SUPERADMIN_IMPERSONATION_STARTED: 'Entró como este cliente (superadmin)',
+  COLLECTION_SEQUENCE_STEP_SENT: 'Envió un recordatorio de cobranza',
+  COLLECTION_SEQUENCE_STEP_SKIPPED: 'Omitió un paso de cobranza',
+  COLLECTION_SEQUENCE_ESCALATED: 'Escaló cobranza a un humano',
+  SUPERADMIN_ORG_UPDATED: 'Superadmin cambió plan/paquete/producto de un cliente',
+  SUPERADMIN_ORG_DELETED: 'Superadmin eliminó (soft-delete) un cliente',
+  SUPERADMIN_ALERT_SENT: 'Se mandó una alerta crítica proactiva al equipo',
 };
 const activityLabel = (action: string): string =>
   ACTIVITY_LABELS[action] ?? action.replace(/_/g, ' ').toLowerCase().replace(/^\w/, c => c.toUpperCase());
 /** Color del punto según el tipo de acción (alerta/auditoría/normal). */
 const activityType = (action: string): 'alert' | 'audit' | 'info' => {
-  if (/FAILED|BLOCKED|REJECT|SUSPEND/.test(action)) return 'alert';
-  if (/AUDIT/.test(action)) return 'audit';
+  if (/FAILED|BLOCKED|REJECT|SUSPEND|SUPERADMIN_ALERT_SENT/.test(action)) return 'alert';
+  if (/AUDIT|^SUPERADMIN_ORG_/.test(action)) return 'audit';
   return 'info';
 };
 
@@ -84,7 +134,7 @@ const fmtCostMxn = (n: number): string =>
 type AdminTab = 'overview' | 'clients' | 'health' | 'activity' | 'leads';
 const ADMIN_TABS: AdminTab[] = ['overview', 'clients', 'health', 'activity', 'leads'];
 
-export function AdminDashboard({ user, onLogout, onBackToRole }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void }) {
+export function AdminDashboard({ user, onLogout, onBackToRole, onImpersonate }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, onImpersonate?: (orgId: string) => Promise<void> }) {
   // La pestaña activa vive en la URL (react-router): permite recargar,
   // compartir el link, y usar atrás/adelante del navegador.
   const location = useLocation();
@@ -102,9 +152,22 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState<AdminTenant | null>(null);
 
+  // Búsqueda y filtros de la tabla de Clientes (pedido por Paolo/José).
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientPlanFilter, setClientPlanFilter] = useState<'all' | string>('all');
+  const [clientStatusFilter, setClientStatusFilter] = useState<'all' | AdminTenant['status']>('all');
+
   // Clientes reales del backend (/admin/organizations). Arranca con los mocks
   // como fallback; si la carga falla, la consola sigue mostrando algo.
   const [tenants, setTenants] = useState<AdminTenant[]>(MOCK_TENANTS);
+  const filteredTenants = React.useMemo(() => {
+    const q = clientSearch.trim().toLowerCase();
+    return tenants.filter(t =>
+      (clientPlanFilter === 'all' || t.plan === clientPlanFilter) &&
+      (clientStatusFilter === 'all' || t.status === clientStatusFilter) &&
+      (q === '' || t.name.toLowerCase().includes(q) || t.rfc.toLowerCase().includes(q)),
+    );
+  }, [tenants, clientSearch, clientPlanFilter, clientStatusFilter]);
   const loadTenants = React.useCallback(() => {
     return api.adminOrganizations()
       // Se ocultan las organizaciones con soft-delete (deleted) del panel.
@@ -120,10 +183,26 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
     api.adminActivity(40).then(setActivity).catch(() => setActivity([]));
   }, [adminTab, activity]);
 
+  // Historial de accesos (quién entró y cuándo) — vista filtrada aparte de la
+  // bitácora general, pedida explícitamente por Paolo.
+  const [activityView, setActivityView] = useState<'all' | 'access'>('all');
+  const [loginHistory, setLoginHistory] = useState<AdminLoginEvent[] | null>(null);
+  useEffect(() => {
+    if (adminTab !== 'activity' || activityView !== 'access' || loginHistory !== null) return;
+    api.adminLoginHistory(60).then(setLoginHistory).catch(() => setLoginHistory([]));
+  }, [adminTab, activityView, loginHistory]);
+
   // Costos de operación reales (gasto de Gemini, correos, etc.) — /admin/costs/by-feature.
   const [costs, setCosts] = useState<AdminCostByFeature | null>(null);
   useEffect(() => {
     api.adminCostsByFeature().then(setCosts).catch(() => setCosts({ totalCostMxn: 0, byFeature: [] }));
+  }, []);
+
+  // Costo aislado de recordatorios de cobranza (separado del resto de
+  // correos/WhatsApp) — pedido explícito de Paolo.
+  const [remindersCost, setRemindersCost] = useState<AdminRemindersCost | null>(null);
+  useEffect(() => {
+    api.adminRemindersCostGlobal().then(setRemindersCost).catch(() => setRemindersCost(null));
   }, []);
 
   // Salud REAL del sistema (health-check del backend + estado del asistente IA).
@@ -149,6 +228,22 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
     return () => { alive = false; };
   }, []);
   const servicesUp = services.filter(s => s.status === 'operational').length;
+
+  // Salud específica del agente de recordatorios de cobranza — distinto del
+  // health-check general: aquí se responde "¿se quedó trabado o falló la
+  // última corrida?", pedido explícito de Paolo.
+  const [engineHealth, setEngineHealth] = useState<AdminCollectionEngineHealth | null>(null);
+  useEffect(() => {
+    api.adminCollectionEngineHealth().then(setEngineHealth).catch(() => setEngineHealth(null));
+  }, []);
+
+  // Histórico REAL de latencia/uptime (snapshots cada 10 min desde el
+  // backend) — antes "Salud del Sistema" solo medía en el momento de abrir
+  // el dashboard, sin ninguna tendencia ni % de uptime a lo largo del tiempo.
+  const [healthHistory, setHealthHistory] = useState<AdminHealthHistory | null>(null);
+  useEffect(() => {
+    api.adminHealthHistory(24).then(setHealthHistory).catch(() => setHealthHistory(null));
+  }, []);
 
   // Costo de operación del cliente seleccionado (/admin/costs/:orgId).
   const [tenantCost, setTenantCost] = useState<AdminOrgCost | null>(null);
@@ -187,6 +282,50 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
       setCreatingClient(false);
     }
   }, [newClient, loadTenants]);
+
+  // Asignar paquete de licencias / producto (CXP|CXC) a un cliente — punto 5
+  // de José: supervisión multi-cliente desde el panel superadmin.
+  const [savingSeat, setSavingSeat] = useState(false);
+  const assignSeatPackage = React.useCallback(async (orgId: string, seatPackage: 'PAQUETE_1' | 'PAQUETE_2' | 'PAQUETE_3') => {
+    setSavingSeat(true);
+    try {
+      await api.adminUpdateOrganization(orgId, { seatPackage });
+      await loadTenants();
+      setSelectedTenant(prev => {
+        if (!prev || prev.id !== orgId) return prev;
+        const refreshed = tenants.find(t => t.id === orgId);
+        return refreshed ?? prev;
+      });
+    } finally {
+      setSavingSeat(false);
+    }
+  }, [loadTenants, tenants]);
+  const assignProduct = React.useCallback(async (orgId: string, product: 'CXP' | 'CXC') => {
+    setSavingSeat(true);
+    try {
+      await api.adminUpdateOrganization(orgId, { product });
+      await loadTenants();
+    } finally {
+      setSavingSeat(false);
+    }
+  }, [loadTenants]);
+
+  // "Entrar como este cliente" — punto 7 de José: el SUPERADMIN entra al
+  // portal real del admin de la organización (queda auditado en backend).
+  const [impersonatingOrgId, setImpersonatingOrgId] = useState<string | null>(null);
+  const [impersonateError, setImpersonateError] = useState<string | null>(null);
+  const handleImpersonate = React.useCallback(async (orgId: string) => {
+    if (!onImpersonate) return;
+    setImpersonatingOrgId(orgId);
+    setImpersonateError(null);
+    try {
+      await onImpersonate(orgId);
+    } catch (e) {
+      setImpersonateError(e instanceof Error ? e.message : 'No se pudo entrar como este cliente.');
+    } finally {
+      setImpersonatingOrgId(null);
+    }
+  }, [onImpersonate]);
 
   const activeTenants = tenants.filter(t => t.status === 'active');
   const totalVolume = tenants.reduce((s, t) => s + t.monthlyVolume, 0);
@@ -284,6 +423,22 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
                 ))}
               </div>
 
+              {/* Accesos directos — saltar a una acción común sin navegar por pestañas */}
+              <div className="flex flex-wrap items-center gap-3 mb-10">
+                {[
+                  { label: 'Nuevo Cliente', icon: <Plus size={14} />, onClick: () => { setAdminTab('clients'); setShowNewClient(true); setNewClientDone(null); setNewClientError(''); } },
+                  { label: 'Ver Clientes', icon: <Users size={14} />, onClick: () => setAdminTab('clients') },
+                  { label: 'Salud del Sistema', icon: <Server size={14} />, onClick: () => setAdminTab('health') },
+                  { label: 'Historial de Accesos', icon: <LogIn size={14} />, onClick: () => { setAdminTab('activity'); setActivityView('access'); } },
+                  { label: 'Registro de Eventos', icon: <Activity size={14} />, onClick: () => { setAdminTab('activity'); setActivityView('all'); } },
+                ].map((shortcut, i) => (
+                  <button key={i} onClick={shortcut.onClick}
+                    className="flex items-center gap-2 bg-white border border-brand-sand/20 text-brand-ink text-[10px] uppercase tracking-widest font-bold px-4 py-2.5 rounded-xl hover:border-brand-gold/40 hover:bg-brand-bone/40 transition-all cursor-pointer">
+                    {shortcut.icon} {shortcut.label}
+                  </button>
+                ))}
+              </div>
+
               {/* Two-column: Clients summary + System status */}
               <div className="grid lg:grid-cols-5 gap-6">
                 {/* Top Clients */}
@@ -334,6 +489,15 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
                         </span>
                       </div>
                     ))}
+                    {engineHealth && (
+                      <div className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-brand-bone/50 transition-colors">
+                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${engineHealth.status === 'ok' ? 'bg-green-500' : engineHealth.status === 'unknown' ? 'bg-brand-sand/40' : 'bg-red-500 animate-pulse'}`} />
+                        <span className="text-xs text-brand-ink flex-1">Agente de Recordatorios</span>
+                        <span className={`text-[9px] font-bold uppercase tracking-wider ${engineHealth.status === 'ok' ? 'text-green-600' : engineHealth.status === 'unknown' ? 'text-brand-ink/40' : 'text-red-600'}`}>
+                          {engineHealth.status === 'ok' ? 'OK' : engineHealth.status === 'stuck' ? 'Trabado' : engineHealth.status === 'failed' ? 'Falló' : 'Sin datos'}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <div className="mt-4 pt-4 border-t border-brand-sand/20">
                     <div className="flex items-center justify-between">
@@ -379,6 +543,29 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
                       );
                     })}
                     <p className="text-[9px] text-brand-ink/30 pt-2 border-t border-brand-sand/10">Costos estimados en MXN según el consumo real de cada servicio (tokens de Gemini, correos enviados, almacenamiento). Periodo: histórico completo.</p>
+                    {remindersCost && remindersCost.events > 0 && (
+                      <div className="flex items-center justify-between bg-brand-bone/50 rounded-xl px-4 py-2.5 mt-1">
+                        <div>
+                          <p className="text-xs font-medium text-brand-ink">Solo Recordatorios de Cobranza</p>
+                          <p className="text-[9px] text-brand-ink/35">{remindersCost.events} enviado{remindersCost.events !== 1 ? 's' : ''} · incluido dentro de Correos + WhatsApp arriba, aislado aquí</p>
+                        </div>
+                        <span className="text-sm font-serif text-brand-ink">{fmtCostMxn(remindersCost.estimatedCostMxn)} <span className="text-[10px] text-brand-ink/40">MXN</span></span>
+                      </div>
+                    )}
+                    {tenants.length > 0 && (() => {
+                      const totalRevenue = tenants.reduce((sum, t) => sum + t.revenueMxn, 0);
+                      const totalCost = tenants.reduce((sum, t) => sum + t.totalCostMxn, 0);
+                      const totalMargin = totalRevenue - totalCost;
+                      return (
+                        <div className="flex items-center justify-between bg-brand-bone/50 rounded-xl px-4 py-2.5 mt-1">
+                          <div>
+                            <p className="text-xs font-medium text-brand-ink">Margen Estimado de la Plataforma</p>
+                            <p className="text-[9px] text-brand-ink/35">Ingreso aproximado por plan ({fmtCostMxn(totalRevenue)} MXN) − costo operativo total ({fmtCostMxn(totalCost)} MXN) · aproximación, no es el estado de cuenta real de Stripe</p>
+                          </div>
+                          <span className={`text-sm font-serif ${totalMargin >= 0 ? 'text-green-700' : 'text-red-600'}`}>{totalMargin >= 0 ? '+' : ''}{fmtCostMxn(totalMargin)} <span className="text-[10px] text-brand-ink/40">MXN</span></span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -389,23 +576,66 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
           {adminTab === 'clients' && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
               <div className="flex items-center justify-between mb-5">
-                <p className="text-sm text-brand-ink/40">{tenants.length} cliente{tenants.length !== 1 ? 's' : ''} registrado{tenants.length !== 1 ? 's' : ''}</p>
+                <p className="text-sm text-brand-ink/40">
+                  {filteredTenants.length === tenants.length
+                    ? `${filteredTenants.length} cliente${filteredTenants.length !== 1 ? 's' : ''} registrado${filteredTenants.length !== 1 ? 's' : ''}`
+                    : `${filteredTenants.length} de ${tenants.length} cliente${tenants.length !== 1 ? 's' : ''}`}
+                </p>
                 <button onClick={() => { setShowNewClient(true); setNewClientDone(null); setNewClientError(''); }}
                   className="flex items-center gap-2 bg-brand-ink text-brand-paper text-[10px] uppercase tracking-widest font-bold px-4 py-2.5 rounded-xl hover:bg-brand-ink/80 transition-all cursor-pointer">
                   <Plus size={14} /> Nuevo Cliente
                 </button>
               </div>
+
+              {/* Búsqueda y filtros */}
+              <div className="flex items-center gap-3 mb-4 flex-wrap">
+                <input
+                  type="text"
+                  value={clientSearch}
+                  onChange={(e) => setClientSearch(e.target.value)}
+                  placeholder="Buscar por nombre o RFC..."
+                  className="flex-1 min-w-[200px] text-sm bg-white border border-brand-sand/20 rounded-xl px-4 py-2.5 placeholder:text-brand-ink/30 focus:outline-none focus:border-brand-gold/40"
+                />
+                <select
+                  value={clientPlanFilter}
+                  onChange={(e) => setClientPlanFilter(e.target.value)}
+                  className="text-xs bg-white border border-brand-sand/20 rounded-xl px-3 py-2.5 text-brand-ink/70 focus:outline-none focus:border-brand-gold/40 cursor-pointer"
+                >
+                  <option value="all">Todos los planes</option>
+                  <option value="Starter">Starter</option>
+                  <option value="Business">Business</option>
+                  <option value="Enterprise">Enterprise</option>
+                </select>
+                <select
+                  value={clientStatusFilter}
+                  onChange={(e) => setClientStatusFilter(e.target.value as 'all' | AdminTenant['status'])}
+                  className="text-xs bg-white border border-brand-sand/20 rounded-xl px-3 py-2.5 text-brand-ink/70 focus:outline-none focus:border-brand-gold/40 cursor-pointer"
+                >
+                  <option value="all">Todos los estados</option>
+                  <option value="active">Activo</option>
+                  <option value="trial">Trial</option>
+                  <option value="suspended">Suspendido</option>
+                </select>
+                {(clientSearch || clientPlanFilter !== 'all' || clientStatusFilter !== 'all') && (
+                  <button
+                    onClick={() => { setClientSearch(''); setClientPlanFilter('all'); setClientStatusFilter('all'); }}
+                    className="text-[10px] uppercase tracking-widest font-bold text-brand-ink/40 hover:text-brand-ink px-2 cursor-pointer"
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </div>
               <div className="editorial-card !bg-white border border-brand-sand/20 overflow-hidden">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-brand-sand/20">
-                      {['Estado', 'Cliente', 'RFC', 'Plan', 'Facturas', 'Volumen', 'Usuarios', 'Salud', 'Último Acceso'].map(h => (
+                      {['Estado', 'Cliente', 'RFC', 'Plan', 'Facturas', 'Volumen', 'Usuarios', 'Salud', 'Recordatorios', 'Margen', 'Último Acceso', 'Cliente Desde'].map(h => (
                         <th key={h} className="px-4 py-3 text-left text-[9px] uppercase tracking-widest text-brand-ink/30 font-bold">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {tenants.map(t => (
+                    {filteredTenants.map(t => (
                       <tr key={t.id} onClick={() => setSelectedTenant(selectedTenant?.id === t.id ? null : t)} className="border-b border-brand-sand/10 hover:bg-brand-bone/30 cursor-pointer transition-colors">
                         <td className="px-4 py-3.5">
                           <span className={`inline-flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
@@ -429,7 +659,12 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
                             <span className="text-[10px] text-brand-ink/50">{t.healthScore}%</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3.5 text-[10px] text-brand-ink/40">{new Date(t.lastActive).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
+                        <td className="px-4 py-3.5 text-sm text-brand-ink/60">{t.remindersSent.toLocaleString('es-MX')}</td>
+                        <td className={`px-4 py-3.5 text-sm font-medium ${t.marginMxn >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                          {t.marginMxn >= 0 ? '+' : ''}{fmtCostMxn(t.marginMxn)}
+                        </td>
+                        <td className="px-4 py-3.5 text-[10px] text-brand-ink/40">{t.lastLoginAt ? new Date(t.lastLoginAt).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '— nunca —'}</td>
+                        <td className="px-4 py-3.5 text-[10px] text-brand-ink/40">{new Date(t.customerSince).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -446,20 +681,91 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
                           <h3 className="text-xl font-serif text-brand-ink">{selectedTenant.name}</h3>
                           <p className="text-[10px] text-brand-ink/40 mt-0.5">{selectedTenant.rfc} · ID: {selectedTenant.id}</p>
                         </div>
-                        <button onClick={() => setSelectedTenant(null)} className="p-2 hover:bg-brand-bone rounded-full cursor-pointer"><X size={16} className="text-brand-ink/40" /></button>
+                        <div className="flex items-center gap-2">
+                          {onImpersonate && (
+                            <button
+                              onClick={() => handleImpersonate(selectedTenant.id)}
+                              disabled={impersonatingOrgId === selectedTenant.id}
+                              className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-3 py-2 rounded-lg bg-brand-ink text-brand-paper hover:bg-brand-ink/90 transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              {impersonatingOrgId === selectedTenant.id ? <Loader2 size={13} className="animate-spin" /> : <LogIn size={13} />}
+                              Entrar como este cliente
+                            </button>
+                          )}
+                          <button onClick={() => setSelectedTenant(null)} className="p-2 hover:bg-brand-bone rounded-full cursor-pointer"><X size={16} className="text-brand-ink/40" /></button>
+                        </div>
                       </div>
+                      {impersonateError && (
+                        <p className="text-[11px] text-red-600 -mt-3 mb-4">{impersonateError}</p>
+                      )}
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         {[
                           { label: 'Plan', value: selectedTenant.plan },
                           { label: 'Usuarios', value: selectedTenant.users.toString() },
                           { label: 'Facturas', value: selectedTenant.invoicesProcessed.toLocaleString() },
                           { label: 'Volumen Mensual', value: `$${(selectedTenant.monthlyVolume / 1_000_000).toFixed(1)}M MXN` },
+                          { label: 'Recordatorios Enviados', value: selectedTenant.remindersSent.toLocaleString('es-MX') },
+                          { label: 'Costo de Recordatorios', value: `${fmtCostMxn(selectedTenant.remindersCostMxn)} MXN` },
+                          { label: 'Costo Operativo Total', value: `${fmtCostMxn(selectedTenant.totalCostMxn)} MXN` },
+                          { label: 'Ingreso Estimado', value: `${fmtCostMxn(selectedTenant.revenueMxn)} MXN/mes` },
+                          { label: 'Margen Estimado', value: `${selectedTenant.marginMxn >= 0 ? '+' : ''}${fmtCostMxn(selectedTenant.marginMxn)} MXN` },
+                          { label: 'Último Acceso', value: selectedTenant.lastLoginAt ? new Date(selectedTenant.lastLoginAt).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Nunca' },
+                          { label: 'Cliente Desde', value: new Date(selectedTenant.customerSince).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }) },
                         ].map((item, i) => (
                           <div key={i} className="bg-brand-bone/50 rounded-xl p-3">
                             <p className="text-[9px] uppercase tracking-widest text-brand-ink/30 font-bold mb-1">{item.label}</p>
                             <p className="text-lg font-serif text-brand-ink">{item.value}</p>
                           </div>
                         ))}
+                      </div>
+
+                      {/* Licencias de CxC: paquete, producto y uso de subasientos */}
+                      <div className="mt-5 pt-5 border-t border-brand-sand/15">
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-[9px] uppercase tracking-widest text-brand-ink/30 font-bold">Licencias de Cobranza (CxC)</p>
+                          {selectedTenant.seatPackage && (
+                            <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-brand-bone text-brand-ink/60">
+                              {SEAT_PACKAGE_LABELS[selectedTenant.seatPackage] ?? selectedTenant.seatPackage}
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 mb-4">
+                          {(['admin', 'supervisor', 'agente'] as const).map(bucket => {
+                            const used = selectedTenant.seats[bucket];
+                            const limit = selectedTenant.seatLimits[bucket];
+                            const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
+                            return (
+                              <div key={bucket} className="bg-brand-bone/50 rounded-xl p-3">
+                                <p className="text-[8px] uppercase tracking-widest text-brand-ink/30 font-bold mb-1">{bucket === 'admin' ? 'Administrador' : bucket === 'supervisor' ? 'Supervisor' : 'Agente'}</p>
+                                <p className="text-lg font-serif text-brand-ink">{used}<span className="text-xs text-brand-ink/40">/{limit ?? '∞'}</span></p>
+                                {limit !== null && (
+                                  <div className="w-full h-1.5 bg-brand-sand/20 rounded-full overflow-hidden mt-1.5">
+                                    <div className={`h-full rounded-full ${pct >= 100 ? 'bg-red-500' : pct >= 75 ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${pct}%` }} />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[9px] uppercase tracking-widest text-brand-ink/30 font-bold mr-1">Paquete:</span>
+                          {(['PAQUETE_1', 'PAQUETE_2', 'PAQUETE_3'] as const).map(pkg => (
+                            <button key={pkg} disabled={savingSeat} onClick={() => assignSeatPackage(selectedTenant.id, pkg)}
+                              className={`text-[9px] uppercase tracking-wider font-bold px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer disabled:opacity-40 ${
+                                selectedTenant.seatPackage === pkg ? 'bg-brand-ink text-brand-paper border-brand-ink' : 'bg-white text-brand-ink/50 border-brand-sand/30 hover:border-brand-gold/40'
+                              }`}>{SEAT_PACKAGE_LABELS[pkg]}</button>
+                          ))}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 mt-3">
+                          <span className="text-[9px] uppercase tracking-widest text-brand-ink/30 font-bold mr-1">Producto:</span>
+                          {(['CXP', 'CXC'] as const).map(prod => (
+                            <button key={prod} disabled={savingSeat} onClick={() => assignProduct(selectedTenant.id, prod)}
+                              className={`text-[9px] uppercase tracking-wider font-bold px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer disabled:opacity-40 ${
+                                selectedTenant.product === prod ? 'bg-brand-ink text-brand-paper border-brand-ink' : 'bg-white text-brand-ink/50 border-brand-sand/30 hover:border-brand-gold/40'
+                              }`}>{prod === 'CXP' ? 'Cuentas por Pagar' : 'Cuentas por Cobrar'}</button>
+                          ))}
+                          {!selectedTenant.product && <span className="text-[9px] text-brand-ink/30">Sin asignar — ve todo (legacy)</span>}
+                        </div>
                       </div>
 
                       {/* Costo de operación de este cliente (gasto real por servicio) */}
@@ -498,6 +804,39 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
           {/* ═══ HEALTH TAB ═══ */}
           {adminTab === 'health' && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+              {/* Agente de recordatorios de cobranza — distinto del health-check
+                  general: responde "¿se trabó o falló la última corrida?" */}
+              <div className={`editorial-card !bg-white border mb-5 ${
+                engineHealth === null ? 'border-brand-sand/20' : engineHealth.status === 'ok' ? 'border-green-200' : engineHealth.status === 'unknown' ? 'border-brand-sand/20' : 'border-red-200'
+              }`}>
+                <div className="flex items-center gap-3 mb-1">
+                  <div className={`w-3 h-3 rounded-full ${
+                    engineHealth === null ? 'bg-brand-sand/40' : engineHealth.status === 'ok' ? 'bg-green-500' : engineHealth.status === 'unknown' ? 'bg-brand-sand/40' : 'bg-red-500 animate-pulse'
+                  }`} />
+                  <h4 className="text-sm font-medium text-brand-ink flex-1">Agente de Recordatorios (motor de cobranza)</h4>
+                  <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                    engineHealth === null ? 'bg-brand-bone text-brand-ink/40' :
+                    engineHealth.status === 'ok' ? 'bg-green-50 text-green-700' :
+                    engineHealth.status === 'stuck' ? 'bg-red-50 text-red-700' :
+                    engineHealth.status === 'failed' ? 'bg-red-50 text-red-700' :
+                    'bg-yellow-50 text-yellow-700'
+                  }`}>
+                    {engineHealth === null ? 'Cargando…' :
+                      engineHealth.status === 'ok' ? 'Operativo' :
+                      engineHealth.status === 'stuck' ? 'Trabado' :
+                      engineHealth.status === 'failed' ? 'Falló' : 'Sin datos aún'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-brand-ink/40 pl-6">
+                  {engineHealth === null ? 'Verificando última corrida...' :
+                    engineHealth.status === 'unknown' ? 'Todavía no hay registro de ninguna corrida.' :
+                    `Última corrida: ${new Date(engineHealth.lastRunAt!).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` +
+                    ` (hace ${engineHealth.hoursSinceLastRun}h)` +
+                    (engineHealth.status === 'stuck' ? ' — lleva más de 26h sin correr exitosamente.' :
+                     engineHealth.status === 'failed' ? ' — la última corrida falló.' : '.')
+                  }
+                </p>
+              </div>
               {services.length === 0 ? (
                 <div className="flex items-center justify-center py-16 gap-2 text-brand-ink/40"><Loader2 size={16} className="animate-spin" /> <span className="text-xs">Verificando servicios en vivo...</span></div>
               ) : (
@@ -538,6 +877,46 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
                   <p className="text-[10px] text-brand-ink/30 mt-5">Estado verificado en vivo contra el backend (health-check de base de datos, caché y asistente de IA). La latencia es el tiempo de respuesta medido al cargar esta vista.</p>
                 </>
               )}
+
+              {/* ═══ Histórico de latencia/uptime (NO es solo el snapshot de arriba) ═══ */}
+              <div className="editorial-card !bg-white border border-brand-sand/20 mt-6">
+                <div className="flex items-center justify-between mb-5">
+                  <div>
+                    <h3 className="text-lg font-serif text-brand-ink">Histórico de Latencia / Uptime</h3>
+                    <p className="text-[10px] text-brand-ink/40">Muestras cada 10 minutos · últimas {healthHistory?.windowHours ?? 24}h</p>
+                  </div>
+                  <span className="text-[9px] uppercase tracking-widest text-brand-ink/30 font-bold">
+                    {healthHistory ? `${healthHistory.samples.length} muestra${healthHistory.samples.length !== 1 ? 's' : ''}` : 'Cargando...'}
+                  </span>
+                </div>
+                {healthHistory === null ? (
+                  <div className="flex items-center justify-center py-8 gap-2 text-brand-ink/40"><Loader2 size={14} className="animate-spin" /> <span className="text-xs">Cargando histórico...</span></div>
+                ) : healthHistory.samples.length === 0 ? (
+                  <p className="text-center text-xs text-brand-ink/40 py-8">Aún no hay muestras — el snapshot corre cada 10 minutos, vuelve a revisar en un rato.</p>
+                ) : (
+                  <div className="grid md:grid-cols-2 gap-5">
+                    {([
+                      { label: 'Base de Datos (PostgreSQL)', uptime: healthHistory.uptimePct.db, latency: healthHistory.avgLatencyMs.db },
+                      { label: 'Caché (Redis)', uptime: healthHistory.uptimePct.redis, latency: healthHistory.avgLatencyMs.redis },
+                    ]).map((row) => (
+                      <div key={row.label} className="bg-brand-bone/50 rounded-xl p-4">
+                        <p className="text-xs font-medium text-brand-ink mb-3">{row.label}</p>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <p className="text-[8px] uppercase tracking-widest text-brand-ink/30 font-bold">Uptime</p>
+                            <p className={`text-xl font-serif ${row.uptime >= 99 ? 'text-green-700' : row.uptime >= 95 ? 'text-yellow-700' : 'text-red-600'}`}>{row.uptime}%</p>
+                          </div>
+                          <div>
+                            <p className="text-[8px] uppercase tracking-widest text-brand-ink/30 font-bold">Latencia Promedio</p>
+                            <p className="text-xl font-serif text-brand-ink">{row.latency === null ? '—' : `${row.latency}ms`}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[10px] text-brand-ink/30 mt-5">A diferencia del health-check en vivo de arriba (medido al abrir esta vista), esto es un histórico real: JobsService mide y guarda una muestra cada 10 minutos, y aquí se calcula el % de uptime y la latencia promedio sobre esa ventana de tiempo.</p>
+              </div>
             </motion.div>
           )}
 
@@ -546,35 +925,75 @@ export function AdminDashboard({ user, onLogout, onBackToRole }: { user: Firebas
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
               <div className="editorial-card !bg-white border border-brand-sand/20">
                 <div className="flex items-center justify-between mb-5">
-                  <h3 className="text-lg font-serif text-brand-ink">Registro de Eventos</h3>
-                  <span className="text-[9px] uppercase tracking-widest text-brand-gold font-bold">En vivo</span>
+                  <h3 className="text-lg font-serif text-brand-ink">{activityView === 'access' ? 'Historial de Accesos' : 'Registro de Eventos'}</h3>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center bg-brand-bone rounded-lg p-0.5">
+                      {([['all', 'Todo'], ['access', 'Solo Accesos']] as const).map(([key, label]) => (
+                        <button key={key} onClick={() => setActivityView(key)}
+                          className={`text-[9px] uppercase tracking-wider font-bold px-3 py-1.5 rounded-md transition-all cursor-pointer ${
+                            activityView === key ? 'bg-brand-ink text-brand-paper' : 'text-brand-ink/50 hover:text-brand-ink'
+                          }`}>{label}</button>
+                      ))}
+                    </div>
+                    <span className="text-[9px] uppercase tracking-widest text-brand-gold font-bold">En vivo</span>
+                  </div>
                 </div>
-                {activity === null ? (
-                  <div className="flex items-center justify-center py-12 gap-2 text-brand-ink/40">
-                    <Loader2 size={16} className="animate-spin" /> <span className="text-xs">Cargando bitácora...</span>
-                  </div>
-                ) : activity.length === 0 ? (
-                  <p className="text-center text-xs text-brand-ink/40 py-12">Aún no hay actividad registrada en la plataforma.</p>
+                {activityView === 'all' ? (
+                  activity === null ? (
+                    <div className="flex items-center justify-center py-12 gap-2 text-brand-ink/40">
+                      <Loader2 size={16} className="animate-spin" /> <span className="text-xs">Cargando bitácora...</span>
+                    </div>
+                  ) : activity.length === 0 ? (
+                    <p className="text-center text-xs text-brand-ink/40 py-12">Aún no hay actividad registrada en la plataforma.</p>
+                  ) : (
+                    <div className="space-y-0">
+                      {activity.map(log => {
+                        const d = new Date(log.createdAt);
+                        const time = d.toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+                        const type = activityType(log.action);
+                        return (
+                          <div key={log.id} className="flex items-start gap-4 px-3 py-3 border-b border-brand-sand/10 last:border-0">
+                            <span className="text-[10px] text-brand-ink/30 font-mono w-24 flex-shrink-0 pt-0.5">{time}</span>
+                            <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${
+                              type === 'alert' ? 'bg-red-500' : type === 'audit' ? 'bg-blue-500' : 'bg-green-400'
+                            }`} />
+                            <p className="text-xs text-brand-ink/70 leading-relaxed">
+                              <span className="font-medium text-brand-ink">{log.user}</span>
+                              <span className="text-brand-ink/40"> · {log.organization}</span> — {activityLabel(log.action)}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
                 ) : (
-                  <div className="space-y-0">
-                    {activity.map(log => {
-                      const d = new Date(log.createdAt);
-                      const time = d.toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-                      const type = activityType(log.action);
-                      return (
-                        <div key={log.id} className="flex items-start gap-4 px-3 py-3 border-b border-brand-sand/10 last:border-0">
-                          <span className="text-[10px] text-brand-ink/30 font-mono w-24 flex-shrink-0 pt-0.5">{time}</span>
-                          <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${
-                            type === 'alert' ? 'bg-red-500' : type === 'audit' ? 'bg-blue-500' : 'bg-green-400'
-                          }`} />
-                          <p className="text-xs text-brand-ink/70 leading-relaxed">
-                            <span className="font-medium text-brand-ink">{log.user}</span>
-                            <span className="text-brand-ink/40"> · {log.organization}</span> — {activityLabel(log.action)}
-                          </p>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  loginHistory === null ? (
+                    <div className="flex items-center justify-center py-12 gap-2 text-brand-ink/40">
+                      <Loader2 size={16} className="animate-spin" /> <span className="text-xs">Cargando historial de accesos...</span>
+                    </div>
+                  ) : loginHistory.length === 0 ? (
+                    <p className="text-center text-xs text-brand-ink/40 py-12">Aún no hay accesos registrados.</p>
+                  ) : (
+                    <div className="space-y-0">
+                      {loginHistory.map(ev => {
+                        const d = new Date(ev.createdAt);
+                        const time = d.toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+                        const isImpersonation = ev.action === 'SUPERADMIN_IMPERSONATION_STARTED';
+                        return (
+                          <div key={ev.id} className="flex items-start gap-4 px-3 py-3 border-b border-brand-sand/10 last:border-0">
+                            <span className="text-[10px] text-brand-ink/30 font-mono w-24 flex-shrink-0 pt-0.5">{time}</span>
+                            <div className={`w-2 h-2 rounded-full flex-shrink-0 mt-1.5 ${isImpersonation ? 'bg-brand-gold' : 'bg-green-400'}`} />
+                            <p className="text-xs text-brand-ink/70 leading-relaxed flex-1">
+                              <span className="font-medium text-brand-ink">{ev.user}</span>
+                              {ev.userEmail && <span className="text-brand-ink/30"> ({ev.userEmail})</span>}
+                              <span className="text-brand-ink/40"> · {ev.organization}</span> — {activityLabel(ev.action)}
+                              {ev.ipAddress && <span className="text-[9px] text-brand-ink/30"> · IP {ev.ipAddress}</span>}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
                 )}
               </div>
             </motion.div>

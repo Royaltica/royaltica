@@ -700,6 +700,7 @@ export class ReceivablesService {
         invoice.organizationId,
         contactPhone,
         text,
+        'collection_reminder',
       );
       whatsappSent = res.sent;
     }

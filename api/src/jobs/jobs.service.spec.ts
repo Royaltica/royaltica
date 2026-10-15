@@ -10,8 +10,13 @@ import { DashboardService } from '../dashboard/dashboard.service';
 import { ReportsService } from '../reports/reports.service';
 import { CollectionSequencesService } from '../collection-sequences/collection-sequences.service';
 import { CustomerScoringService } from '../customers/scoring/customer-scoring.service';
+import { ActivityLogService } from '../activity/activity-log.service';
+import { RedisService } from '../common/redis/redis.service';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.validation';
+
+const makeActivity = () => ({ record: jest.fn().mockResolvedValue(undefined) }) as unknown as ActivityLogService;
+const makeRedis = () => ({ isHealthy: jest.fn().mockResolvedValue(true) }) as unknown as RedisService;
 
 describe('JobsService — weeklyCollectionDigest', () => {
   let service: JobsService;
@@ -70,6 +75,8 @@ describe('JobsService — weeklyCollectionDigest', () => {
       { runEngineScan: jest.fn() } as unknown as CollectionSequencesService,
       {} as CustomerScoringService,
       { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
+      makeActivity(),
+      makeRedis(),
     );
   });
 
@@ -201,6 +208,8 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
       {} as CollectionSequencesService,
       {} as CustomerScoringService,
       { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
+      makeActivity(),
+      makeRedis(),
     );
   });
 
@@ -251,6 +260,8 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
       {} as CollectionSequencesService,
       {} as CustomerScoringService,
       { get: jest.fn().mockReturnValue('false') } as unknown as ConfigService<Env, true>,
+      makeActivity(),
+      makeRedis(),
     );
 
     await expect(service.whatsappNotificationsDigest()).resolves.toEqual({
