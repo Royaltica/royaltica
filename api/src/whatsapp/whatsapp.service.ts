@@ -342,7 +342,10 @@ ${rawText}
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) {
-      throw new Error(`Meta API respondió ${res.status}`);
+      // El detalle de Meta (token vencido, número inválido, fuera de la
+      // ventana de 24h = 131047…) es lo que hace falta para diagnosticar.
+      const detalle = await res.text().catch(() => '');
+      throw new Error(`Meta API respondió ${res.status}: ${detalle.slice(0, 500)}`);
     }
     const data = (await res.json()) as { messages?: { id?: string }[] };
     return { sent: true, mode: 'meta', id: data.messages?.[0]?.id };
