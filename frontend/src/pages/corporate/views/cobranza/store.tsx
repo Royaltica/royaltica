@@ -90,8 +90,11 @@ type Store = {
   registrar: (id: string, resultado: string) => void;
   guardarCampana: (c: Campana) => void;
   cambiarEstadoCampana: (id: string, estado: Campana['estado']) => void;
-  /** ID real del cliente en el backend (para su conversación de WhatsApp). */
-  waClienteId: (cliente: string) => string | null | undefined;
+  /**
+   * ID real del cliente en el backend (para su conversación de WhatsApp).
+   * undefined = cargando · null = no existe en la base · 'error' = no hubo conexión.
+   */
+  waClienteId: (cliente: string) => string | null | undefined | 'error';
   /** Vuelve a leer lo que pasó por WhatsApp (tras enviar, o al llegar respuestas). */
   refrescarWhatsapp: () => Promise<void>;
   /** Recordatorios automáticos (true) o con aprobación (false). null = sin conexión. */
@@ -134,6 +137,8 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
     try {
       setWa(await api.getWaPlanActivity());
     } catch {
+      // Si ya había datos se conservan (un fallo momentáneo no borra la vista);
+      // si nunca cargó, queda como "sin conexión" (no como "no existe").
       setWa((prev) => prev ?? null);
     }
   }, []);
@@ -350,7 +355,11 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
       setCampanas((cs) => cs.map((x) => (x.id === id ? upd : x)));
     },
     waClienteId: (cliente) =>
-      wa === undefined ? undefined : (wa?.customers.find((x) => x.name === cliente)?.customerId ?? null),
+      wa === undefined
+        ? undefined
+        : wa === null
+          ? 'error'
+          : (wa.customers.find((x) => x.name === cliente)?.customerId ?? null),
     refrescarWhatsapp,
     envioAutomatico,
     cambiarEnvioAutomatico,

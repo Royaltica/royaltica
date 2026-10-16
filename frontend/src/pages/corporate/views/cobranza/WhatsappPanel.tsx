@@ -21,10 +21,33 @@ import { api, type WaTemplateInfo, type WaThread } from '../../../../services/ap
 const MXN = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' });
 
 export function SubWhatsapp({ cuenta }: { cuenta: CuentaViva }) {
-  const { waClienteId } = useCobranza();
+  const { waClienteId, refrescarWhatsapp } = useCobranza();
   const customerId = waClienteId(cuenta.cliente);
+  const [reintentando, setReintentando] = React.useState(false);
 
   if (customerId === undefined) return <Cargando />;
+  if (customerId === 'error') {
+    return (
+      <div className="px-7 py-8 space-y-3">
+        <p className="text-sm text-brand-ink/55">
+          No se pudo conectar con el servidor, así que no se pudo cargar la conversación. Revisa que el backend esté
+          encendido y vuelve a intentar.
+        </p>
+        <Boton
+          onClick={async () => {
+            setReintentando(true);
+            await refrescarWhatsapp();
+            setReintentando(false);
+          }}
+          cargando={reintentando}
+          disabled={reintentando}
+          icono={<MessageCircle size={14} />}
+        >
+          Reintentar
+        </Boton>
+      </div>
+    );
+  }
   if (customerId === null) {
     return (
       <Nota>
