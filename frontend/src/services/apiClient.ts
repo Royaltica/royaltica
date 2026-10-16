@@ -1709,6 +1709,11 @@ export const api = {
     return request<{ created: boolean; policy: CollectionLevelPlan }>('POST', '/collection-sequences/level-plan');
   },
 
+  /** Recordatorios automáticos cada mañana (true) o con aprobación (false). */
+  async setLevelPlanAutoSend(autoSend: boolean): Promise<{ policy: CollectionLevelPlan }> {
+    return request<{ policy: CollectionLevelPlan }>('PATCH', '/collection-sequences/level-plan', { autoSend });
+  },
+
   // ── Conciliación bancaria CxC ───────────────────────────
 
   async listBankImports(): Promise<BankImportSummary[]> {
@@ -2493,6 +2498,7 @@ export interface WaPlanActivity {
 export interface CollectionLevelPlan {
   id: string;
   name: string;
+  autoSend: boolean;
   sequenceSteps: {
     id: string;
     stepOrder: number;

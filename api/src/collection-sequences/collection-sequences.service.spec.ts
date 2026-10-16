@@ -530,6 +530,15 @@ describe('CollectionSequencesService', () => {
       );
     });
 
+    it('modo con aprobación: el motor no manda nada solo', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-07-18T12:00:00Z'));
+      prisma.collectionPolicy.findFirst.mockResolvedValue({ ...basePolicy, autoSend: false, sequenceSteps: plan });
+      prisma.collectionSequenceRun.findUnique.mockResolvedValue({ id: 'run-1', currentStepOrder: 2, status: 'ACTIVE' });
+      const result = await service.advanceSequence('inv-1');
+      expect(result.reason).toBe('awaiting-approval');
+      expect(conversations.sendCollectionStep).not.toHaveBeenCalled();
+    });
+
     it('sin niveles previos, una factura que aún no vence se omite (comportamiento original)', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-07-18T12:00:00Z'));
       const result = await service.advanceSequence('inv-1');

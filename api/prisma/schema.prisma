@@ -774,6 +774,12 @@ model CollectionPolicy {
   // SIEMPRE se siguen aplicando server-side, sin importar lo que sugiera la IA.
   aiDecisionEnabled Boolean @default(false)
 
+  // Envío de recordatorios: true = el motor los manda solo cada mañana;
+  // false = esperan la aprobación de una persona (se envían desde el
+  // expediente del cliente). Default true = sin cambios para lo existente;
+  // el plan por niveles nace en false (con aprobación).
+  autoSend Boolean @default(true)
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?

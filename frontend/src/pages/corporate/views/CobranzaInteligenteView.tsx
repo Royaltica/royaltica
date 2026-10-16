@@ -32,7 +32,7 @@ import { PlantillasPanel } from './cobranza/PlantillasPanel.tsx';
 import { ReportesPanel } from './cobranza/ReportesPanel.tsx';
 import { DatosPagosPanel, AsignacionPanel } from './cobranza/DatosPagosPanel.tsx';
 import { PagosPanel, AvisoPagos } from './cobranza/PagosPanel.tsx';
-import { SubWhatsapp } from './cobranza/WhatsappPanel.tsx';
+import { SubWhatsapp, ModoEnvio } from './cobranza/WhatsappPanel.tsx';
 import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
 
 /**
@@ -479,11 +479,11 @@ function CobranzaIA() {
         transition={{ duration: 0.25, ease: EASE }}
       >
         {rol === 'agente' ? (
-          <AgenteVista />
+          <AgenteVista renderPlan={(c) => <SubPlan registro={registroDe(c)} />} />
         ) : (
           <>
             {section === 'alertas' && <AlertasPanel />}
-            {section === 'recordatorios' && <RecordatoriosPanel />}
+            {section === 'recordatorios' && <RecordatoriosPanel esAdmin={rol === 'admin'} />}
             {section === 'campanas' && <CampanasPanel />}
             {section === 'plantillas' && <PlantillasPanel />}
             {section === 'reportes' && <ReportesPanel soloEquipo={rol === 'supervisor'} />}
@@ -694,7 +694,7 @@ function registroDe(c: CuentaViva): RecordatorioItem {
  * 511px de la lista: eso dejaba 1,750px de columna izquierda vacía. Con las
  * subpestañas cada vista cabe de un vistazo y las alturas se emparejan.
  */
-function RecordatoriosPanel() {
+function RecordatoriosPanel({ esAdmin = false }: { esAdmin?: boolean }) {
   const { cartera } = useCobranza();
   const planDeCliente = (cliente: string) => planCuenta(cartera.find((c) => c.cliente === cliente)!);
   const [selected, setSelected] = React.useState(cartera[0].cliente);
@@ -722,7 +722,10 @@ function RecordatoriosPanel() {
   ).length;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+    <div className="space-y-5">
+      {/* Solo el Administrador decide si los recordatorios salen solos o con su aprobación. */}
+      {esAdmin && <ModoEnvio />}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
       {/* Lista de clientes */}
       <Reveal className="lg:col-span-2">
         <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden lg:sticky lg:top-4">
@@ -922,6 +925,7 @@ function RecordatoriosPanel() {
             )}
           </motion.div>
         </motion.div>
+      </div>
       </div>
     </div>
   );

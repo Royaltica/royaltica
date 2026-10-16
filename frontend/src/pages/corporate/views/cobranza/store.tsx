@@ -94,6 +94,9 @@ type Store = {
   waClienteId: (cliente: string) => string | null | undefined;
   /** Vuelve a leer lo que pasó por WhatsApp (tras enviar, o al llegar respuestas). */
   refrescarWhatsapp: () => Promise<void>;
+  /** Recordatorios automáticos (true) o con aprobación (false). null = sin conexión. */
+  envioAutomatico: boolean | null | undefined;
+  cambiarEnvioAutomatico: (auto: boolean) => Promise<void>;
 };
 
 const Ctx = React.createContext<Store | null>(null);
@@ -137,6 +140,19 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     void refrescarWhatsapp();
   }, [refrescarWhatsapp]);
+
+  // Modo de envío del plan por niveles (lo comparten administrador y agentes).
+  const [envioAutomatico, setEnvioAutomatico] = React.useState<boolean | null | undefined>(undefined);
+  React.useEffect(() => {
+    api
+      .getLevelPlan()
+      .then((r) => setEnvioAutomatico(r.policy ? r.policy.autoSend : false))
+      .catch(() => setEnvioAutomatico(null));
+  }, []);
+  const cambiarEnvioAutomatico = React.useCallback(async (auto: boolean) => {
+    const r = await api.setLevelPlanAutoSend(auto);
+    setEnvioAutomatico(r.policy.autoSend);
+  }, []);
 
   const cartera: CuentaViva[] = React.useMemo(
     () =>
@@ -336,6 +352,8 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
     waClienteId: (cliente) =>
       wa === undefined ? undefined : (wa?.customers.find((x) => x.name === cliente)?.customerId ?? null),
     refrescarWhatsapp,
+    envioAutomatico,
+    cambiarEnvioAutomatico,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

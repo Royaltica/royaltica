@@ -382,6 +382,7 @@ export class CollectionSequencesService {
             gracePeriodDays: 0,
             escalationThresholdDays: 35,
             preferredChannel: 'WHATSAPP',
+            autoSend: false,
           },
         }));
       await tx.collectionSequenceStep.createMany({
@@ -402,6 +403,31 @@ export class CollectionSequencesService {
       metadata: { steps: policy.sequenceSteps.length },
     });
     return { created: true, policy };
+  }
+
+  /**
+   * Automático (el motor manda cada mañana) o con aprobación (una persona
+   * aprueba y envía desde el expediente). Crea el plan por niveles si no existe.
+   */
+  async setAutoSend(user: AuthenticatedUser, autoSend: boolean) {
+    const organizationId = this.requireOrg(user);
+    const { policy } = await this.ensureLevelPlan(user);
+    const updated = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.collectionPolicy.update({
+        where: { id: policy.id },
+        data: { autoSend },
+        include: { sequenceSteps: { where: { deletedAt: null }, orderBy: { stepOrder: 'asc' } } },
+      }),
+    );
+    await this.activity.record({
+      organizationId,
+      userId: user.id,
+      action: 'COLLECTION_AUTO_SEND_CHANGED',
+      entityType: 'CollectionPolicy',
+      entityId: policy.id,
+      metadata: { autoSend },
+    });
+    return { policy: updated };
   }
 
   // ── Ejecuciones (CollectionSequenceRun): consulta + control manual ──
@@ -731,6 +757,11 @@ export class CollectionSequencesService {
     }
     if (nextStep.daysAfterDue > daysOverdue) {
       return { outcome: 'skipped', reason: 'step-not-due-yet' };
+    }
+    // Modo "con aprobación": el paso espera a que una persona lo apruebe y
+    // lo envíe desde el expediente del cliente; el motor no manda nada solo.
+    if (policy.autoSend === false) {
+      return { outcome: 'skipped', reason: 'awaiting-approval', stepOrder: nextStep.stepOrder };
     }
 
     // ── Guard rails de la política ──
