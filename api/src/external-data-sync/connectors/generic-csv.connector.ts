@@ -138,6 +138,11 @@ export class GenericCsvConnector implements ExternalDataConnector {
         email: row.email || null,
         phone: row.phone || null,
         category: row.category || null,
+        // Contacto de finanzas (FR-02): si la columna no viene en el archivo
+        // se deja como estaba (undefined = Prisma no lo toca).
+        financeContactName: row.financeContactName || undefined,
+        financeContactPhone: row.financeContactPhone || undefined,
+        financeContactEmail: row.financeContactEmail || undefined,
       };
 
       if (existing) {

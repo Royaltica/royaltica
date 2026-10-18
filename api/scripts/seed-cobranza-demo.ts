@@ -8,6 +8,12 @@
  * existe): aunque se configure el token de Meta, ningún mensaje de prueba
  * puede llegarle a una persona real. Idempotente (upsert por RFC/UUID).
  *
+ * También crea a los 3 agentes del prototipo como usuarios de prueba (perfil
+ * Agente, correos @demo.royaltica.mx, sin contraseña: no pueden iniciar
+ * sesión) con sus clientes asignados, y el historial de 12 facturas ya
+ * pagadas de cada cliente con los mismos atrasos del prototipo, para que
+ * segmentos y puntualidad salgan de datos reales.
+ *
  * Las fechas se calculan desde HOY REAL con los días del prototipo (`dias`),
  * no con sus fechas fijas: así el backend (motor automático, ventana, nivel
  * que toca) ve el mismo calendario que el plan de cada cliente en pantalla.
@@ -18,7 +24,7 @@
  */
 import 'dotenv/config';
 import { PrismaClient, Prisma } from '@prisma/client';
-import { CARTERA } from '../../frontend/src/pages/corporate/views/cobranza/mockV1';
+import { CARTERA, AGENTES } from '../../frontend/src/pages/corporate/views/cobranza/mockV1';
 
 const DIA = 86_400_000;
 const hoy = new Date();
@@ -36,8 +42,29 @@ async function main() {
   const org = await prisma.organization.findFirst({ where: { name: orgName, deletedAt: null } });
   if (!org) throw new Error(`No existe la organización "${orgName}".`);
 
+  // Agentes de prueba (perfil Agente/Ejecutivo) con correo de ejemplo.
+  const agentes = new Map<string, string>();
+  for (const nombre of AGENTES) {
+    const slug = nombre.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '.');
+    const u = await prisma.user.upsert({
+      where: { email: `${slug}@demo.royaltica.mx` },
+      update: { name: nombre, organizationId: org.id },
+      create: {
+        email: `${slug}@demo.royaltica.mx`,
+        firebaseUid: `demo-agente-${slug}`,
+        name: nombre,
+        role: 'CORPORATE_USER',
+        operationalProfile: 'AGENTE_EJECUTIVO',
+        organizationId: org.id,
+        permissions: ['cxc'],
+      },
+    });
+    agentes.set(nombre, u.id);
+  }
+
   let clientes = 0;
   let facturas = 0;
+  let pagadas = 0;
   for (const [i, c] of CARTERA.entries()) {
     const n = String(i + 1).padStart(2, '0');
     const telefono = c.finanzas ? `+52000000000${n}` : null;
@@ -49,6 +76,7 @@ async function main() {
         financeContactName: c.finanzas?.nombre ?? null,
         financeContactPhone: telefono,
         contact: c.registrado,
+        assignedAgentId: agentes.get(c.agente) ?? null,
       },
       create: {
         organizationId: org.id,
@@ -59,6 +87,7 @@ async function main() {
         financeContactName: c.finanzas?.nombre ?? null,
         financeContactPhone: telefono,
         externalId: `demo:${c.id}`,
+        assignedAgentId: agentes.get(c.agente) ?? null,
         doNotContact: !c.contactable,
         doNotContactReason: c.contactable ? null : (c.motivo ?? 'No contactable en el prototipo'),
       },
@@ -101,9 +130,42 @@ async function main() {
       });
       facturas++;
     }
+
+    // Historial: 12 facturas ya pagadas, una por mes hacia atrás, con el
+    // atraso del prototipo (negativo = pagó antes de vencer).
+    for (const [k, atraso] of c.historial.entries()) {
+      const meses = c.historial.length - k + 1;
+      const dueDate = new Date(HOY_UTC - meses * 30 * DIA);
+      const paidDate = new Date(dueDate.getTime() + atraso * DIA);
+      const total = new Prisma.Decimal(Math.round(c.monto / 3 / 100) * 100);
+      const subtotal = total.div(1.16).toDecimalPlaces(2);
+      const folio = `H-${c.id.toUpperCase()}-${String(k + 1).padStart(2, '0')}`;
+      await prisma.invoice.upsert({
+        where: { cfdiUuid: `demo-${c.id}-${folio}` },
+        update: { dueDate, paidDate, status: 'PAID' },
+        create: {
+          organizationId: org.id,
+          direction: 'RECEIVABLE',
+          customerId: customer.id,
+          folio,
+          cfdiUuid: `demo-${c.id}-${folio}`,
+          rfcEmisor: org.rfc,
+          rfcReceptor: rfc,
+          subtotal,
+          iva: total.minus(subtotal),
+          total,
+          date: new Date(dueDate.getTime() - 30 * DIA),
+          dueDate,
+          paidDate,
+          status: 'PAID',
+          description: 'Factura de ejemplo ya pagada (historial)',
+        },
+      });
+      pagadas++;
+    }
   }
   console.log(
-    `✓ ${clientes} clientes y ${facturas} facturas de ejemplo en "${org.name}"${reset ? ' (conversaciones reiniciadas)' : ''}.`,
+    `✓ ${clientes} clientes, ${facturas} facturas pendientes, ${pagadas} pagadas (historial) y ${agentes.size} agentes en "${org.name}"${reset ? ' (conversaciones reiniciadas)' : ''}.`,
   );
   await prisma.$disconnect();
 }

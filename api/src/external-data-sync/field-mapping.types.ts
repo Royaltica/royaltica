@@ -33,6 +33,10 @@ export const IDENTITY_MAPPING: Record<ExternalSyncEntityType, FieldMapping> = {
     email: 'email',
     phone: 'phone',
     category: 'category',
+    // Contacto de finanzas/tesorería: a quien le llegan los recordatorios.
+    financeContactName: 'financeContactName',
+    financeContactPhone: 'financeContactPhone',
+    financeContactEmail: 'financeContactEmail',
   },
   RECEIVABLE: {
     externalId: 'externalId',

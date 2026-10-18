@@ -69,6 +69,18 @@ describe('GenericCsvConnector', () => {
       expect(created.rfc).toMatch(/^[A-Z]{3,4}\d{6}[A-Z0-9]{3}$/);
     });
 
+    it('importa el contacto de finanzas (a quien le llegan los recordatorios)', async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+      const csv =
+        'externalId,name,phone,financeContactName,financeContactPhone\n' +
+        'CUST-9,Distribuidora Uno,+5215500000000,Patricia Salas,+5218122310045\n';
+      const result = await buildConnector(csv).syncCustomers('org-1');
+      expect(result.imported).toBe(1);
+      const created = prisma.customer.create.mock.calls[0][0].data;
+      expect(created.financeContactName).toBe('Patricia Salas');
+      expect(created.financeContactPhone).toBe('+5218122310045');
+    });
+
     it('salta filas con campos requeridos faltantes sin abortar el resto', async () => {
       prisma.customer.findFirst.mockResolvedValue(null);
       const csv =

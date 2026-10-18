@@ -506,12 +506,25 @@ function CobranzaIA() {
 
 /** Aviso permanente: nada de lo que se ve aquí viene de datos reales todavía. */
 function PrototypeNotice() {
+  const { fuente } = useCobranza();
+  if (fuente === 'cargando') return <div className="my-7 h-4" />;
+  const real = fuente === 'real';
   return (
-    <div className="my-7 flex items-start gap-3 pl-4 border-l-2 border-amber-400">
+    <div className={`my-7 flex items-start gap-3 pl-4 border-l-2 ${real ? 'border-emerald-500' : 'border-amber-400'}`}>
       <p className="text-[11px] text-brand-ink/60 leading-relaxed max-w-[75ch]">
-        <span className="font-semibold text-brand-ink">Prototipo visual.</span> Los datos de esta
-        sección son de ejemplo para validar el diseño. El backend del Módulo 2 aún no existe, así
-        que ninguna cifra proviene de tu cartera real.
+        {real ? (
+          <>
+            <span className="font-semibold text-brand-ink">Datos reales de tu base.</span> Clientes, facturas,
+            agentes, historial de pagos, plan y WhatsApp vienen de tu cartera. Pagos, campañas y reportes todavía
+            usan datos de ejemplo.
+          </>
+        ) : (
+          <>
+            <span className="font-semibold text-brand-ink">Datos de ejemplo.</span> Tu base todavía no tiene
+            clientes (o no hubo conexión con el servidor). Carga tu cartera en la pestaña Datos para trabajar con
+            tus clientes reales.
+          </>
+        )}
       </p>
     </div>
   );

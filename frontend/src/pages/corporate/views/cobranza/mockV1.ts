@@ -40,6 +40,8 @@ export type Factura = {
 
 export type CuentaCartera = {
   id: string;
+  /** ID del cliente en la base de datos (solo cartera real). */
+  dbId?: string;
   cliente: string;
   folio: string;
   monto: number;

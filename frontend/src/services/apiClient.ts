@@ -1494,6 +1494,9 @@ export const api = {
       phone: string;
       creditLimitDays: number;
       assignedAgentId: string;
+      financeContactName: string;
+      financeContactPhone: string;
+      financeContactEmail: string;
     }>,
   ): Promise<CxcCustomer> {
     return request<CxcCustomer>('PATCH', `/customers/${id}`, payload);
@@ -1651,6 +1654,12 @@ export const api = {
     const form = new FormData();
     form.append('file', file);
     return uploadForm<ExternalSyncResult>('/external-data-sync/receivables', form);
+  },
+
+  // ── Cobranza IA: cartera real por cliente (pestaña Clientes) ──
+
+  async getPortfolio(): Promise<PortfolioCustomer[]> {
+    return request<PortfolioCustomer[]>('GET', '/receivables/portfolio');
   },
 
   // ── Cobranza IA: conversación de WhatsApp (plantilla → ventana 24h → IA) ──
@@ -2507,5 +2516,26 @@ export interface CollectionLevelPlan {
     whatsappTemplateName: string | null;
     escalatesToHuman: boolean;
   }[];
+}
+
+/** Cliente con lo que necesita la pestaña Clientes de Cobranza IA. */
+export interface PortfolioCustomer {
+  id: string;
+  externalId: string | null;
+  name: string;
+  rfc: string;
+  contact: string | null;
+  email: string | null;
+  phone: string | null;
+  financeContactName: string | null;
+  financeContactEmail: string | null;
+  financeContactPhone: string | null;
+  doNotContact: boolean;
+  doNotContactReason: string | null;
+  score: number | null;
+  agent: { id: string; name: string } | null;
+  pending: { id: string; folio: string; total: number; currency: string; date: string; dueDate: string | null }[];
+  /** Días de atraso al pagar sus últimas 12 facturas (negativo = antes). */
+  history: number[];
 }
 

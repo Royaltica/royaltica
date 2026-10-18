@@ -161,6 +161,73 @@ export class ReceivablesService {
     });
   }
 
+  /**
+   * Cartera por cliente para Cobranza IA (pestaña Clientes): en UNA consulta,
+   * cada cliente con su contacto de finanzas, agente asignado, facturas
+   * pendientes y su historial de puntualidad (días de atraso de sus últimas
+   * 12 facturas pagadas; con eso la pantalla calcula su segmento). Un Agente
+   * solo recibe sus clientes asignados.
+   */
+  async portfolio(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const soloAsignados = user.operationalProfile === 'AGENTE_EJECUTIVO';
+    const customers = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.customer.findMany({
+        where: {
+          organizationId,
+          deletedAt: null,
+          isActive: true,
+          ...(soloAsignados ? { assignedAgentId: user.id } : {}),
+        },
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          externalId: true,
+          name: true,
+          rfc: true,
+          contact: true,
+          email: true,
+          phone: true,
+          financeContactName: true,
+          financeContactEmail: true,
+          financeContactPhone: true,
+          doNotContact: true,
+          doNotContactReason: true,
+          score: true,
+          assignedAgent: { select: { id: true, name: true } },
+          invoices: {
+            where: { direction: 'RECEIVABLE', deletedAt: null, status: { in: ['PENDING', 'PAID'] } },
+            select: { id: true, folio: true, cfdiUuid: true, total: true, currency: true, date: true, dueDate: true, paidDate: true, status: true },
+            orderBy: { dueDate: 'asc' },
+          },
+        },
+      }),
+    );
+
+    const DIA = 86_400_000;
+    return customers.map(({ invoices, assignedAgent, ...c }) => {
+      const pendientes = invoices.filter((i) => i.status === 'PENDING');
+      const pagadas = invoices
+        .filter((i) => i.status === 'PAID' && i.paidDate && i.dueDate)
+        .sort((a, b) => a.paidDate!.getTime() - b.paidDate!.getTime())
+        .slice(-12);
+      return {
+        ...c,
+        agent: assignedAgent,
+        pending: pendientes.map((i) => ({
+          id: i.id,
+          folio: i.folio ?? i.cfdiUuid.slice(0, 8),
+          total: Number(i.total),
+          currency: i.currency,
+          date: i.date,
+          dueDate: i.dueDate,
+        })),
+        // Días de atraso al pagar (negativo = pagó antes), del más viejo al más reciente.
+        history: pagadas.map((i) => Math.round((i.paidDate!.getTime() - i.dueDate!.getTime()) / DIA)),
+      };
+    });
+  }
+
   async findAll(
     user: AuthenticatedUser,
     query: QueryReceivablesDto,

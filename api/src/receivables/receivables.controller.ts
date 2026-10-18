@@ -58,6 +58,12 @@ export class ReceivablesController {
     return this.receivables.findAll(user, query);
   }
 
+  /** Cartera por cliente para Cobranza IA. Declarado antes de ':id'. */
+  @Get('portfolio')
+  portfolio(@CurrentUser() user: AuthenticatedUser) {
+    return this.receivables.portfolio(user);
+  }
+
   @Get('export')
   @Header('Content-Type', 'text/csv; charset=utf-8')
   @Header('Content-Disposition', 'attachment; filename="cuentas-por-cobrar.csv"')
