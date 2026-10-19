@@ -234,7 +234,7 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   );
 
   const anotar = (c: CuentaViva, r: Resultado, monto?: number) =>
-    setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, r, monto), agente: c.agente }]);
+    setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, r, monto, c), agente: c.agente }]);
 
   // Lanzar una campaña especial: el mensaje va solo a los clientes elegidos
   // que se pueden contactar. No toca su plan: el plan sigue su curso aparte.

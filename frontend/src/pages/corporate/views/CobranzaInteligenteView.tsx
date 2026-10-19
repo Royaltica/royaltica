@@ -22,7 +22,7 @@ import {
   textoHoy,
   CanalIcon,
 } from './cobranza/plan.tsx';
-import { planDe, saldoDe, AGENTES } from './cobranza/mockV1.ts';
+import { planDe, planConfig, saldoDe, AGENTES } from './cobranza/mockV1.ts';
 import { CobranzaProvider, useCobranza, planCuenta, type CuentaViva } from './cobranza/store.tsx';
 import { SegmentoChip, SegmentosPanel } from './cobranza/segmento.tsx';
 import { SubFacturas } from './cobranza/facturas.tsx';
@@ -696,7 +696,8 @@ function registroDe(c: CuentaViva): RecordatorioItem {
     ultimo: '—',
     mejor: { canal: c.canal, tono: 'Estándar', hora: '—', estrategia: 'Plantilla general' },
     nota: c.diagnostico.porque,
-    plan: planDe(c.cliente),
+    // Del propio cliente (no por nombre): un cliente real puede no existir en el prototipo.
+    plan: planConfig(c, c.segmento),
     mensajes: [],
   } as unknown as RecordatorioItem;
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { cuentaDesdeApi } from './carteraReal.ts';
-import { segmentoDe } from './mockV1.ts';
+import { segmentoDe, planConfig, diagnosticoDe, comportamientoDe, gestion } from './mockV1.ts';
+import { construirPlan } from './plan.tsx';
 import type { PortfolioCustomer } from '../../../../services/apiClient.ts';
 
 const DIA = 86_400_000;
@@ -55,5 +56,15 @@ describe('cartera real → formato de la pantalla', () => {
     const c = cuentaDesdeApi({ ...base, doNotContact: true, doNotContactReason: 'Disputa abierta' });
     expect(c.contactable).toBe(false);
     expect(c.motivo).toBe('Disputa abierta');
+  });
+
+  it('un cliente cargado por CSV que NO existe en el prototipo no rompe plan, segmento ni bitácora', () => {
+    const c = cuentaDesdeApi({ ...base, name: 'Ferretería La Prueba', history: [0, 3, -1] });
+    expect(() => {
+      const seg = diagnosticoDe(c).segmento;
+      construirPlan({ ...planConfig(c, seg), enviados: [] });
+      comportamientoDe(c);
+      gestion('2026-10-19', '10:00', c.cliente, 'Enviado', undefined, c);
+    }).not.toThrow();
   });
 });
