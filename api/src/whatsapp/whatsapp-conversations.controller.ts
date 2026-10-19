@@ -23,6 +23,12 @@ export class WhatsappConversationsController {
     return this.conversations.listConversations(user);
   }
 
+  /** Plantillas de cobranza con su estado en Meta. Antes de ':customerId'. */
+  @Get('templates')
+  templates() {
+    return this.conversations.templatesWithStatus();
+  }
+
   /** Nivel del plan en el que va cada cliente según lo enviado/respondido. Antes de ':customerId'. */
   @Get('plan-activity')
   planActivity(@CurrentUser() user: AuthenticatedUser) {

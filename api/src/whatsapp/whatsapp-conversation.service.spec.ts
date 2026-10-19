@@ -236,4 +236,43 @@ describe('WhatsappConversationService', () => {
       expect(prueba.customers[0].levels.vence_hoy).toBeDefined();
     });
   });
+
+  describe('templatesWithStatus (pestaña Plantillas)', () => {
+    const conConfig = (vals: Record<string, string>) =>
+      new WhatsappConversationService(
+        prisma as unknown as PrismaService,
+        whatsapp as unknown as WhatsappService,
+        gemini as unknown as GeminiService,
+        {} as unknown as CustomerPortalService,
+        { get: (k: string) => vals[k] ?? '' } as unknown as ConfigService<Env, true>,
+      );
+    afterEach(() => jest.restoreAllMocks());
+
+    it('sin token/WABA no inventa estados: las 7 plantillas sin estado', async () => {
+      const r = await conConfig({}).templatesWithStatus();
+      expect(r.metaConectado).toBe(false);
+      expect(r.templates).toHaveLength(7);
+      expect(r.templates.every((t) => t.metaStatus === null)).toBe(true);
+    });
+
+    it('con Meta: estado real por nombre (es_MX) y MISSING si no existe', async () => {
+      jest.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { name: 'vence_hoy', status: 'APPROVED', language: 'es_MX' },
+            { name: 'aviso_vencida', status: 'REJECTED', language: 'es_MX', rejected_reason: 'INVALID_FORMAT' },
+            { name: 'vence_3_dias', status: 'APPROVED', language: 'en_US' },
+          ],
+        }),
+      } as Response);
+      const r = await conConfig({ WHATSAPP_TOKEN: 't', WHATSAPP_WABA_ID: 'w' }).templatesWithStatus();
+      const por = Object.fromEntries(r.templates.map((t) => [t.name, t]));
+      expect(r.metaConectado).toBe(true);
+      expect(por.vence_hoy.metaStatus).toBe('APPROVED');
+      expect(por.aviso_vencida.metaStatus).toBe('REJECTED');
+      expect(por.aviso_vencida.rejectedReason).toBe('INVALID_FORMAT');
+      expect(por.vence_3_dias.metaStatus).toBe('MISSING'); // existe, pero no en es_MX
+    });
+  });
 });

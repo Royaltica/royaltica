@@ -141,6 +141,9 @@ export const envSchema = z.object({
   // app secret para validar la firma HMAC de los mensajes entrantes (POST).
   WHATSAPP_VERIFY_TOKEN: z.string().optional().default(''),
   WHATSAPP_APP_SECRET: z.string().optional().default(''),
+  // ID de la cuenta de WhatsApp Business (WABA): para consultar el estado de
+  // aprobación de las plantillas en Meta. Sin él, se muestran sin estado.
+  WHATSAPP_WABA_ID: z.string().optional().default(''),
 
   // Webhook de correo ENTRANTE (respuestas de clientes a la cobranza).
   // Secreto con el que se firma el cuerpo del webhook. Si va vacío, la firma

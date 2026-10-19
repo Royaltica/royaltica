@@ -527,6 +527,56 @@ ${hilo}
     };
   }
 
+  /**
+   * Catálogo de plantillas de cobranza con su estado REAL en Meta
+   * (APPROVED / PENDING / REJECTED…). Sin token o sin WHATSAPP_WABA_ID no se
+   * inventa un estado: `metaConectado: false` y cada una queda sin estado.
+   */
+  async templatesWithStatus() {
+    const token = this.config.get('WHATSAPP_TOKEN', { infer: true });
+    const waba = this.config.get('WHATSAPP_WABA_ID', { infer: true });
+    let estados: Map<string, { status: string; rejected?: string }> | null = null;
+    let error: string | null = null;
+    if (token && waba) {
+      try {
+        const res = await fetch(
+          `https://graph.facebook.com/v21.0/${waba}/message_templates?fields=name,status,language,rejected_reason&limit=200`,
+          { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000) },
+        );
+        if (!res.ok) throw new Error(`Meta respondió ${res.status}`);
+        const data = (await res.json()) as {
+          data?: { name: string; status: string; language: string; rejected_reason?: string }[];
+        };
+        estados = new Map(
+          (data.data ?? [])
+            .filter((t) => t.language === 'es_MX')
+            .map((t) => [t.name, { status: t.status, rejected: t.rejected_reason }]),
+        );
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`No se pudo consultar el estado de las plantillas en Meta: ${error}`);
+      }
+    }
+    return {
+      metaConectado: estados !== null,
+      error,
+      templates: COLLECTION_TEMPLATES.map((t) => {
+        const e = estados?.get(t.name);
+        return {
+          name: t.name,
+          level: t.level,
+          label: t.label,
+          body: t.body,
+          vars: t.vars,
+          buttons: t.buttons,
+          // null = no se pudo saber; 'MISSING' = no existe en Meta con ese nombre.
+          metaStatus: estados ? (e?.status ?? 'MISSING') : null,
+          rejectedReason: e?.rejected && e.rejected !== 'NONE' ? e.rejected : null,
+        };
+      }),
+    };
+  }
+
   // ── helpers ───────────────────────────────────────────────
 
   /** ¿Cuenta este envío para avanzar el plan? (ver planActivity: testMode) */

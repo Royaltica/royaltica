@@ -1684,6 +1684,11 @@ export const api = {
     return request<WaSendResult>('POST', `/whatsapp/conversations/${customerId}/send`, { text, levelTemplate });
   },
 
+  /** Plantillas de cobranza con su estado en Meta (pestaña Plantillas). */
+  async getWaTemplates(): Promise<WaTemplatesStatus> {
+    return request<WaTemplatesStatus>('GET', '/whatsapp/conversations/templates');
+  },
+
   async getWaPlanActivity(): Promise<WaPlanActivity> {
     return request<WaPlanActivity>('GET', '/whatsapp/conversations/plan-activity');
   },
@@ -2537,5 +2542,16 @@ export interface PortfolioCustomer {
   pending: { id: string; folio: string; total: number; currency: string; date: string; dueDate: string | null }[];
   /** Días de atraso al pagar sus últimas 12 facturas (negativo = antes). */
   history: number[];
+}
+
+export interface WaTemplatesStatus {
+  /** false = sin token o sin WHATSAPP_WABA_ID: no se sabe el estado en Meta. */
+  metaConectado: boolean;
+  error: string | null;
+  templates: (Omit<WaTemplateInfo, 'exactDay' | 'defaultDaysAfterDue'> & {
+    /** APPROVED | PENDING | REJECTED | PAUSED… · 'MISSING' = no existe en Meta · null = sin conexión. */
+    metaStatus: string | null;
+    rejectedReason: string | null;
+  })[];
 }
 
