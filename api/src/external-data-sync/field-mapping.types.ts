@@ -75,8 +75,11 @@ export const REQUIRED_FIELDS: Record<ExternalSyncEntityType, string[]> = {
   BANK_STATEMENT: ['transactionDate', 'amount', 'description'],
 };
 
-/** Al menos uno de estos campos debe venir con valor para un CUSTOMER. */
-const CUSTOMER_CONTACT_FIELDS = ['email', 'phone'];
+/**
+ * Al menos uno de estos campos debe venir con valor para un CUSTOMER. Cuenta
+ * también el contacto de finanzas: es a quien le llegan los recordatorios.
+ */
+const CUSTOMER_CONTACT_FIELDS = ['email', 'phone', 'financeContactPhone', 'financeContactEmail'];
 
 /**
  * Valida una fila YA MAPEADA (claves = campos Royáltica). Devuelve la lista
@@ -98,7 +101,7 @@ export function validateMappedRow(
     entityType === 'CUSTOMER' &&
     !CUSTOMER_CONTACT_FIELDS.some((f) => row[f] && row[f]!.trim().length > 0)
   ) {
-    errors.push('El cliente necesita al menos un medio de contacto (email o phone).');
+    errors.push('El cliente necesita al menos un medio de contacto (email, phone o el teléfono/correo de finanzas).');
   }
   return errors;
 }

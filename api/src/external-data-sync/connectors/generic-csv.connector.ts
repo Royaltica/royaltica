@@ -11,6 +11,7 @@ import {
   type FieldMapping,
 } from '../field-mapping.types';
 import { syntheticCfdiUuid, syntheticRfc } from '../synthetic-ids.util';
+import { friendlyImportError } from '../import-errors.util';
 
 /**
  * Conector genérico por archivo CSV/Excel-exportado-a-CSV. Funciona con
@@ -62,7 +63,7 @@ export class GenericCsvConnector implements ExternalDataConnector {
       } catch (err) {
         skipped += 1;
         errors.push(
-          `Fila ${rowNumber}: ${err instanceof Error ? err.message : String(err)}`,
+          `Fila ${rowNumber}: ${friendlyImportError(err)}`,
         );
       }
     }
@@ -101,7 +102,7 @@ export class GenericCsvConnector implements ExternalDataConnector {
       } catch (err) {
         skipped += 1;
         errors.push(
-          `Fila ${rowNumber}: ${err instanceof Error ? err.message : String(err)}`,
+          `Fila ${rowNumber}: ${friendlyImportError(err)}`,
         );
       }
     }
@@ -126,10 +127,14 @@ export class GenericCsvConnector implements ExternalDataConnector {
     const name = row.name!;
 
     await this.prisma.withOrg(organizationId, async (tx) => {
-      const existing = await tx.customer.findFirst({
-        where: { organizationId, externalId },
-        select: { id: true },
-      });
+      // Mismo cliente si coincide el ID externo o, si no, el RFC (en México el
+      // RFC es la identidad real: puede que ya se hubiera dado de alta a mano).
+      const rfcFila = row.rfc ? row.rfc.trim().toUpperCase() : null;
+      const existing =
+        (await tx.customer.findFirst({ where: { organizationId, externalId }, select: { id: true } })) ??
+        (rfcFila
+          ? await tx.customer.findFirst({ where: { organizationId, rfc: rfcFila }, select: { id: true } })
+          : null);
 
       const data = {
         name,
@@ -146,7 +151,13 @@ export class GenericCsvConnector implements ExternalDataConnector {
       };
 
       if (existing) {
-        await tx.customer.update({ where: { id: existing.id }, data });
+        // Al actualizar: se liga al ID externo del archivo, se reactiva si
+        // estaba dado de baja, y el RFC solo cambia si el archivo trae uno.
+        // (rfc undefined = Prisma no lo toca)
+        await tx.customer.update({
+          where: { id: existing.id },
+          data: { ...data, rfc: rfcFila ?? undefined, externalId, deletedAt: null, isActive: true },
+        });
       } else {
         await tx.customer.create({
           data: { organizationId, externalId, ...data },
