@@ -90,10 +90,10 @@ const tpl = (name: string) => COLLECTION_TEMPLATES.find((t) => t.name === name)!
  */
 const LEVEL_PLAN_STEPS = [
   {
-    daysAfterDue: tpl('confirmacion_factura').defaultDaysAfterDue,
+    daysAfterDue: tpl('royaltica_nivel_0').defaultDaysAfterDue,
     channel: 'WHATSAPP' as const,
     tone: 'GENTLE' as const,
-    whatsappTemplateName: 'confirmacion_factura',
+    whatsappTemplateName: 'royaltica_nivel_0',
     messageTemplate:
       '¡Hola {{customerName}}! Le escribimos para confirmar que recibió correctamente su factura por {{amount}}, con vencimiento el {{dueDate}}. ¿Todo concuerda de su lado?',
   },

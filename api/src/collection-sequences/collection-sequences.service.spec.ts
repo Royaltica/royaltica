@@ -480,7 +480,7 @@ describe('CollectionSequencesService', () => {
       whatsappTemplateName,
     });
     const plan = [
-      lvl(1, -90, 'confirmacion_factura'),
+      lvl(1, -90, 'royaltica_nivel_0'),
       lvl(2, -14, 'aviso_preventivo_pago'),
       lvl(3, -7, 'recordatorio_cortesia_pago'),
       lvl(4, -3, 'vence_3_dias'),
@@ -490,7 +490,7 @@ describe('CollectionSequencesService', () => {
 
     it('primer contacto antes del vencimiento: manda la confirmación aunque otros niveles ya apliquen', () => {
       const r = pickNextStep(plan, 0, -10);
-      expect(r.step?.whatsappTemplateName).toBe('confirmacion_factura');
+      expect(r.step?.whatsappTemplateName).toBe('royaltica_nivel_0');
       expect(r.superseded).toHaveLength(0);
     });
 

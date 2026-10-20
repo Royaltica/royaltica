@@ -181,7 +181,7 @@ export function construirPlan(plan: PlanConfig) {
 
 /** Paso del plan → plantilla de WhatsApp aprobada por Meta. C y D no van por WhatsApp. */
 export const PLANTILLA_DE_PASO: Partial<Record<PasoId, string>> = {
-  N0: 'confirmacion_factura',
+  N0: 'royaltica_nivel_0',
   N1: 'aviso_preventivo_pago',
   N2: 'recordatorio_cortesia_pago',
   N3: 'vence_3_dias',
