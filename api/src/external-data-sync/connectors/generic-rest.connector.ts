@@ -10,6 +10,7 @@ import {
   type FieldMapping,
 } from '../field-mapping.types';
 import { syntheticCfdiUuid, syntheticRfc } from '../synthetic-ids.util';
+import { friendlyImportError } from '../import-errors.util';
 
 export interface GenericRestConfig {
   baseUrl: string | null;
@@ -82,7 +83,7 @@ export class GenericRestConnector implements ExternalDataConnector {
       } catch (err) {
         skipped += 1;
         errors.push(
-          `Registro ${i + 1}: ${err instanceof Error ? err.message : String(err)}`,
+          `Registro ${i + 1}: ${friendlyImportError(err)}`,
         );
       }
     }
@@ -122,7 +123,7 @@ export class GenericRestConnector implements ExternalDataConnector {
       } catch (err) {
         skipped += 1;
         errors.push(
-          `Registro ${i + 1}: ${err instanceof Error ? err.message : String(err)}`,
+          `Registro ${i + 1}: ${friendlyImportError(err)}`,
         );
       }
     }
@@ -172,7 +173,7 @@ export class GenericRestConnector implements ExternalDataConnector {
       return [];
     } catch (err) {
       this.logger.warn(
-        `Falló la consulta a ${url}: ${err instanceof Error ? err.message : String(err)}`,
+        `Falló la consulta a ${url}: ${friendlyImportError(err)}`,
       );
       return [];
     }
@@ -186,10 +187,14 @@ export class GenericRestConnector implements ExternalDataConnector {
     const name = row.name!;
 
     await this.prisma.withOrg(organizationId, async (tx) => {
-      const existing = await tx.customer.findFirst({
-        where: { organizationId, externalId },
-        select: { id: true },
-      });
+      // Mismo cliente si coincide el ID externo o, si no, el RFC (en México el
+      // RFC es la identidad real: puede que ya se hubiera dado de alta a mano).
+      const rfcFila = row.rfc ? row.rfc.trim().toUpperCase() : null;
+      const existing =
+        (await tx.customer.findFirst({ where: { organizationId, externalId }, select: { id: true } })) ??
+        (rfcFila
+          ? await tx.customer.findFirst({ where: { organizationId, rfc: rfcFila }, select: { id: true } })
+          : null);
 
       const data = {
         name,
@@ -199,10 +204,21 @@ export class GenericRestConnector implements ExternalDataConnector {
         email: row.email || null,
         phone: row.phone || null,
         category: row.category || null,
+        // Contacto de finanzas (FR-02): si la columna no viene en el archivo
+        // se deja como estaba (undefined = Prisma no lo toca).
+        financeContactName: row.financeContactName || undefined,
+        financeContactPhone: row.financeContactPhone || undefined,
+        financeContactEmail: row.financeContactEmail || undefined,
       };
 
       if (existing) {
-        await tx.customer.update({ where: { id: existing.id }, data });
+        // Al actualizar: se liga al ID externo del archivo, se reactiva si
+        // estaba dado de baja, y el RFC solo cambia si el archivo trae uno.
+        // (rfc undefined = Prisma no lo toca)
+        await tx.customer.update({
+          where: { id: existing.id },
+          data: { ...data, rfc: rfcFila ?? undefined, externalId, deletedAt: null, isActive: true },
+        });
       } else {
         await tx.customer.create({
           data: { organizationId, externalId, ...data },

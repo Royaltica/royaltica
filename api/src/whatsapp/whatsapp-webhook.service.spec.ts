@@ -100,6 +100,10 @@ describe('WhatsappWebhookService', () => {
       const svc = build({});
       expect(svc.verifySignature(Buffer.from('{}'), undefined)).toBe(true);
     });
+    it('en producción sin app secret RECHAZA (no se puede validar que venga de Meta)', () => {
+      const svc = build({ NODE_ENV: 'production' });
+      expect(svc.verifySignature(Buffer.from('{}'), undefined)).toBe(false);
+    });
     it('valida HMAC-SHA256 correctamente', () => {
       const svc = build({ WHATSAPP_APP_SECRET: 'shh' });
       const raw = Buffer.from('{"a":1}');

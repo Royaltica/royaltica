@@ -25,6 +25,8 @@ export type PlanConfig = {
   cuentaGrande: boolean;
   aclaraciones: boolean;
   resultados: Resultados;
+  /** Pasos que ya salieron por WhatsApp (reales): cuentan como hechos. */
+  enviados?: string[];
 };
 
 export type Factura = {
@@ -38,6 +40,8 @@ export type Factura = {
 
 export type CuentaCartera = {
   id: string;
+  /** ID del cliente en la base de datos (solo cartera real). */
+  dbId?: string;
   cliente: string;
   folio: string;
   monto: number;
@@ -435,8 +439,16 @@ export type Gestion = {
   monto: number;
 };
 
-export function gestion(fecha: string, hora: string, cliente: string, resultado: Resultado, monto?: number): Gestion {
-  const c = cuentaPorCliente(cliente)!;
+export function gestion(
+  fecha: string,
+  hora: string,
+  cliente: string,
+  resultado: Resultado,
+  monto?: number,
+  cuenta?: CuentaCartera,
+): Gestion {
+  // Si se pasa la cuenta se usa tal cual (clientes reales que no existen en el prototipo).
+  const c = cuenta ?? cuentaPorCliente(cliente)!;
   return { fecha, hora, cliente, resultado, agente: c.agente, linea: c.linea, monto: monto ?? saldoDe(c) };
 }
 

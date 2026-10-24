@@ -1,4 +1,4 @@
-import { IsIn, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 import { TEMPLATE_NAMES } from '../collection-templates';
 
 /** Envío manual de la plantilla de un nivel para una factura pendiente. */
@@ -16,4 +16,9 @@ export class SendTextDto {
   @MinLength(1)
   @MaxLength(1000)
   text!: string;
+
+  /** Nivel del plan al que corresponde este mensaje (cuenta como su contacto). */
+  @IsOptional()
+  @IsIn(TEMPLATE_NAMES)
+  levelTemplate?: string;
 }

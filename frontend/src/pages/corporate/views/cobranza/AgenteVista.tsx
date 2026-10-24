@@ -4,16 +4,18 @@ import { AlertTriangle, Check, ChevronDown, Clock, Loader2, MapPin, Megaphone, M
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { EASE, Reveal, Bar } from './primitives.tsx';
 import { AGENTES, PLANTILLAS, llenarPlantilla, saldoDe, textoOferta, type Agente } from './mockV1.ts';
-import { FaseDot, LineaPlan, textoHoy, CanalIcon } from './plan.tsx';
+import { FaseDot, textoHoy, CanalIcon } from './plan.tsx';
 import { useCobranza, planCuenta, plantillaPorId, type CuentaViva } from './store.tsx';
 import { SegmentoChip } from './segmento.tsx';
+import { SubWhatsapp } from './WhatsappPanel.tsx';
 
 /**
- * Vista del Agente / Ejecutivo. Pensada para alta rotación: se entiende sin
- * capacitación. Dos pestañas nada más:
- *  - Mis cuentas: a quién contactar, qué mensaje toca según el plan
- *    (generarlo y enviarlo) y registrar cómo le fue.
- *  - Recordatorios: el plan de cada cliente (solo lectura).
+ * Vista del Agente / Ejecutivo (empresas con área de cobranza). Pensada para
+ * alta rotación: se entiende sin capacitación. Dos pestañas nada más:
+ *  - Hoy: a quién contactar y qué toca según el plan; llamadas y correo se
+ *    registran aquí, y lo de WhatsApp abre el WhatsApp del cliente.
+ *  - Clientes: el expediente de cada cliente con las MISMAS subpestañas
+ *    Plan y WhatsApp que ve el Administrador (mismos datos, conectados).
  */
 const RESULTADOS = ['Promesa de pago', 'Contactado', 'No contestó', 'Disputa', 'Escalado a supervisor'] as const;
 
@@ -24,12 +26,21 @@ function situacion(dias: number): { texto: string; clase: string } {
 }
 
 type Pestana = 'cuentas' | 'recordatorios';
+type Sub = 'plan' | 'whatsapp';
 
-export function AgenteVista() {
+export function AgenteVista({ renderPlan }: { renderPlan: (c: CuentaViva) => React.ReactNode }) {
   const { cartera, resultadosHoy } = useCobranza();
   const [agente, setAgente] = React.useState<Agente>('Ana Robles');
   const [pestana, setPestana] = React.useState<Pestana>('cuentas');
+  // Cliente y subpestaña abiertos en "Clientes" (desde "Hoy" se salta directo).
+  const [sel, setSel] = React.useState<string | undefined>(undefined);
+  const [sub, setSub] = React.useState<Sub>('plan');
   const reduce = useReducedMotion();
+  const abrirWhatsapp = (id: string) => {
+    setSel(id);
+    setSub('whatsapp');
+    setPestana('recordatorios');
+  };
 
   // Una factura saldada ya no se cobra: sale de la lista del agente.
   const mias = cartera.filter((c) => c.agente === agente && !c.saldada);
@@ -75,8 +86,8 @@ export function AgenteVista() {
       <nav className="flex gap-1 border-b border-brand-ink/10">
         {(
           [
-            ['cuentas', 'Mis cuentas'],
-            ['recordatorios', 'Recordatorios'],
+            ['cuentas', 'Hoy'],
+            ['recordatorios', 'Clientes'],
           ] as [Pestana, string][]
         ).map(([id, label]) => (
           <button
@@ -101,10 +112,10 @@ export function AgenteVista() {
       {pestana === 'cuentas' ? (
         <>
           <FranjaCampanas cuentas={mias} />
-          <MisCuentas cuentas={mias} />
+          <MisCuentas cuentas={mias} onAbrirWhatsapp={abrirWhatsapp} />
         </>
       ) : (
-        <RecordatoriosAgente cuentas={mias} />
+        <ClientesAgente cuentas={mias} sel={sel} onSel={setSel} sub={sub} onSub={setSub} renderPlan={renderPlan} />
       )}
     </div>
   );
@@ -112,7 +123,7 @@ export function AgenteVista() {
 
 // ── Mis cuentas ────────────────────────────────────────────────────────
 
-function MisCuentas({ cuentas }: { cuentas: CuentaViva[] }) {
+function MisCuentas({ cuentas, onAbrirWhatsapp }: { cuentas: CuentaViva[]; onAbrirWhatsapp: (id: string) => void }) {
   const { resultadosHoy, toques, tareas } = useCobranza();
   // Orden: primero quien respondió a una campaña, luego llamadas que dejó
   // una campaña, luego lo que se puede contactar ahora.
@@ -141,6 +152,7 @@ function MisCuentas({ cuentas }: { cuentas: CuentaViva[] }) {
               abierta={abierta === c.id}
               onToggle={() => setAbierta(abierta === c.id ? null : c.id)}
               onTerminar={() => alTerminar(c.id)}
+              onAbrirWhatsapp={() => onAbrirWhatsapp(c.id)}
             />
           </Reveal>
         ))}
@@ -174,11 +186,13 @@ function TarjetaCuenta({
   abierta,
   onToggle,
   onTerminar,
+  onAbrirWhatsapp,
 }: {
   cuenta: CuentaViva;
   abierta: boolean;
   onToggle: () => void;
   onTerminar: () => void;
+  onAbrirWhatsapp: () => void;
 }) {
   const reduce = useReducedMotion();
   const { envios, enviar, registrar, toques, tareas, campanas } = useCobranza();
@@ -194,6 +208,9 @@ function TarjetaCuenta({
   const toca = actual && (!c.resultados[actual.id] || envio) ? actual : null;
   const plantilla = toca ? PLANTILLAS.find((p) => p.id === toca.id) : undefined;
   const esLlamada = toca?.canal === 'Llamada';
+  // WhatsApp se maneja en un solo lugar: el WhatsApp del cliente (plantilla
+  // de la etapa → respuesta con IA). Aquí solo se abre, no se duplica.
+  const esWhatsapp = toca?.canal === 'WhatsApp';
   const sit = situacion(c.dias);
   const contacto = c.finanzas;
 
@@ -350,7 +367,14 @@ function TarjetaCuenta({
                         </span>
                       </div>
                     </div>
-                    {envio ? (
+                    {esWhatsapp ? (
+                      <button
+                        onClick={onAbrirWhatsapp}
+                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold hover:bg-brand-ink/85"
+                      >
+                        <MessageCircle size={13} /> Abrir su WhatsApp
+                      </button>
+                    ) : envio ? (
                       <span className="flex items-center gap-1.5 text-[12px] font-semibold text-emerald-700">
                         <Check size={13} /> Enviado {envio.hora} · {envio.origen}
                       </span>
@@ -373,7 +397,7 @@ function TarjetaCuenta({
                     </p>
                   )}
 
-                  {mensaje && !envio && (
+                  {mensaje && !envio && !esWhatsapp && (
                     <motion.div
                       initial={reduce ? false : { opacity: 0, y: 4 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -388,7 +412,7 @@ function TarjetaCuenta({
                     </motion.div>
                   )}
 
-                  {!envio && (esLlamada || mensaje) && (
+                  {!envio && !esWhatsapp && (esLlamada || mensaje) && (
                     <div className="flex justify-end">
                       {esLlamada ? (
                         <a
@@ -451,23 +475,36 @@ function TarjetaCuenta({
   );
 }
 
-// ── Recordatorios (solo el plan) ───────────────────────────────────────
+// ── Clientes: mismo expediente que el Administrador (Plan | WhatsApp) ──
 
-function RecordatoriosAgente({ cuentas }: { cuentas: CuentaViva[] }) {
-  const [sel, setSel] = React.useState<string | undefined>(cuentas[0]?.id);
+function ClientesAgente({
+  cuentas,
+  sel,
+  onSel,
+  sub,
+  onSub,
+  renderPlan,
+}: {
+  cuentas: CuentaViva[];
+  sel: string | undefined;
+  onSel: (id: string) => void;
+  sub: Sub;
+  onSub: (s: Sub) => void;
+  renderPlan: (c: CuentaViva) => React.ReactNode;
+}) {
+  const reduce = useReducedMotion();
   const activa = cuentas.find((c) => c.id === sel) ?? cuentas[0];
   if (!activa) return <p className="text-sm text-brand-ink/45 px-2">No tienes cuentas asignadas hoy.</p>;
-  const { pasos } = planCuenta(activa);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
       <div className="lg:col-span-2 bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden self-start">
         {cuentas.map((c) => {
-          const act = planCuenta(c).actual;
+          const { actual: act, proxima } = planCuenta(c);
           return (
             <button
               key={c.id}
-              onClick={() => setSel(c.id)}
+              onClick={() => onSel(c.id)}
               className={`w-full text-left px-5 py-3.5 border-b border-brand-ink/6 last:border-0 transition-colors ${
                 c.id === activa.id ? 'bg-brand-cream' : 'hover:bg-brand-bone'
               }`}
@@ -476,17 +513,24 @@ function RecordatoriosAgente({ cuentas }: { cuentas: CuentaViva[] }) {
                 <span className="text-sm font-semibold text-brand-ink">{c.cliente}</span>
                 <SegmentoChip cuenta={c} alinear="derecha" />
               </div>
-              {act && (
-                <div className="flex items-center gap-1.5 mt-1 text-[11px] text-brand-ink/55">
-                  <FaseDot fase={act.fase} /> {act.etiqueta} · {act.nombre}
-                </div>
-              )}
+              <div className="flex items-center gap-1.5 mt-1 text-[11px] text-brand-ink/55">
+                {act ? (
+                  <>
+                    <FaseDot fase={act.fase} /> {act.etiqueta} · {act.nombre}
+                  </>
+                ) : proxima ? (
+                  <>
+                    <Check size={11} className="text-emerald-600" /> Al día · sigue {proxima.etiqueta} en {proxima.faltan} d
+                  </>
+                ) : null}
+              </div>
             </button>
           );
         })}
       </div>
-      <div className="lg:col-span-3 bg-brand-paper border border-brand-ink/10 rounded-3xl px-7 py-6 space-y-5">
-        <div>
+
+      <div className="lg:col-span-3 bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden">
+        <div className="px-7 pt-6">
           <h3 className="text-[1.4rem] font-serif text-brand-ink leading-tight">{activa.cliente}</h3>
           <div className="flex flex-wrap gap-x-3 text-[11px] text-brand-ink/45 mt-1">
             <span className="font-mono">{activa.folio}</span>
@@ -495,8 +539,35 @@ function RecordatoriosAgente({ cuentas }: { cuentas: CuentaViva[] }) {
               Hoy: {textoHoy(activa.dias)}
             </span>
           </div>
+          <nav className="flex gap-1 mt-5 border-b border-brand-ink/10 -mx-7 px-7">
+            {(
+              [
+                ['plan', 'Plan'],
+                ['whatsapp', 'WhatsApp'],
+              ] as [Sub, string][]
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => onSub(id)}
+                className={`relative px-3.5 py-2.5 text-xs font-semibold transition-colors ${
+                  sub === id ? 'text-brand-ink' : 'text-brand-ink/40 hover:text-brand-ink/70'
+                }`}
+              >
+                {label}
+                {sub === id && (
+                  <motion.span
+                    layoutId={reduce ? undefined : 'agente-sub'}
+                    className="absolute left-2 right-2 -bottom-px h-0.5 bg-brand-gold rounded-full"
+                    transition={{ duration: 0.3, ease: EASE }}
+                  />
+                )}
+              </button>
+            ))}
+          </nav>
         </div>
-        <LineaPlan pasos={pasos} />
+        <div key={`${activa.id}-${sub}`}>
+          {sub === 'plan' ? renderPlan(activa) : <SubWhatsapp cuenta={activa} />}
+        </div>
       </div>
     </div>
   );

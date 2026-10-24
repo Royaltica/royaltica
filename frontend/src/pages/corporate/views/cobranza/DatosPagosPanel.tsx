@@ -1,9 +1,10 @@
 import React from 'react';
-import { AlertTriangle, Check, Database, Upload } from 'lucide-react';
+import { AlertTriangle, Check, Database, Download, Loader2, Upload } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { Reveal, BlockTitle } from './primitives.tsx';
 import { AGENTES, saldoDe, type Agente } from './mockV1.ts';
 import { useCobranza } from './store.tsx';
+import { api } from '../../../../services/apiClient.ts';
 
 /**
  * Administrador / Data: cargar y administrar la base y asegurar el contacto
@@ -20,33 +21,126 @@ export function DatosPagosPanel() {
 
 // ── Base de cartera ────────────────────────────────────────────────────
 
+/** Formatos de CSV que entiende el importador (columnas en este orden). */
+const FORMATOS = {
+  clientes: {
+    archivo: 'formato-clientes.csv',
+    columnas: 'externalId,name,rfc,email,phone,financeContactName,financeContactPhone,financeContactEmail',
+    ejemplo: 'CLI-001,Distribuidora Uno,DUN010101AB1,pagos@uno.mx,+5215512345678,Patricia Salas,+5218122310045,tesoreria@uno.mx',
+  },
+  facturas: {
+    archivo: 'formato-facturas.csv',
+    columnas: 'externalId,customerExternalId,folio,total,currency,date,dueDate',
+    ejemplo: 'FAC-001,CLI-001,F-1001,116000,MXN,2026-10-01,2026-10-31',
+  },
+} as const;
+type Tipo = keyof typeof FORMATOS;
+
+function descargarFormato(tipo: Tipo) {
+  const f = FORMATOS[tipo];
+  const blob = new Blob([`${f.columnas}\n${f.ejemplo}\n`], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = f.archivo;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function CargaCartera() {
-  const inputRef = React.useRef<HTMLInputElement>(null);
-  const { cartera } = useCobranza();
+  const { cartera, fuente, recargarCartera, refrescarWhatsapp } = useCobranza();
+  const refs = { clientes: React.useRef<HTMLInputElement>(null), facturas: React.useRef<HTMLInputElement>(null) };
+  const [cargando, setCargando] = React.useState<Tipo | null>(null);
+  const [resultado, setResultado] = React.useState<{ ok: boolean; texto: string; errores: string[] } | null>(null);
   const total = cartera.reduce((s, c) => s + saldoDe(c), 0);
   const sinFinanzas = cartera.filter((c) => !c.finanzas).length;
+
+  const subir = async (tipo: Tipo, file: File) => {
+    setCargando(tipo);
+    setResultado(null);
+    try {
+      const r = tipo === 'clientes' ? await api.syncExternalCustomers(file) : await api.syncExternalReceivables(file);
+      await Promise.all([recargarCartera(), refrescarWhatsapp()]);
+      setResultado({
+        ok: r.skipped === 0,
+        texto: `${r.imported} ${tipo} ${r.imported === 1 ? 'cargado' : 'cargados'}${r.skipped ? ` · ${r.skipped} con error` : ''}.`,
+        errores: r.errors.slice(0, 5),
+      });
+    } catch (e) {
+      setResultado({ ok: false, texto: e instanceof Error ? e.message : 'No se pudo cargar el archivo.', errores: [] });
+    } finally {
+      setCargando(null);
+    }
+  };
+
   return (
     <Reveal delay={0.06}>
       <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-6 h-full">
         <BlockTitle icon={<Database size={12} />}>Base de cartera</BlockTitle>
         <div className="mt-4 grid grid-cols-3 gap-2">
-          <Dato label="Facturas" value={String(cartera.length)} />
+          <Dato label="Clientes" value={String(cartera.length)} />
           <Dato label="Por cobrar" value={CURRENCY_FORMATTER.format(total)} />
-          <Dato label="Incompletas" value={String(sinFinanzas)} alerta={sinFinanzas > 0} />
+          <Dato label="Incompletos" value={String(sinFinanzas)} alerta={sinFinanzas > 0} />
         </div>
-        <p className="text-[12px] text-brand-ink/50 mt-3">Última carga: 27 sep, 18:40 · por Data</p>
+        <p className="text-[12px] text-brand-ink/50 mt-3">
+          {fuente === 'real' ? 'Datos de tu base de datos.' : 'Datos de ejemplo: todavía no hay clientes cargados.'}
+        </p>
         {sinFinanzas > 0 && (
           <p className="text-[12px] text-rose-600 mt-1">
-            {sinFinanzas} {sinFinanzas === 1 ? 'cuenta sin' : 'cuentas sin'} contacto de finanzas: no entran a campañas hasta completarlas.
+            {sinFinanzas} {sinFinanzas === 1 ? 'cliente sin' : 'clientes sin'} contacto de finanzas: no se les puede escribir por WhatsApp.
           </p>
         )}
-        <button
-          onClick={() => inputRef.current?.click()}
-          className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-dashed border-brand-ink/20 text-[12px] font-semibold text-brand-ink/65 hover:bg-brand-bone transition-colors"
-        >
-          <Upload size={14} /> Cargar cartera (CSV o Excel)
-        </button>
-        <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={() => {}} />
+
+        {/* Primero clientes, luego sus facturas (cada factura se liga a su cliente por el ID). */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {(['clientes', 'facturas'] as Tipo[]).map((tipo, i) => (
+            <div key={tipo} className="rounded-2xl border border-dashed border-brand-ink/20 p-3">
+              <button
+                onClick={() => refs[tipo].current?.click()}
+                disabled={!!cargando}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-[12px] font-semibold text-brand-ink/75 hover:bg-brand-bone transition-colors disabled:opacity-50"
+              >
+                {cargando === tipo ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                {i + 1}. Cargar {tipo} (CSV)
+              </button>
+              <button
+                onClick={() => descargarFormato(tipo)}
+                className="w-full mt-1 flex items-center justify-center gap-1.5 text-[11px] font-semibold text-brand-ink/40 hover:text-brand-ink"
+              >
+                <Download size={11} /> Descargar formato
+              </button>
+              <input
+                ref={refs[tipo]}
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void subir(tipo, f);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+          ))}
+        </div>
+
+        {resultado && (
+          <div
+            className={`mt-3 text-[12px] rounded-xl px-3.5 py-2.5 border ${
+              resultado.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-900'
+            }`}
+          >
+            <div className="flex items-start gap-2">
+              {resultado.ok ? <Check size={13} className="mt-0.5 shrink-0" /> : <AlertTriangle size={13} className="mt-0.5 shrink-0" />}
+              {resultado.texto}
+            </div>
+            {resultado.errores.map((e) => (
+              <p key={e} className="mt-1 pl-5 text-[11px] opacity-80">
+                {e}
+              </p>
+            ))}
+          </div>
+        )}
       </div>
     </Reveal>
   );
@@ -71,9 +165,12 @@ function ContactosFinanzas() {
   // Primero las que faltan: es lo que hay que resolver.
   const lista = [...cartera].sort((x, y) => Number(!!x.finanzas) - Number(!!y.finanzas));
 
-  const guardar = (id: string) => {
+  const [error, setError] = React.useState<string | null>(null);
+  const guardar = async (id: string) => {
     if (!form.nombre.trim() || !form.telefono.trim()) return;
-    agregarContacto(id, { ...form });
+    const err = await agregarContacto(id, { ...form });
+    setError(err);
+    if (err) return;
     setEditando(null);
     setForm({ nombre: '', puesto: 'Tesorería', telefono: '' });
   };
@@ -138,6 +235,7 @@ function ContactosFinanzas() {
                   >
                     Guardar
                   </button>
+                  {error && <p className="sm:col-span-4 text-[11px] text-rose-600">{error}</p>}
                 </div>
               )}
             </li>

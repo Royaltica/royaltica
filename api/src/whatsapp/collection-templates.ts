@@ -46,12 +46,13 @@ export interface CollectionTemplate {
 
 export const COLLECTION_TEMPLATES: CollectionTemplate[] = [
   {
-    name: 'confirmacion_factura',
+    // Nombre y texto EXACTOS de la plantilla aprobada en Meta (es_MX).
+    name: 'royaltica_nivel_0',
     level: 'N0',
     label: 'Nivel 0 · Confirmación de factura',
     defaultDaysAfterDue: -90,
     exactDay: false,
-    body: '¡Hola {{1}}! Esperamos que el día le esté tratando bien. Le escribimos para confirmarle que recibió correctamente la factura {{2}} por {{3}}, con vencimiento el {{4}}. ¿Todo concuerda de su lado?',
+    body: '¡Hola {{1}}! Esperamos que el día esté de maravilla. Queremos confirmar que recibió correctamente la factura {{2}} por {{3}}, con vencimiento el {{4}}. ¿Todo concuerda de su lado?',
     vars: ['contacto', 'folio', 'monto', 'fecha'],
     buttons: ['Todo en orden', 'Tengo una duda'],
   },

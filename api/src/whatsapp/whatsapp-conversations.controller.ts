@@ -23,6 +23,18 @@ export class WhatsappConversationsController {
     return this.conversations.listConversations(user);
   }
 
+  /** Plantillas de cobranza con su estado en Meta. Antes de ':customerId'. */
+  @Get('templates')
+  templates() {
+    return this.conversations.templatesWithStatus();
+  }
+
+  /** Nivel del plan en el que va cada cliente según lo enviado/respondido. Antes de ':customerId'. */
+  @Get('plan-activity')
+  planActivity(@CurrentUser() user: AuthenticatedUser) {
+    return this.conversations.planActivity(user);
+  }
+
   @Get(':customerId')
   thread(
     @CurrentUser() user: AuthenticatedUser,
@@ -57,6 +69,6 @@ export class WhatsappConversationsController {
     @Param('customerId', ParseUUIDPipe) customerId: string,
     @Body() dto: SendTextDto,
   ) {
-    return this.conversations.sendFreeText(user, customerId, dto.text);
+    return this.conversations.sendFreeText(user, customerId, dto.text, dto.levelTemplate);
   }
 }

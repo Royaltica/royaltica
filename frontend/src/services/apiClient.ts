@@ -1494,6 +1494,9 @@ export const api = {
       phone: string;
       creditLimitDays: number;
       assignedAgentId: string;
+      financeContactName: string;
+      financeContactPhone: string;
+      financeContactEmail: string;
     }>,
   ): Promise<CxcCustomer> {
     return request<CxcCustomer>('PATCH', `/customers/${id}`, payload);
@@ -1653,6 +1656,12 @@ export const api = {
     return uploadForm<ExternalSyncResult>('/external-data-sync/receivables', form);
   },
 
+  // ── Cobranza IA: cartera real por cliente (pestaña Clientes) ──
+
+  async getPortfolio(): Promise<PortfolioCustomer[]> {
+    return request<PortfolioCustomer[]>('GET', '/receivables/portfolio');
+  },
+
   // ── Cobranza IA: conversación de WhatsApp (plantilla → ventana 24h → IA) ──
 
   async getWaConversations(): Promise<WaConversationSummary[]> {
@@ -1671,8 +1680,17 @@ export const api = {
     return request<WaDraft>('POST', `/whatsapp/conversations/${customerId}/draft`);
   },
 
-  async sendWaText(customerId: string, text: string): Promise<WaSendResult> {
-    return request<WaSendResult>('POST', `/whatsapp/conversations/${customerId}/send`, { text });
+  async sendWaText(customerId: string, text: string, levelTemplate?: string): Promise<WaSendResult> {
+    return request<WaSendResult>('POST', `/whatsapp/conversations/${customerId}/send`, { text, levelTemplate });
+  },
+
+  /** Plantillas de cobranza con su estado en Meta (pestaña Plantillas). */
+  async getWaTemplates(): Promise<WaTemplatesStatus> {
+    return request<WaTemplatesStatus>('GET', '/whatsapp/conversations/templates');
+  },
+
+  async getWaPlanActivity(): Promise<WaPlanActivity> {
+    return request<WaPlanActivity>('GET', '/whatsapp/conversations/plan-activity');
   },
 
   /**
@@ -1703,6 +1721,11 @@ export const api = {
 
   async ensureLevelPlan(): Promise<{ created: boolean; policy: CollectionLevelPlan }> {
     return request<{ created: boolean; policy: CollectionLevelPlan }>('POST', '/collection-sequences/level-plan');
+  },
+
+  /** Recordatorios automáticos cada mañana (true) o con aprobación (false). */
+  async setLevelPlanAutoSend(autoSend: boolean): Promise<{ policy: CollectionLevelPlan }> {
+    return request<{ policy: CollectionLevelPlan }>('PATCH', '/collection-sequences/level-plan', { autoSend });
   },
 
   // ── Conciliación bancaria CxC ───────────────────────────
@@ -2467,9 +2490,29 @@ export interface WaDraft {
   window: WaWindow;
 }
 
+/** Lo que pasó por WhatsApp en cada nivel del plan, por cliente. */
+export interface WaPlanActivity {
+  /** Sin token de Meta: los envíos no salen pero cuentan para probar el flujo. */
+  testMode: boolean;
+  customers: {
+    customerId: string;
+    name: string;
+    levels: Record<
+      string,
+      {
+        sentAt: string;
+        delivered: boolean;
+        by: 'manual' | 'automatico';
+        reply: { kind: WaKind; body: string; at: string } | null;
+      }
+    >;
+  }[];
+}
+
 export interface CollectionLevelPlan {
   id: string;
   name: string;
+  autoSend: boolean;
   sequenceSteps: {
     id: string;
     stepOrder: number;
@@ -2478,5 +2521,37 @@ export interface CollectionLevelPlan {
     whatsappTemplateName: string | null;
     escalatesToHuman: boolean;
   }[];
+}
+
+/** Cliente con lo que necesita la pestaña Clientes de Cobranza IA. */
+export interface PortfolioCustomer {
+  id: string;
+  externalId: string | null;
+  name: string;
+  rfc: string;
+  contact: string | null;
+  email: string | null;
+  phone: string | null;
+  financeContactName: string | null;
+  financeContactEmail: string | null;
+  financeContactPhone: string | null;
+  doNotContact: boolean;
+  doNotContactReason: string | null;
+  score: number | null;
+  agent: { id: string; name: string } | null;
+  pending: { id: string; folio: string; total: number; currency: string; date: string; dueDate: string | null }[];
+  /** Días de atraso al pagar sus últimas 12 facturas (negativo = antes). */
+  history: number[];
+}
+
+export interface WaTemplatesStatus {
+  /** false = sin token o sin WHATSAPP_WABA_ID: no se sabe el estado en Meta. */
+  metaConectado: boolean;
+  error: string | null;
+  templates: (Omit<WaTemplateInfo, 'exactDay' | 'defaultDaysAfterDue'> & {
+    /** APPROVED | PENDING | REJECTED | PAUSED… · 'MISSING' = no existe en Meta · null = sin conexión. */
+    metaStatus: string | null;
+    rejectedReason: string | null;
+  })[];
 }
 

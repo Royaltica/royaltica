@@ -22,7 +22,7 @@ import {
   textoHoy,
   CanalIcon,
 } from './cobranza/plan.tsx';
-import { planDe, saldoDe, AGENTES } from './cobranza/mockV1.ts';
+import { planDe, planConfig, saldoDe, AGENTES } from './cobranza/mockV1.ts';
 import { CobranzaProvider, useCobranza, planCuenta, type CuentaViva } from './cobranza/store.tsx';
 import { SegmentoChip, SegmentosPanel } from './cobranza/segmento.tsx';
 import { SubFacturas } from './cobranza/facturas.tsx';
@@ -32,7 +32,7 @@ import { PlantillasPanel } from './cobranza/PlantillasPanel.tsx';
 import { ReportesPanel } from './cobranza/ReportesPanel.tsx';
 import { DatosPagosPanel, AsignacionPanel } from './cobranza/DatosPagosPanel.tsx';
 import { PagosPanel, AvisoPagos } from './cobranza/PagosPanel.tsx';
-import { SubWhatsapp } from './cobranza/WhatsappPanel.tsx';
+import { SubWhatsapp, ModoEnvio } from './cobranza/WhatsappPanel.tsx';
 import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
 
 /**
@@ -479,11 +479,11 @@ function CobranzaIA() {
         transition={{ duration: 0.25, ease: EASE }}
       >
         {rol === 'agente' ? (
-          <AgenteVista />
+          <AgenteVista renderPlan={(c) => <SubPlan registro={registroDe(c)} />} />
         ) : (
           <>
             {section === 'alertas' && <AlertasPanel />}
-            {section === 'recordatorios' && <RecordatoriosPanel />}
+            {section === 'recordatorios' && <RecordatoriosPanel esAdmin={rol === 'admin'} />}
             {section === 'campanas' && <CampanasPanel />}
             {section === 'plantillas' && <PlantillasPanel />}
             {section === 'reportes' && <ReportesPanel soloEquipo={rol === 'supervisor'} />}
@@ -506,12 +506,25 @@ function CobranzaIA() {
 
 /** Aviso permanente: nada de lo que se ve aquí viene de datos reales todavía. */
 function PrototypeNotice() {
+  const { fuente } = useCobranza();
+  if (fuente === 'cargando') return <div className="my-7 h-4" />;
+  const real = fuente === 'real';
   return (
-    <div className="my-7 flex items-start gap-3 pl-4 border-l-2 border-amber-400">
+    <div className={`my-7 flex items-start gap-3 pl-4 border-l-2 ${real ? 'border-emerald-500' : 'border-amber-400'}`}>
       <p className="text-[11px] text-brand-ink/60 leading-relaxed max-w-[75ch]">
-        <span className="font-semibold text-brand-ink">Prototipo visual.</span> Los datos de esta
-        sección son de ejemplo para validar el diseño. El backend del Módulo 2 aún no existe, así
-        que ninguna cifra proviene de tu cartera real.
+        {real ? (
+          <>
+            <span className="font-semibold text-brand-ink">Datos reales de tu base.</span> Clientes, facturas,
+            agentes, historial de pagos, plan y WhatsApp vienen de tu cartera. Pagos, campañas y reportes todavía
+            usan datos de ejemplo.
+          </>
+        ) : (
+          <>
+            <span className="font-semibold text-brand-ink">Datos de ejemplo.</span> Tu base todavía no tiene
+            clientes (o no hubo conexión con el servidor). Carga tu cartera en la pestaña Datos para trabajar con
+            tus clientes reales.
+          </>
+        )}
       </p>
     </div>
   );
@@ -683,7 +696,8 @@ function registroDe(c: CuentaViva): RecordatorioItem {
     ultimo: '—',
     mejor: { canal: c.canal, tono: 'Estándar', hora: '—', estrategia: 'Plantilla general' },
     nota: c.diagnostico.porque,
-    plan: planDe(c.cliente),
+    // Del propio cliente (no por nombre): un cliente real puede no existir en el prototipo.
+    plan: planConfig(c, c.segmento),
     mensajes: [],
   } as unknown as RecordatorioItem;
 }
@@ -694,7 +708,7 @@ function registroDe(c: CuentaViva): RecordatorioItem {
  * 511px de la lista: eso dejaba 1,750px de columna izquierda vacía. Con las
  * subpestañas cada vista cabe de un vistazo y las alturas se emparejan.
  */
-function RecordatoriosPanel() {
+function RecordatoriosPanel({ esAdmin = false }: { esAdmin?: boolean }) {
   const { cartera } = useCobranza();
   const planDeCliente = (cliente: string) => planCuenta(cartera.find((c) => c.cliente === cliente)!);
   const [selected, setSelected] = React.useState(cartera[0].cliente);
@@ -722,7 +736,10 @@ function RecordatoriosPanel() {
   ).length;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+    <div className="space-y-5">
+      {/* Solo el Administrador decide si los recordatorios salen solos o con su aprobación. */}
+      {esAdmin && <ModoEnvio />}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
       {/* Lista de clientes */}
       <Reveal className="lg:col-span-2">
         <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden lg:sticky lg:top-4">
@@ -739,7 +756,9 @@ function RecordatoriosPanel() {
             {visibles.map((r) => {
               const cuentaFila = cuentaDe(r.cliente);
               const activa = selected === r.cliente;
-              const pasoActual = planDeCliente(r.cliente).actual;
+              const planFila = planDeCliente(r.cliente);
+              const pasoActual = planFila.actual;
+              const siguiente = !pasoActual ? planFila.proxima : undefined;
               return (
                 <button
                   key={r.cliente}
@@ -780,6 +799,15 @@ function RecordatoriosPanel() {
                           <FaseDot fase={pasoActual.fase} />
                           <span className="text-[11px] text-brand-ink/55 truncate">
                             {pasoActual.etiqueta} · {pasoActual.nombre}
+                          </span>
+                        </div>
+                      )}
+                      {/* El nivel de hoy ya salió por WhatsApp: se muestra el que sigue. */}
+                      {siguiente && (
+                        <div className="flex items-center gap-1.5 mt-1.5">
+                          <Check size={11} className="text-emerald-600 shrink-0" />
+                          <span className="text-[11px] text-brand-ink/45 truncate">
+                            Al día · sigue {siguiente.etiqueta} en {siguiente.faltan} d
                           </span>
                         </div>
                       )}
@@ -846,11 +874,18 @@ function RecordatoriosPanel() {
                 </div>
               </div>
               {(() => {
-                const act = planCuenta(activoVivo).actual;
+                const { actual: act, proxima } = planCuenta(activoVivo);
                 if (activoVivo.saldada) return <span className="audit-badge shrink-0 bg-emerald-50 text-emerald-700">Saldada</span>;
-                return act ? (
-                  <span className="audit-badge shrink-0 bg-brand-ink/5 text-brand-ink/70">
-                    Hoy: {act.etiqueta} · {act.nombre}
+                if (act) {
+                  return (
+                    <span className="audit-badge shrink-0 bg-brand-ink/5 text-brand-ink/70">
+                      Hoy: {act.etiqueta} · {act.nombre}
+                    </span>
+                  );
+                }
+                return proxima ? (
+                  <span className="audit-badge shrink-0 bg-emerald-50 text-emerald-700">
+                    Al día · sigue {proxima.etiqueta} en {proxima.faltan} d
                   </span>
                 ) : null;
               })()}
@@ -904,6 +939,7 @@ function RecordatoriosPanel() {
             )}
           </motion.div>
         </motion.div>
+      </div>
       </div>
     </div>
   );

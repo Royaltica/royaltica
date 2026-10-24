@@ -163,6 +163,12 @@ export class WhatsappConversationService {
     const window = await this.windowState(customer.id);
     const template = findTemplate(input.templateName);
 
+    // Si este nivel ya se mandó a mano para esta factura (desde el
+    // expediente), el motor no lo repite: lo da por hecho.
+    if (template && (await this.levelAlreadySent(customer.id, invoice.id, template.name))) {
+      return { sent: true, kind: 'TEMPLATE' };
+    }
+
     if (!window.open && template) {
       const vars = await this.templateVars(customer, invoice, input.locale);
       const res = await this.whatsapp.sendTemplate(
@@ -329,6 +335,9 @@ export class WhatsappConversationService {
       sent: res.sent,
       sentByUserId: user.id,
     });
+    if (this.counts(res.sent)) {
+      await this.advanceRunToLevel(customer.organizationId, invoiceId, template.name);
+    }
     return { sent: res.sent, mode: res.mode, message };
   }
 
@@ -411,7 +420,7 @@ ${hilo}
   }
 
   /** Envío de texto libre (ya revisado por una persona). Solo con ventana abierta. */
-  async sendFreeText(user: AuthenticatedUser, customerId: string, text: string) {
+  async sendFreeText(user: AuthenticatedUser, customerId: string, text: string, levelTemplate?: string) {
     const customer = await this.loadCustomer(user, customerId);
     this.assertContactable(customer);
     const body = text.trim();
@@ -439,21 +448,185 @@ ${hilo}
       usageTag: 'collection_reply',
     });
     const latestInvoice = (await this.pendingInvoices(customer.organizationId, customerId))[0];
+    // Si se manda "a nombre" de un nivel del plan (el cliente ya tenía la
+    // ventana abierta), ese mensaje cuenta como el contacto de ese nivel.
+    const level = findTemplate(levelTemplate)?.name ?? null;
     const message = await this.recordOutbound({
       organizationId: customer.organizationId,
       customerId,
       invoiceId: latestInvoice?.id ?? null,
       kind: 'TEXT',
+      templateName: level,
       body,
       waMessageId: res.id,
       phoneNumberId: window.phoneNumberId,
       sent: res.sent,
       sentByUserId: user.id,
     });
+    if (level && latestInvoice && this.counts(res.sent)) {
+      await this.advanceRunToLevel(customer.organizationId, latestInvoice.id, level);
+    }
     return { sent: res.sent, mode: res.mode, message };
   }
 
+  /**
+   * En qué nivel del plan va cada cliente según lo que REALMENTE pasó por
+   * WhatsApp: por cada plantilla/nivel, cuándo se mandó y la primera
+   * respuesta del cliente después de eso. El plan del expediente usa esto
+   * para marcar el nivel como hecho y pasar al siguiente.
+   *
+   * `testMode`: sin token de Meta los envíos no salen, pero cuentan igual
+   * (para poder probar el flujo en local). Con token, un envío que Meta
+   * rechazó NO avanza el plan.
+   */
+  async planActivity(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const testMode = !this.whatsapp.isConfigured;
+    const since = new Date(Date.now() - 180 * 86_400_000);
+    const { customers, messages } = await this.prisma.withOrg(organizationId, async (tx) => ({
+      customers: await tx.customer.findMany({
+        where: { organizationId, deletedAt: null, ...this.agentScope(user) },
+        select: { id: true, name: true },
+      }),
+      messages: await tx.whatsappMessage.findMany({
+        where: { organizationId, createdAt: { gte: since } },
+        orderBy: { createdAt: 'asc' },
+        select: { customerId: true, direction: true, kind: true, body: true, templateName: true, sent: true, sentByUserId: true, createdAt: true },
+      }),
+    }));
+
+    type Level = {
+      sentAt: Date;
+      delivered: boolean;
+      by: 'manual' | 'automatico';
+      reply: { kind: WhatsappMessageKind; body: string; at: Date } | null;
+    };
+    const byCustomer = new Map<string, { levels: Record<string, Level>; last: string | null }>();
+    for (const m of messages) {
+      const st = byCustomer.get(m.customerId) ?? { levels: {}, last: null };
+      byCustomer.set(m.customerId, st);
+      if (m.direction === 'OUTBOUND' && m.templateName && (m.sent || testMode)) {
+        st.levels[m.templateName] ??= {
+          sentAt: m.createdAt,
+          delivered: m.sent,
+          by: m.sentByUserId ? 'manual' : 'automatico',
+          reply: null,
+        };
+        st.last = m.templateName;
+      } else if (m.direction === 'INBOUND' && st.last && !st.levels[st.last].reply) {
+        st.levels[st.last].reply = { kind: m.kind, body: m.body.slice(0, 160), at: m.createdAt };
+      }
+    }
+    return {
+      testMode,
+      customers: customers.map((c) => ({
+        customerId: c.id,
+        name: c.name,
+        levels: byCustomer.get(c.id)?.levels ?? {},
+      })),
+    };
+  }
+
+  /**
+   * Catálogo de plantillas de cobranza con su estado REAL en Meta
+   * (APPROVED / PENDING / REJECTED…). Sin token o sin WHATSAPP_WABA_ID no se
+   * inventa un estado: `metaConectado: false` y cada una queda sin estado.
+   */
+  async templatesWithStatus() {
+    const token = this.config.get('WHATSAPP_TOKEN', { infer: true });
+    const waba = this.config.get('WHATSAPP_WABA_ID', { infer: true });
+    let estados: Map<string, { status: string; rejected?: string }> | null = null;
+    let error: string | null = null;
+    if (token && waba) {
+      try {
+        const res = await fetch(
+          `https://graph.facebook.com/v21.0/${waba}/message_templates?fields=name,status,language,rejected_reason&limit=200`,
+          { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000) },
+        );
+        if (!res.ok) throw new Error(`Meta respondió ${res.status}`);
+        const data = (await res.json()) as {
+          data?: { name: string; status: string; language: string; rejected_reason?: string }[];
+        };
+        estados = new Map(
+          (data.data ?? [])
+            .filter((t) => t.language === 'es_MX')
+            .map((t) => [t.name, { status: t.status, rejected: t.rejected_reason }]),
+        );
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`No se pudo consultar el estado de las plantillas en Meta: ${error}`);
+      }
+    }
+    return {
+      metaConectado: estados !== null,
+      error,
+      templates: COLLECTION_TEMPLATES.map((t) => {
+        const e = estados?.get(t.name);
+        return {
+          name: t.name,
+          level: t.level,
+          label: t.label,
+          body: t.body,
+          vars: t.vars,
+          buttons: t.buttons,
+          // null = no se pudo saber; 'MISSING' = no existe en Meta con ese nombre.
+          metaStatus: estados ? (e?.status ?? 'MISSING') : null,
+          rejectedReason: e?.rejected && e.rejected !== 'NONE' ? e.rejected : null,
+        };
+      }),
+    };
+  }
+
   // ── helpers ───────────────────────────────────────────────
+
+  /** ¿Cuenta este envío para avanzar el plan? (ver planActivity: testMode) */
+  private counts(sent: boolean): boolean {
+    return sent || !this.whatsapp.isConfigured;
+  }
+
+  private async levelAlreadySent(customerId: string, invoiceId: string, templateName: string) {
+    const prev = await this.prisma.whatsappMessage.findFirst({
+      where: { customerId, invoiceId, direction: 'OUTBOUND', templateName, sent: true },
+      select: { id: true },
+    });
+    return !!prev;
+  }
+
+  /**
+   * Mantiene al motor automático en el mismo nivel que lo que se mandó a
+   * mano: la ejecución de la factura avanza hasta el paso de esa plantilla
+   * (nunca retrocede). Sin plan por niveles activo, no hace nada.
+   */
+  private async advanceRunToLevel(organizationId: string, invoiceId: string, templateName: string) {
+    await this.prisma.withOrg(organizationId, async (tx) => {
+      const policy = await tx.collectionPolicy.findFirst({
+        where: { organizationId, isActive: true, deletedAt: null },
+        include: { sequenceSteps: { where: { deletedAt: null, whatsappTemplateName: templateName } } },
+        orderBy: { createdAt: 'desc' },
+      });
+      const step = policy?.sequenceSteps[0];
+      if (!policy || !step) return;
+      const now = new Date();
+      const run = await tx.collectionSequenceRun.findUnique({ where: { invoiceId } });
+      if (!run) {
+        await tx.collectionSequenceRun.create({
+          data: {
+            organizationId,
+            invoiceId,
+            collectionPolicyId: policy.id,
+            currentStepOrder: step.stepOrder,
+            lastStepSentAt: now,
+            status: 'ACTIVE',
+          },
+        });
+      } else if (run.currentStepOrder < step.stepOrder) {
+        await tx.collectionSequenceRun.update({
+          where: { id: run.id },
+          data: { currentStepOrder: step.stepOrder, lastStepSentAt: now },
+        });
+      }
+    });
+  }
 
   /** Variables de la plantilla a partir de los datos reales de la factura. */
   async templateVars(customer: CustomerContact, invoice: InvoiceLite, locale: string): Promise<TemplateVars> {

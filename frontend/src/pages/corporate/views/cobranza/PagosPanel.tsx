@@ -55,7 +55,7 @@ export function AvisoPagos({ onIr }: { onIr?: () => void }) {
 
 export function PagosPanel({ soloLectura = false }: { soloLectura?: boolean }) {
   const {
-    pagos,
+    pagos: todosLosPagos,
     cartera,
     noReconocidos,
     erp,
@@ -76,6 +76,9 @@ export function PagosPanel({ soloLectura = false }: { soloLectura?: boolean }) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const csvRef = React.useRef<HTMLInputElement>(null);
 
+  // Pagos todavía es de ejemplo: solo se muestran los de clientes que existen
+  // en la cartera actual (con clientes reales distintos no hay qué mostrar).
+  const pagos = todosLosPagos.filter((p) => cartera.some((c) => c.id === p.cuentaId));
   const cuenta = (id: string) => cartera.find((c) => c.id === id)!;
   const cobrado = pagos.reduce((a, p) => a + p.monto, 0);
   const confirmados = pagos.filter((p) => p.estado === 'confirmado' && p.metodo === 'PPD').length;

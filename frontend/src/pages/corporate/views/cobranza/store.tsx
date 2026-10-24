@@ -27,7 +27,9 @@ import {
   type Resultado,
   type Segmento,
 } from './mockV1.ts';
-import { construirPlan } from './plan.tsx';
+import { construirPlan, PASO_DE_PLANTILLA } from './plan.tsx';
+import { api, type WaPlanActivity, type PortfolioCustomer } from '../../../../services/apiClient.ts';
+import { cuentaDesdeApi } from './carteraReal.ts';
 
 /**
  * Estado compartido de Cobranza IA. Lo que hace un perfil se ve en los
@@ -50,6 +52,8 @@ export type CambioSegmento = { cliente: string; de: Segmento; a: Segmento; motiv
 export type FacturaViva = Factura & { principal: boolean; pagado: number };
 
 export type CuentaViva = CuentaCartera & {
+  /** Pasos del plan que ya salieron por WhatsApp (datos reales del backend). */
+  pasosEnviados: string[];
   saldada: boolean;
   facturas: FacturaViva[];
   comportamiento: Comportamiento;
@@ -81,12 +85,30 @@ type Store = {
   marcarEnErp: (id: string) => void;
   descartarNoReconocido: (uuid: string) => void;
   reasignar: (id: string, agente: Agente) => void;
-  agregarContacto: (id: string, f: NonNullable<CuentaCartera['finanzas']>) => void;
+  /** Guarda el contacto de finanzas (en la base si el cliente es real). Regresa un error o null. */
+  agregarContacto: (id: string, f: NonNullable<CuentaCartera['finanzas']>) => Promise<string | null>;
   cambiarSegmento: (id: string, segmento: Segmento | null, motivo: string) => void;
   enviar: (id: string, paso: PasoId, canal: string, origen: string) => void;
   registrar: (id: string, resultado: string) => void;
   guardarCampana: (c: Campana) => void;
   cambiarEstadoCampana: (id: string, estado: Campana['estado']) => void;
+  /**
+   * ID real del cliente en el backend (para su conversación de WhatsApp).
+   * undefined = cargando · null = no existe en la base · 'error' = no hubo conexión.
+   */
+  waClienteId: (cliente: string) => string | null | undefined | 'error';
+  /** Vuelve a leer lo que pasó por WhatsApp (tras enviar, o al llegar respuestas). */
+  refrescarWhatsapp: () => Promise<void>;
+  /**
+   * De dónde sale la cartera: 'real' = clientes de la base de datos;
+   * 'ejemplo' = la base no tiene clientes (o no hubo conexión) y se muestra el prototipo.
+   */
+  fuente: 'cargando' | 'real' | 'ejemplo';
+  /** Vuelve a leer la cartera real (tras importar un CSV). */
+  recargarCartera: () => Promise<void>;
+  /** Recordatorios automáticos (true) o con aprobación (false). null = sin conexión. */
+  envioAutomatico: boolean | null | undefined;
+  cambiarEnvioAutomatico: (auto: boolean) => Promise<void>;
 };
 
 const Ctx = React.createContext<Store | null>(null);
@@ -117,10 +139,53 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   const [csvCargado, setCsvCargado] = React.useState(false);
   const [planesIniciados, setPlanesIniciados] = React.useState<Record<string, string>>({});
   const [facturasNuevas, setFacturasNuevas] = React.useState<Record<string, Factura[]>>({});
+  // Cartera real (GET /receivables/portfolio). undefined = cargando; null = sin conexión.
+  const [real, setReal] = React.useState<PortfolioCustomer[] | null | undefined>(undefined);
+  const recargarCartera = React.useCallback(async () => {
+    try {
+      setReal(await api.getPortfolio());
+    } catch {
+      setReal((prev) => prev ?? null);
+    }
+  }, []);
+  React.useEffect(() => {
+    void recargarCartera();
+  }, [recargarCartera]);
+  const fuente: Store['fuente'] = real === undefined ? 'cargando' : real && real.length > 0 ? 'real' : 'ejemplo';
+  const base = React.useMemo(() => (real && real.length > 0 ? real.map(cuentaDesdeApi) : CARTERA), [real]);
+
+  // Lo que pasó por WhatsApp (real). undefined = aún cargando; null = sin conexión.
+  const [wa, setWa] = React.useState<WaPlanActivity | null | undefined>(undefined);
+
+  const refrescarWhatsapp = React.useCallback(async () => {
+    try {
+      setWa(await api.getWaPlanActivity());
+    } catch {
+      // Si ya había datos se conservan (un fallo momentáneo no borra la vista);
+      // si nunca cargó, queda como "sin conexión" (no como "no existe").
+      setWa((prev) => prev ?? null);
+    }
+  }, []);
+  React.useEffect(() => {
+    void refrescarWhatsapp();
+  }, [refrescarWhatsapp]);
+
+  // Modo de envío del plan por niveles (lo comparten administrador y agentes).
+  const [envioAutomatico, setEnvioAutomatico] = React.useState<boolean | null | undefined>(undefined);
+  React.useEffect(() => {
+    api
+      .getLevelPlan()
+      .then((r) => setEnvioAutomatico(r.policy ? r.policy.autoSend : false))
+      .catch(() => setEnvioAutomatico(null));
+  }, []);
+  const cambiarEnvioAutomatico = React.useCallback(async (auto: boolean) => {
+    const r = await api.setLevelPlanAutoSend(auto);
+    setEnvioAutomatico(r.policy.autoSend);
+  }, []);
 
   const cartera: CuentaViva[] = React.useMemo(
     () =>
-      CARTERA.map((c) => {
+      base.map((c) => {
         const diagnostico = diagnosticoDe(c);
         const manual = segManual[c.id];
         const segmento = manual?.segmento ?? diagnostico.segmento;
@@ -131,10 +196,20 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
           const actual = construirPlan(planConfig(c, segmento)).actual;
           if (actual) res[actual.id] = resultadosHoy[c.id];
         }
+        // WhatsApp real: cada nivel enviado queda hecho con lo que pasó.
+        const pasosEnviados: string[] = [];
+        const actividad = wa?.customers.find((x) => x.name === c.cliente);
+        for (const [plantilla, nivel] of Object.entries(actividad?.levels ?? {})) {
+          const paso = PASO_DE_PLANTILLA[plantilla];
+          if (!paso || !nivel) continue;
+          pasosEnviados.push(paso);
+          res[paso] = resultadoWhatsapp(nivel as NivelWa, !!wa?.testMode);
+        }
         // El saldo sale de sumar los pagos aplicados (ERP y/o REP).
         const pagado = pagos.filter((p) => p.cuentaId === c.id).reduce((a, p) => a + p.monto, 0);
         return {
           ...c,
+          pasosEnviados,
           pagado,
           saldada: c.monto - pagado <= 1, // tolerancia de centavos
           facturas: [
@@ -155,11 +230,11 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
           segmentoManual: manual ? { motivo: manual.motivo } : undefined,
         };
       }),
-    [agentes, contactos, segManual, envios, resultadosHoy, pagos, planesIniciados, facturasNuevas],
+    [base, agentes, contactos, segManual, envios, resultadosHoy, pagos, planesIniciados, facturasNuevas, wa],
   );
 
   const anotar = (c: CuentaViva, r: Resultado, monto?: number) =>
-    setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, r, monto), agente: c.agente }]);
+    setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, r, monto, c), agente: c.agente }]);
 
   // Lanzar una campaña especial: el mensaje va solo a los clientes elegidos
   // que se pueden contactar. No toca su plan: el plan sigue su curso aparte.
@@ -190,6 +265,7 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
     // CSV de cartera: igual que el ERP, compara saldos contra el último reporte.
     subirCsv: () => {
       if (csvCargado) return 'Ese reporte ya se había cargado: no cambió ningún saldo.';
+      if (!cartera.some((x) => x.id === CSV_SIM.pago.cuentaId) || !cartera.some((x) => x.id === CSV_SIM.facturaNueva.cuentaId)) return 'Simulación de ejemplo: funciona con los clientes de prueba del prototipo.';
       setCsvCargado(true);
       setPagos((ps) => [CSV_SIM.pago, ...ps]);
       setFacturasNuevas((f) => ({ ...f, [CSV_SIM.facturaNueva.cuentaId]: [CSV_SIM.facturaNueva.factura] }));
@@ -203,6 +279,7 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
     sincronizarErp: () => {
       setErp({ ultima: `hoy ${HORA_ACTUAL}`, sincronizado: true });
       if (erp.sincronizado) return 'Sin cambios: ningún saldo se movió desde la última sincronización.';
+      if (!cartera.some((x) => x.id === SYNC_ERP_SIM.cuentaId)) return 'Simulación de ejemplo: funciona con los clientes de prueba del prototipo.';
       setPagos((ps) => [SYNC_ERP_SIM, ...ps]);
       const c = cartera.find((x) => x.id === SYNC_ERP_SIM.cuentaId)!;
       anotar(c, 'Pagó', SYNC_ERP_SIM.monto);
@@ -211,6 +288,7 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
     // ZIP de REP: cada complemento se empata por UUID con su factura.
     subirRep: () => {
       if (zipCargado) return 'Ese ZIP ya se había procesado: no se duplicó ningún pago.';
+      if (!cartera.some((x) => x.id === ZIP_REP_SIM.nuevo.cuentaId)) return 'Simulación de ejemplo: funciona con los clientes de prueba del prototipo.';
       setZipCargado(true);
       const z = ZIP_REP_SIM;
       const lumen = cartera.find((x) => x.id === z.nuevo.cuentaId)!;
@@ -259,7 +337,22 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
     tareas,
     cambiosSegmento,
     reasignar: (id, agente) => setAgentes((a) => ({ ...a, [id]: agente })),
-    agregarContacto: (id, f) => setContactos((c) => ({ ...c, [id]: f })),
+    agregarContacto: async (id, f) => {
+      const cuenta = cartera.find((x) => x.id === id);
+      if (cuenta?.dbId) {
+        // WhatsApp exige formato internacional: 10 dígitos de México → +52…
+        const digitos = f.telefono.replace(/\D/g, '');
+        const telefono = f.telefono.trim().startsWith('+') ? `+${digitos}` : digitos.length === 10 ? `+52${digitos}` : `+${digitos}`;
+        try {
+          await api.updateCustomer(cuenta.dbId, { financeContactName: f.nombre, financeContactPhone: telefono });
+          await Promise.all([recargarCartera(), refrescarWhatsapp()]);
+        } catch (e) {
+          return e instanceof Error ? e.message : 'No se pudo guardar el contacto.';
+        }
+      }
+      setContactos((c) => ({ ...c, [id]: f }));
+      return null;
+    },
     cambiarSegmento: (id, segmento, motivo) => {
       const c = cartera.find((x) => x.id === id)!;
       setSegManual((m) => {
@@ -303,6 +396,17 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
       if (estado === 'Activa' && camp.config.inicio <= HOY) upd = lanzar(upd);
       setCampanas((cs) => cs.map((x) => (x.id === id ? upd : x)));
     },
+    waClienteId: (cliente) =>
+      wa === undefined
+        ? undefined
+        : wa === null
+          ? 'error'
+          : (wa.customers.find((x) => x.name === cliente)?.customerId ?? null),
+    refrescarWhatsapp,
+    envioAutomatico,
+    cambiarEnvioAutomatico,
+    fuente,
+    recargarCartera,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -316,7 +420,19 @@ export function useCobranza(): Store {
 
 /** Plan calculado de una cuenta (con su segmento y lo enviado/registrado hoy). */
 export function planCuenta(c: CuentaViva) {
-  return construirPlan(planConfig(c, c.segmento));
+  return construirPlan({ ...planConfig(c, c.segmento), enviados: c.pasosEnviados });
+}
+
+type NivelWa = WaPlanActivity['customers'][number]['levels'][string];
+
+/** Resultado del paso a partir de lo que pasó en WhatsApp (corto, para el plan). */
+function resultadoWhatsapp(nivel: NivelWa, prueba: boolean): string {
+  const r = nivel.reply;
+  if (r?.kind === 'BUTTON') return r.body.startsWith('Ya pagué') ? 'Dice que ya pagó' : `Tocó "${r.body}"`;
+  if (r?.kind === 'MEDIA') return 'Mandó un archivo';
+  if (r) return `Respondió: "${r.body.length > 48 ? `${r.body.slice(0, 48)}…` : r.body}"`;
+  const dia = new Date(nivel.sentAt).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' });
+  return `Enviado por WhatsApp ${dia}${prueba && !nivel.delivered ? ' (prueba)' : ''}`;
 }
 
 /** Plantilla usada en un toque de campaña. */

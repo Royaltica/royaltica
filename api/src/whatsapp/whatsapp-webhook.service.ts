@@ -107,6 +107,14 @@ export class WhatsappWebhookService {
   verifySignature(rawBody: Buffer | undefined, signature: string | undefined): boolean {
     const secret = this.config.get('WHATSAPP_APP_SECRET', { infer: true });
     if (!secret) {
+      // En producción, sin secreto no hay forma de saber que el aviso viene de
+      // Meta: cualquiera podría fingir que un cliente contestó o pagó. Se rechaza.
+      if (this.config.get('NODE_ENV', { infer: true }) === 'production') {
+        this.logger.error(
+          'Webhook de WhatsApp rechazado: falta WHATSAPP_APP_SECRET en producción (no se puede validar la firma de Meta).',
+        );
+        return false;
+      }
       this.logger.warn(
         'WHATSAPP_APP_SECRET no configurado: la firma del webhook NO se valida (solo aceptable en desarrollo).',
       );

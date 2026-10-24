@@ -415,4 +415,35 @@ describe('ReceivablesService', () => {
     });
     expect(res).toEqual({ sent: 1 });
   });
+
+  describe('portfolio (cartera por cliente para Cobranza IA)', () => {
+    const d = (iso: string) => new Date(iso);
+    const cliente = {
+      id: 'c-1',
+      externalId: null,
+      name: 'ACME',
+      assignedAgent: { id: 'ag-1', name: 'Ana Robles' },
+      invoices: [
+        { id: 'i1', folio: 'F-1', cfdiUuid: 'u1', total: 1000, currency: 'MXN', date: d('2026-09-01'), dueDate: d('2026-10-01'), paidDate: null, status: 'PENDING' },
+        { id: 'i2', folio: 'F-0', cfdiUuid: 'u2', total: 500, currency: 'MXN', date: d('2026-07-01'), dueDate: d('2026-08-01'), paidDate: d('2026-08-06'), status: 'PAID' },
+        { id: 'i3', folio: 'F-00', cfdiUuid: 'u3', total: 500, currency: 'MXN', date: d('2026-06-01'), dueDate: d('2026-07-01'), paidDate: d('2026-06-29'), status: 'PAID' },
+      ],
+    };
+
+    it('separa pendientes e historial de puntualidad (días de atraso al pagar, del más viejo al más reciente)', async () => {
+      prisma.customer.findMany.mockResolvedValue([cliente]);
+      const [c] = await service.portfolio({ id: 'u', organizationId: 'org-1', operationalProfile: null } as never);
+      expect(c.pending.map((p) => p.folio)).toEqual(['F-1']);
+      expect(c.history).toEqual([-2, 5]);
+      expect(c.agent).toEqual({ id: 'ag-1', name: 'Ana Robles' });
+    });
+
+    it('un Agente solo recibe sus clientes asignados', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      await service.portfolio({ id: 'ag-1', organizationId: 'org-1', operationalProfile: 'AGENTE_EJECUTIVO' } as never);
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ assignedAgentId: 'ag-1' }) }),
+      );
+    });
+  });
 });

@@ -127,6 +127,7 @@ function reglaDe(plan: PlanConfig): Regla {
 export function construirPlan(plan: PlanConfig) {
   const r = reglaDe(plan);
   const omitidos = new Set<PasoId>(r.omitir ?? []);
+  const enviados = new Set(plan.enviados ?? []);
   const subirTono = (t: string) => (['Cordial', 'Suave', 'Cercano'].includes(t) ? 'Estándar' : t);
 
   const base = PLANTILLA.map((t) => {
@@ -141,12 +142,17 @@ export function construirPlan(plan: PlanConfig) {
     };
   });
   const vigentes = base.filter((t) => !omitidos.has(t.id));
-  const actual = [...vigentes].reverse().find((t) => t.dia <= plan.hoy)?.id;
+  // El paso de hoy deja de estar pendiente en cuanto sale por WhatsApp: queda
+  // hecho y el plan pasa al siguiente nivel (que se activa cuando llegue su día).
+  const delDia = [...vigentes].reverse().find((t) => t.dia <= plan.hoy)?.id;
+  const actual = delDia && !enviados.has(delDia) ? delDia : undefined;
 
   const pasos: PasoPlan[] = base.map((t) => {
     const estado: EstadoPaso = omitidos.has(t.id)
       ? 'omitido'
-      : t.id === actual
+      : enviados.has(t.id)
+        ? 'hecho'
+        : t.id === actual
         ? 'actual'
         : t.dia <= plan.hoy
           ? 'hecho'
@@ -172,6 +178,20 @@ export function construirPlan(plan: PlanConfig) {
     ajustes,
   };
 }
+
+/** Paso del plan → plantilla de WhatsApp aprobada por Meta. C y D no van por WhatsApp. */
+export const PLANTILLA_DE_PASO: Partial<Record<PasoId, string>> = {
+  N0: 'royaltica_nivel_0',
+  N1: 'aviso_preventivo_pago',
+  N2: 'recordatorio_cortesia_pago',
+  N3: 'vence_3_dias',
+  N4: 'vence_hoy',
+  A: 'aviso_vencida',
+  B: 'seguimiento_vencida',
+};
+export const PASO_DE_PLANTILLA = Object.fromEntries(
+  Object.entries(PLANTILLA_DE_PASO).map(([paso, plantilla]) => [plantilla, paso as PasoId]),
+) as Record<string, PasoId>;
 
 export const FASES = {
   temprana: { label: 'Temprana', punto: 'bg-emerald-500', chip: 'bg-emerald-50 text-emerald-700', linea: 'bg-emerald-200' },

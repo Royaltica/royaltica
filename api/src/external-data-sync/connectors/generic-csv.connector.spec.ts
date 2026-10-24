@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { GenericCsvConnector } from './generic-csv.connector';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { IDENTITY_MAPPING } from '../field-mapping.types';
@@ -69,6 +70,18 @@ describe('GenericCsvConnector', () => {
       expect(created.rfc).toMatch(/^[A-Z]{3,4}\d{6}[A-Z0-9]{3}$/);
     });
 
+    it('importa el contacto de finanzas (a quien le llegan los recordatorios)', async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+      const csv =
+        'externalId,name,phone,financeContactName,financeContactPhone\n' +
+        'CUST-9,Distribuidora Uno,+5215500000000,Patricia Salas,+5218122310045\n';
+      const result = await buildConnector(csv).syncCustomers('org-1');
+      expect(result.imported).toBe(1);
+      const created = prisma.customer.create.mock.calls[0][0].data;
+      expect(created.financeContactName).toBe('Patricia Salas');
+      expect(created.financeContactPhone).toBe('+5218122310045');
+    });
+
     it('salta filas con campos requeridos faltantes sin abortar el resto', async () => {
       prisma.customer.findFirst.mockResolvedValue(null);
       const csv =
@@ -102,6 +115,45 @@ describe('GenericCsvConnector', () => {
         where: { id: 'cust-db-1' },
         data: expect.objectContaining({ name: 'Acme Co Updated' }),
       });
+    });
+  });
+
+  describe('syncCustomers · clientes que ya existían', () => {
+    it('si el cliente ya existía con ese RFC (dado de alta a mano), lo actualiza y lo liga en vez de duplicarlo', async () => {
+      // 1ª búsqueda (por ID externo): no está · 2ª (por RFC): sí está
+      prisma.customer.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'cust-manual' });
+      const csv =
+        'externalId,name,rfc,financeContactName,financeContactPhone\n' +
+        'UNASA-001,UNASA,una2610200a1,Paolo,+525574086204\n';
+      const result = await buildConnector(csv).syncCustomers('org-1');
+      expect(result.imported).toBe(1);
+      expect(prisma.customer.create).not.toHaveBeenCalled();
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: 'cust-manual' },
+        data: expect.objectContaining({
+          externalId: 'UNASA-001',
+          rfc: 'UNA2610200A1',
+          financeContactPhone: '+525574086204',
+          deletedAt: null,
+        }),
+      });
+    });
+
+    it('al actualizar sin RFC en el archivo no se pisa el RFC real con uno inventado', async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: 'cust-db-1' });
+      const csv = 'externalId,name,email\nCUST-1,Acme,ops@acme.mx\n';
+      await buildConnector(csv).syncCustomers('org-1');
+      expect(prisma.customer.update.mock.calls[0][0].data.rfc).toBeUndefined();
+    });
+
+    it('un error de la base se explica en lenguaje claro (no el error técnico)', async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+      prisma.customer.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: 'x' }),
+      );
+      const result = await buildConnector('externalId,name,email\nX-1,Cliente,x@cliente.mx\n').syncCustomers('org-1');
+      expect(result.skipped).toBe(1);
+      expect(result.errors[0]).toBe('Fila 2: Ya existe otro registro con un dato que no se puede repetir (RFC, folio o UUID).');
     });
   });
 

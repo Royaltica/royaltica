@@ -480,7 +480,7 @@ describe('CollectionSequencesService', () => {
       whatsappTemplateName,
     });
     const plan = [
-      lvl(1, -90, 'confirmacion_factura'),
+      lvl(1, -90, 'royaltica_nivel_0'),
       lvl(2, -14, 'aviso_preventivo_pago'),
       lvl(3, -7, 'recordatorio_cortesia_pago'),
       lvl(4, -3, 'vence_3_dias'),
@@ -490,7 +490,7 @@ describe('CollectionSequencesService', () => {
 
     it('primer contacto antes del vencimiento: manda la confirmación aunque otros niveles ya apliquen', () => {
       const r = pickNextStep(plan, 0, -10);
-      expect(r.step?.whatsappTemplateName).toBe('confirmacion_factura');
+      expect(r.step?.whatsappTemplateName).toBe('royaltica_nivel_0');
       expect(r.superseded).toHaveLength(0);
     });
 
@@ -528,6 +528,15 @@ describe('CollectionSequencesService', () => {
       expect(conversations.sendCollectionStep).toHaveBeenCalledWith(
         expect.objectContaining({ templateName: 'recordatorio_cortesia_pago' }),
       );
+    });
+
+    it('modo con aprobación: el motor no manda nada solo', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-07-18T12:00:00Z'));
+      prisma.collectionPolicy.findFirst.mockResolvedValue({ ...basePolicy, autoSend: false, sequenceSteps: plan });
+      prisma.collectionSequenceRun.findUnique.mockResolvedValue({ id: 'run-1', currentStepOrder: 2, status: 'ACTIVE' });
+      const result = await service.advanceSequence('inv-1');
+      expect(result.reason).toBe('awaiting-approval');
+      expect(conversations.sendCollectionStep).not.toHaveBeenCalled();
     });
 
     it('sin niveles previos, una factura que aún no vence se omite (comportamiento original)', async () => {
