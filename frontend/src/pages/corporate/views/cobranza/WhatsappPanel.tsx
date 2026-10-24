@@ -4,7 +4,7 @@ import { Check, Loader2, MessageCircle, Send, Sparkles } from 'lucide-react';
 import { EASE } from './primitives.tsx';
 import { planCuenta, useCobranza, type CuentaViva } from './store.tsx';
 import { PLANTILLA_DE_PASO, cuandoPaso, FaseDot } from './plan.tsx';
-import { api, type WaTemplateInfo, type WaThread } from '../../../../services/apiClient.ts';
+import { api, type WaSendResult, type WaTemplateInfo, type WaThread } from '../../../../services/apiClient.ts';
 
 /**
  * Subpestaña WhatsApp del expediente (DATOS REALES del backend). La usan
@@ -122,17 +122,23 @@ function Conversacion({ customerId, cuenta }: { customerId: string; cuenta: Cuen
     }
   };
 
-  const resultado = (sent: boolean) =>
-    sent
-      ? 'Enviado. El plan pasó a la siguiente etapa.'
-      : 'Enviado en modo prueba (sin token de Meta no sale a WhatsApp). El plan pasó a la siguiente etapa.';
+  const resultado = ({ sent, mode }: Pick<WaSendResult, 'sent' | 'mode'>) => {
+    if (sent) return 'Enviado. El plan pasó a la siguiente etapa.';
+    if (mode === 'stub') {
+      return 'Modo prueba: no salió a WhatsApp porque faltan las credenciales de Meta.';
+    }
+    if (mode === 'meta') {
+      return 'Meta rechazó el envío. No salió a WhatsApp y el plan no avanzó; revisa la plantilla, el número y los logs de Railway.';
+    }
+    return 'El proveedor de WhatsApp rechazó el envío. No salió a WhatsApp y el plan no avanzó.';
+  };
 
   const enviarPlantilla = () =>
     correr('enviar', async () => {
       if (!plantillaHoy || !factura) return;
       const r = await api.sendWaTemplate(customerId, factura.id, plantillaHoy.name);
       await cargar();
-      return resultado(r.sent);
+      return resultado(r);
     });
 
   const generarRespuesta = () =>
@@ -150,7 +156,7 @@ function Conversacion({ customerId, cuenta }: { customerId: string; cuenta: Cuen
       setRespuesta(null);
       setEditando(false);
       await cargar();
-      return r.sent ? 'Respuesta enviada.' : 'Respuesta enviada en modo prueba (sin token de Meta no sale a WhatsApp).';
+      return resultado(r);
     });
 
   return (
