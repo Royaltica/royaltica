@@ -481,10 +481,10 @@ describe('CollectionSequencesService', () => {
     });
     const plan = [
       lvl(1, -90, 'royaltica_nivel_0'),
-      lvl(2, -14, 'aviso_preventivo_pago'),
-      lvl(3, -7, 'recordatorio_cortesia_pago'),
-      lvl(4, -3, 'vence_3_dias'),
-      lvl(5, 0, 'vence_hoy'),
+      lvl(2, -14, 'nivel_1'),
+      lvl(3, -7, 'nivel_2'),
+      lvl(4, -3, 'nivel_3'),
+      lvl(5, 0, 'nivel_4'),
       lvl(6, 1, 'aviso_vencida'),
     ];
 
@@ -496,15 +496,15 @@ describe('CollectionSequencesService', () => {
 
     it('niveles previos que ya no aplican se saltan (no se manda el aviso de 14 días a 6 días de vencer)', () => {
       const r = pickNextStep(plan, 1, -6);
-      expect(r.step?.whatsappTemplateName).toBe('recordatorio_cortesia_pago');
-      expect(r.superseded.map((s) => s.whatsappTemplateName)).toEqual(['aviso_preventivo_pago']);
+      expect(r.step?.whatsappTemplateName).toBe('nivel_2');
+      expect(r.superseded.map((s) => s.whatsappTemplateName)).toEqual(['nivel_1']);
     });
 
     it('"vence en 3 días" solo se manda ese día exacto; si ya pasó, espera al siguiente nivel', () => {
       const r = pickNextStep(plan, 3, -1);
-      // vence_3_dias quedó atrás y vence_hoy (día 0) aún no toca
-      expect(r.step?.whatsappTemplateName).toBe('vence_hoy');
-      expect(r.superseded.map((s) => s.whatsappTemplateName)).toEqual(['vence_3_dias']);
+      // nivel_3 quedó atrás y nivel_4 (día 0) aún no toca
+      expect(r.step?.whatsappTemplateName).toBe('nivel_4');
+      expect(r.superseded.map((s) => s.whatsappTemplateName)).toEqual(['nivel_3']);
     });
 
     it('sin pasos negativos se comporta igual que antes: siguiente en orden si ya le toca', () => {
@@ -526,7 +526,7 @@ describe('CollectionSequencesService', () => {
 
       expect(result).toEqual({ outcome: 'sent', stepOrder: 3 });
       expect(conversations.sendCollectionStep).toHaveBeenCalledWith(
-        expect.objectContaining({ templateName: 'recordatorio_cortesia_pago' }),
+        expect.objectContaining({ templateName: 'nivel_2' }),
       );
     });
 

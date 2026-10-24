@@ -57,7 +57,7 @@ export const COLLECTION_TEMPLATES: CollectionTemplate[] = [
     buttons: ['Todo en orden', 'Tengo una duda'],
   },
   {
-    name: 'aviso_preventivo_pago',
+    name: 'nivel_1',
     level: 'N1',
     label: 'Nivel 1 · Aviso preventivo (14 días antes)',
     defaultDaysAfterDue: -14,
@@ -67,7 +67,7 @@ export const COLLECTION_TEMPLATES: CollectionTemplate[] = [
     buttons: [],
   },
   {
-    name: 'recordatorio_cortesia_pago',
+    name: 'nivel_2',
     level: 'N2',
     label: 'Nivel 2 · Recordatorio de cortesía (7 días antes)',
     defaultDaysAfterDue: -7,
@@ -77,7 +77,7 @@ export const COLLECTION_TEMPLATES: CollectionTemplate[] = [
     buttons: ['Todo claro', 'Tengo una pregunta'],
   },
   {
-    name: 'vence_3_dias',
+    name: 'nivel_3',
     level: 'N3',
     label: 'Nivel 3 · Vence en 3 días',
     defaultDaysAfterDue: -3,
@@ -87,7 +87,7 @@ export const COLLECTION_TEMPLATES: CollectionTemplate[] = [
     buttons: ['Ya quedó programada', 'Me gustaría platicarlo'],
   },
   {
-    name: 'vence_hoy',
+    name: 'nivel_4',
     level: 'N4',
     label: 'Nivel 4 · Vence hoy',
     defaultDaysAfterDue: 0,

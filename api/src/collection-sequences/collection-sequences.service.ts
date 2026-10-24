@@ -98,34 +98,34 @@ const LEVEL_PLAN_STEPS = [
       '¡Hola {{customerName}}! Le escribimos para confirmar que recibió correctamente su factura por {{amount}}, con vencimiento el {{dueDate}}. ¿Todo concuerda de su lado?',
   },
   {
-    daysAfterDue: tpl('aviso_preventivo_pago').defaultDaysAfterDue,
+    daysAfterDue: tpl('nivel_1').defaultDaysAfterDue,
     channel: 'WHATSAPP' as const,
     tone: 'GENTLE' as const,
-    whatsappTemplateName: 'aviso_preventivo_pago',
+    whatsappTemplateName: 'nivel_1',
     messageTemplate:
       '¡Hola {{customerName}}! Le escribimos para avisarle que su factura por {{amount}} tiene como fecha de vencimiento el {{dueDate}}. ¿La tiene ya en su radar?',
   },
   {
-    daysAfterDue: tpl('recordatorio_cortesia_pago').defaultDaysAfterDue,
+    daysAfterDue: tpl('nivel_2').defaultDaysAfterDue,
     channel: 'WHATSAPP' as const,
     tone: 'GENTLE' as const,
-    whatsappTemplateName: 'recordatorio_cortesia_pago',
+    whatsappTemplateName: 'nivel_2',
     messageTemplate:
       '¡Hola {{customerName}}! Le recordamos que su factura por {{amount}} vence el {{dueDate}}. ¿Hay algo que podamos aclararle mientras tanto?',
   },
   {
-    daysAfterDue: tpl('vence_3_dias').defaultDaysAfterDue,
+    daysAfterDue: tpl('nivel_3').defaultDaysAfterDue,
     channel: 'WHATSAPP' as const,
     tone: 'STANDARD' as const,
-    whatsappTemplateName: 'vence_3_dias',
+    whatsappTemplateName: 'nivel_3',
     messageTemplate:
       '¡Hola {{customerName}}! Su factura por {{amount}} vence en 3 días, el {{dueDate}}. Si ya quedó programada, con gusto la esperamos; si necesita más tiempo, también podemos platicarlo.',
   },
   {
-    daysAfterDue: tpl('vence_hoy').defaultDaysAfterDue,
+    daysAfterDue: tpl('nivel_4').defaultDaysAfterDue,
     channel: 'WHATSAPP' as const,
     tone: 'STANDARD' as const,
-    whatsappTemplateName: 'vence_hoy',
+    whatsappTemplateName: 'nivel_4',
     messageTemplate:
       '¡Hola {{customerName}}! Hoy vence su factura por {{amount}}. Si ya realizó su pago, compártanos su comprobante para dejarlo registrado.',
   },
