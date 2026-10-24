@@ -122,13 +122,16 @@ function Conversacion({ customerId, cuenta }: { customerId: string; cuenta: Cuen
     }
   };
 
-  const resultado = ({ sent, mode }: Pick<WaSendResult, 'sent' | 'mode'>) => {
+  const resultado = ({ sent, mode, error }: Pick<WaSendResult, 'sent' | 'mode' | 'error'>) => {
     if (sent) return 'Enviado. El plan pasó a la siguiente etapa.';
     if (mode === 'stub') {
       return 'Modo prueba: no salió a WhatsApp porque faltan las credenciales de Meta.';
     }
     if (mode === 'meta') {
-      return 'Meta rechazó el envío. No salió a WhatsApp y el plan no avanzó; revisa la plantilla, el número y los logs de Railway.';
+      // El motivo viene de Meta, ya traducido. Sin motivo = fallo de conexión con Meta, no un rechazo.
+      return error
+        ? `No salió a WhatsApp y el plan no avanzó. ${error.message}${error.code ? ` (código ${error.code})` : ''}`
+        : 'No se pudo conectar con Meta (sin respuesta). No salió a WhatsApp y el plan no avanzó; intenta de nuevo en un momento.';
     }
     return 'El proveedor de WhatsApp rechazó el envío. No salió a WhatsApp y el plan no avanzó.';
   };

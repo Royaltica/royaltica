@@ -26,7 +26,9 @@ const FORMATOS = {
   clientes: {
     archivo: 'formato-clientes.csv',
     columnas: 'externalId,name,rfc,email,phone,financeContactName,financeContactPhone,financeContactEmail',
-    ejemplo: 'CLI-001,Distribuidora Uno,DUN010101AB1,pagos@uno.mx,+5215512345678,Patricia Salas,+5218122310045,tesoreria@uno.mx',
+    // Teléfonos de EJEMPLO inválidos a propósito (lada 00): si se sube el archivo
+    // tal cual, ningún mensaje le puede llegar a una persona real.
+    ejemplo: 'CLI-001,Distribuidora Uno,DUN010101AB1,pagos@uno.mx,+520000000001,Nombre de Tesorería,+520000000002,tesoreria@uno.mx',
   },
   facturas: {
     archivo: 'formato-facturas.csv',

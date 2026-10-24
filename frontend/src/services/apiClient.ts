@@ -2480,6 +2480,8 @@ export interface WaThread {
 export interface WaSendResult {
   sent: boolean;
   mode: 'meta' | 'twilio' | 'stub';
+  /** Por qué Meta rechazó el envío (en español) y su código. null si no hubo rechazo. */
+  error?: { code: number | null; message: string; detail: string | null } | null;
   message: WaMessage;
 }
 

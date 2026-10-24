@@ -4,6 +4,7 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { GeminiService } from '../gemini/gemini.service';
 import { UsageService } from '../usage/usage.service';
 import type { Env } from '../config/env.validation';
+import { MetaApiError, describeMetaError, type MetaSendError } from './meta-errors.util';
 
 /** Opciones de cost tracking para sendMessage: sin organizationId no se
  * registra UsageEvent (p. ej. mensajes de prueba o sin contexto de tenant). */
@@ -17,6 +18,8 @@ export interface WhatsappSendResult {
   sent: boolean;
   mode: 'meta' | 'twilio' | 'stub';
   id?: string;
+  /** Por qué no salió, ya traducido (solo cuando Meta lo rechazó). */
+  error?: MetaSendError;
 }
 
 /**
@@ -109,7 +112,7 @@ export class WhatsappService implements OnModuleInit {
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      return { sent: false, mode: this.provider };
+      return { sent: false, mode: this.provider, ...this.errorOf(err) };
     }
   }
 
@@ -172,8 +175,7 @@ export class WhatsappService implements OnModuleInit {
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`Meta API respondió ${res.status}: ${body}`);
+        throw new MetaApiError(res.status, await res.text().catch(() => ''));
       }
       const data = (await res.json()) as { messages?: { id?: string }[] };
       // Cost tracking: mismo criterio que sendMessage (una plantilla también
@@ -193,7 +195,7 @@ export class WhatsappService implements OnModuleInit {
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      return { sent: false, mode: this.provider };
+      return { sent: false, mode: this.provider, ...this.errorOf(err) };
     }
   }
 
@@ -344,8 +346,7 @@ ${rawText}
     if (!res.ok) {
       // El detalle de Meta (token vencido, número inválido, fuera de la
       // ventana de 24h = 131047…) es lo que hace falta para diagnosticar.
-      const detalle = await res.text().catch(() => '');
-      throw new Error(`Meta API respondió ${res.status}: ${detalle.slice(0, 500)}`);
+      throw new MetaApiError(res.status, await res.text().catch(() => ''));
     }
     const data = (await res.json()) as { messages?: { id?: string }[] };
     return { sent: true, mode: 'meta', id: data.messages?.[0]?.id };
@@ -379,6 +380,11 @@ ${rawText}
     }
     const data = (await res.json()) as { sid?: string };
     return { sent: true, mode: 'twilio', id: data.sid };
+  }
+
+  /** Causa legible cuando Meta rechazó el envío (nada si fue otro tipo de fallo). */
+  private errorOf(err: unknown): { error?: MetaSendError } {
+    return err instanceof MetaApiError ? { error: describeMetaError(err.status, err.body) } : {};
   }
 
   /** Garantiza prefijo internacional (E.164 sin el doble +). */

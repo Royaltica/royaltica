@@ -170,6 +170,50 @@ describe('WhatsappService', () => {
     );
   });
 
+  describe('cuando Meta rechaza el envío', () => {
+    const build = () => {
+      const service = new WhatsappService(
+        makeConfig({ WHATSAPP_PROVIDER: 'meta', WHATSAPP_TOKEN: 'tok', WHATSAPP_PHONE_ID: '123' }),
+        { user: { findMany: jest.fn() } } as unknown as PrismaService,
+        makeGemini(),
+        makeUsage(),
+      );
+      service.onModuleInit();
+      return service;
+    };
+    afterEach(() => jest.restoreAllMocks());
+
+    it('plantilla: devuelve la causa traducida (no solo sent:false)', async () => {
+      jest.spyOn(global, 'fetch').mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ error: { code: 131030, message: '(#131030) Recipient phone number not in allowed list' } }),
+      } as Response);
+      const r = await build().sendTemplate('+5218122310045', 'royaltica_nivel_0', 'es_MX', ['a']);
+      expect(r.sent).toBe(false);
+      expect(r.mode).toBe('meta');
+      expect(r.error?.code).toBe(131030);
+      expect(r.error?.message).toContain('lista de destinatarios permitidos');
+    });
+
+    it('texto libre: igual, con la causa (131047 = fuera de la ventana de 24h)', async () => {
+      jest.spyOn(global, 'fetch').mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: async () => JSON.stringify({ error: { code: 131047, message: 'Re-engagement message' } }),
+      } as Response);
+      const r = await build().sendMessage('+5215512345678', 'hola');
+      expect(r.error?.code).toBe(131047);
+      expect(r.error?.message).toContain('24 horas');
+    });
+
+    it('un fallo de red no se presenta como rechazo de Meta (sin error traducido)', async () => {
+      jest.spyOn(global, 'fetch').mockRejectedValue(new Error('network down'));
+      const r = await build().sendTemplate('+5215512345678', 'royaltica_nivel_0');
+      expect(r).toEqual({ sent: false, mode: 'meta' });
+    });
+  });
+
   describe('sendForOrg (FR-08: pool de números virtuales)', () => {
     it('sin números configurados, cae a sendMessage (comportamiento previo)', async () => {
       const prisma = { virtualNumber: { findFirst: jest.fn().mockResolvedValue(null) } };

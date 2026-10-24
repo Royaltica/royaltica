@@ -338,7 +338,7 @@ export class WhatsappConversationService {
     if (this.counts(res.sent)) {
       await this.advanceRunToLevel(customer.organizationId, invoiceId, template.name);
     }
-    return { sent: res.sent, mode: res.mode, message };
+    return { sent: res.sent, mode: res.mode, error: res.error ?? null, message };
   }
 
   /**
@@ -466,7 +466,7 @@ ${hilo}
     if (level && latestInvoice && this.counts(res.sent)) {
       await this.advanceRunToLevel(customer.organizationId, latestInvoice.id, level);
     }
-    return { sent: res.sent, mode: res.mode, message };
+    return { sent: res.sent, mode: res.mode, error: res.error ?? null, message };
   }
 
   /**
