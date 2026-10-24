@@ -1024,6 +1024,57 @@ model Lead {
 }
 
 // ─────────────────────────────────────────────────────
+// Diagnóstico pre-venta (Fase 4, "CONCEPTO" de Paolo): formulario guiado
+// público para un prospecto, ANTES de contratar. Paso 1 del concepto
+// ("analizar su situación actual") + paso 2 ("entregar un primer análisis
+// de áreas a mejorar, sin decir mucho"). El paso 3 (subir CSV/clientes/
+// historial) es Fase 5, YA como cliente contratado — no vive aquí.
+// ─────────────────────────────────────────────────────
+
+/// Cómo hace seguimiento de cobranza el prospecto HOY (antes de Royáltica).
+enum CollectionMethod {
+  NINGUNO
+  MANUAL_EXCEL
+  LLAMADAS
+  WHATSAPP_MANUAL
+  SOFTWARE
+}
+
+/// Resultado del diagnóstico: qué tan sana está su cobranza hoy.
+enum DiagnosticHealthTier {
+  SALUDABLE
+  OPORTUNIDADES
+  RIESGO_ALTO
+}
+
+/// Un diagnóstico pre-venta respondido. Sin FK a Organization (es un
+/// prospecto, igual que Lead): si luego se vuelve cliente, el vínculo se
+/// hace a mano desde el panel (mismo criterio que leads convertidos).
+model PreSaleDiagnostic {
+  id                  String               @id @default(uuid())
+  contactName         String
+  contactEmail        String
+  company             String?
+  phone               String?
+  // ── respuestas del formulario guiado (paso 1: "analizar su situación actual") ──
+  hasCollectionPolicy Boolean
+  collectionMethod    CollectionMethod
+  avgDaysToCollect    Int
+  overduePortfolioPct Int
+  portfolioSize       Int?
+  usesSoftware        Boolean
+  // ── resultado (paso 2: "primer análisis, sin decir mucho") ──
+  score               Int
+  tier                DiagnosticHealthTier
+  recommendations     String[]
+  source              String?
+  createdAt           DateTime             @default(now())
+
+  @@index([contactEmail])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────
 // Reportes de cobranza (PDF) — audit trail de reportes generados
 // ─────────────────────────────────────────────────────
 
