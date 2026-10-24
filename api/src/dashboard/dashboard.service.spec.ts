@@ -19,7 +19,7 @@ describe('DashboardService — indicadores CxC', () => {
   let prisma: {
     invoice: { findMany: jest.Mock };
     customer: { findMany: jest.Mock };
-    activityLog: { findMany: jest.Mock };
+    activityLog: { findMany: jest.Mock; count: jest.Mock };
     user: { findMany: jest.Mock };
   };
 
@@ -27,7 +27,7 @@ describe('DashboardService — indicadores CxC', () => {
     prisma = {
       invoice: { findMany: jest.fn() },
       customer: { findMany: jest.fn() },
-      activityLog: { findMany: jest.fn().mockResolvedValue([]) },
+      activityLog: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
       user: { findMany: jest.fn().mockResolvedValue([]) },
     };
     service = new DashboardService(
@@ -98,6 +98,88 @@ describe('DashboardService — indicadores CxC', () => {
       const res = await service.getAtRiskCustomers(user);
       expect(res.count).toBe(1);
       expect(res.customers[0].reason).toMatch(/16|17|18|19|20 días|días de atraso/);
+    });
+  });
+
+  describe('getPortfolioRiskAnalysis (Fase 3 — análisis semanal de cartera)', () => {
+    const range = { from: new Date('2026-08-17'), to: new Date('2026-08-24') };
+
+    it('distribuye por tier y recomienda SUSPENDER_CREDITO para INCOBRABLE', async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        { id: 'c-1', name: 'Incobrable SA', score: 20, riskTier: 'INCOBRABLE', maxDaysOverdue: 210, creditLimitDays: 30 },
+        { id: 'c-2', name: 'Sano SA', score: 98, riskTier: 'SANO', maxDaysOverdue: 0, creditLimitDays: 30 },
+      ]);
+
+      const res = await service.getPortfolioRiskAnalysis(user, range);
+
+      expect(res.distribution).toEqual({ SANO: 1, ATENCION: 0, RIESGO: 0, INCOBRABLE: 1, SIN_CLASIFICAR: 0 });
+      expect(res.recommendations).toHaveLength(2);
+      const incobrable = res.recommendations.find((r) => r.customerId === 'c-1');
+      expect(incobrable?.action).toBe('SUSPENDER_CREDITO');
+    });
+
+    it('recomienda REDUCIR_CREDITO para RIESGO y AUMENTAR_CREDITO para SANO con puntualidad alta y crédito ya asignado', async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        { id: 'c-1', name: 'Riesgo SA', score: 60, riskTier: 'RIESGO', maxDaysOverdue: 160, creditLimitDays: 15 },
+        { id: 'c-2', name: 'Excelente SA', score: 99, riskTier: 'SANO', maxDaysOverdue: 0, creditLimitDays: 15 },
+        { id: 'c-3', name: 'Sano sin crédito asignado', score: 99, riskTier: 'SANO', maxDaysOverdue: 0, creditLimitDays: null },
+      ]);
+
+      const res = await service.getPortfolioRiskAnalysis(user, range);
+
+      const riesgo = res.recommendations.find((r) => r.customerId === 'c-1');
+      const excelente = res.recommendations.find((r) => r.customerId === 'c-2');
+      expect(riesgo?.action).toBe('REDUCIR_CREDITO');
+      expect(excelente?.action).toBe('AUMENTAR_CREDITO');
+      // sin creditLimitDays asignado no se sugiere aumentar (nada que aumentar).
+      expect(res.recommendations.find((r) => r.customerId === 'c-3')).toBeUndefined();
+    });
+
+    it('clientes sin riskTier calculado caen en SIN_CLASIFICAR y sin recomendación', async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        { id: 'c-1', name: 'Nuevo SA', score: null, riskTier: null, maxDaysOverdue: null, creditLimitDays: null },
+      ]);
+
+      const res = await service.getPortfolioRiskAnalysis(user, range);
+
+      expect(res.distribution.SIN_CLASIFICAR).toBe(1);
+      expect(res.recommendations).toHaveLength(0);
+      expect(res.bestPayers).toHaveLength(0);
+    });
+
+    it('identifica a quién paga mejor/peor (top 5 por score)', async () => {
+      prisma.customer.findMany.mockResolvedValue(
+        Array.from({ length: 6 }, (_, i) => ({
+          id: `c-${i}`,
+          name: `Cliente ${i}`,
+          score: i * 10,
+          riskTier: 'SANO',
+          maxDaysOverdue: 0,
+          creditLimitDays: null,
+        })),
+      );
+
+      const res = await service.getPortfolioRiskAnalysis(user, range);
+
+      expect(res.bestPayers).toHaveLength(5);
+      expect(res.bestPayers[0].score).toBe(50); // el mayor de 0..50
+      expect(res.worstPayers[0].score).toBe(0);
+    });
+
+    it('cuenta el "avance" semanal a partir de ActivityLog (CUSTOMER_RISK_WORSENED / CUSTOMER_SCORE_DROP)', async () => {
+      prisma.customer.findMany.mockResolvedValue([]);
+      prisma.activityLog.count
+        .mockResolvedValueOnce(3) // CUSTOMER_RISK_WORSENED
+        .mockResolvedValueOnce(2); // CUSTOMER_SCORE_DROP
+
+      const res = await service.getPortfolioRiskAnalysis(user, range);
+
+      expect(res.avance).toEqual({ clientesQueEmpeoraronRiesgo: 3, caidasDePuntualidad: 2 });
+      expect(prisma.activityLog.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ action: 'CUSTOMER_RISK_WORSENED' }),
+        }),
+      );
     });
   });
 

@@ -14,6 +14,7 @@ import { DashboardService } from '../dashboard/dashboard.service';
 import { ReportsService } from '../reports/reports.service';
 import { CollectionSequencesService } from '../collection-sequences/collection-sequences.service';
 import { CustomerScoringService } from '../customers/scoring/customer-scoring.service';
+import { CustomerRiskService } from '../customers/scoring/customer-risk.service';
 import { ActivityLogService } from '../activity/activity-log.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
@@ -76,6 +77,7 @@ export class JobsService {
     private readonly reports: ReportsService,
     private readonly collectionSequences: CollectionSequencesService,
     private readonly customerScoring: CustomerScoringService,
+    private readonly customerRisk: CustomerRiskService,
     private readonly config: ConfigService<Env, true>,
     private readonly activity: ActivityLogService,
     private readonly redis: RedisService,
@@ -514,13 +516,24 @@ export class JobsService {
         continue;
       }
 
+      // Fase 3: diagnóstico de cartera (distribución de riesgo) para el
+      // cuerpo del correo; el detalle completo (quién paga peor, sugerencias
+      // de crédito) va en el PDF adjunto.
+      const portfolio = await this.dashboard.getPortfolioRiskAnalysis(
+        { organizationId: org.id } as AuthenticatedUser,
+        range,
+      );
+
       const title = 'Resumen de cobranza';
       const body =
         `Semana del ${weekLabel}: ` +
         `cobrado ${fmt(digest.collected.amount)} (${digest.collected.count} factura[s]); ` +
         `${digest.reminders.total} recordatorio[s] enviados ` +
         `(${digest.reminders.whatsapp} WhatsApp, ${digest.reminders.email} correo); ` +
-        `pendiente por cobrar ${fmt(digest.outstanding.amount)} (${digest.outstanding.count} factura[s]).`;
+        `pendiente por cobrar ${fmt(digest.outstanding.amount)} (${digest.outstanding.count} factura[s]). ` +
+        `Cartera: ${portfolio.distribution.RIESGO} en riesgo, ` +
+        `${portfolio.distribution.INCOBRABLE} incobrable(s) ` +
+        `(${portfolio.avance.clientesQueEmpeoraronRiesgo} empeoraron esta semana).`;
 
       // PDF de cobranza (KPIs + antigüedad + clientes en riesgo) para adjuntar
       // al correo. Si falla la generación no bloqueamos el envío del resumen
@@ -569,16 +582,23 @@ export class JobsService {
     return { sent };
   }
 
-  // ── Score de puntualidad por cliente (FR-04/FR-05, spec "Mejoras V1") ──
-  // Recalcula el score de TODO cliente CxC con al menos una factura, y si
-  // cayó significativamente (ver SCORE_DROP_ALERT_THRESHOLD) alerta a los
-  // admins sugiriendo intervención humana — tal cual pide el ejemplo de la
-  // especificación (93% -> 61%). Corre después del motor de secuencias
-  // (11am) para que el guardrail de FR-05 (excluir a buenos pagadores de
-  // pasos agresivos) ya haya usado el score del día anterior esa mañana; el
-  // valor fresco de hoy se usará mañana.
+  // ── Score de puntualidad + riesgo/incobrabilidad por cliente (FR-04/FR-05,
+  // spec "Mejoras V1", y pedido de Paolo de clasificación de incobrabilidad) ──
+  // Recalcula el score y el tier de riesgo de TODO cliente CxC con al menos
+  // una factura, y alerta a los admins cuando: (a) el score cayó
+  // significativamente (ver SCORE_DROP_ALERT_THRESHOLD), tal cual pide el
+  // ejemplo de la especificación (93% -> 61%), o (b) el tier de riesgo
+  // EMPEORÓ (ver CustomerRiskService — nunca alerta por una mejora). Ambas
+  // clasificaciones se calculan juntas, en el mismo loop, para no recorrer
+  // la cartera de clientes dos veces por día. Corre después del motor de
+  // secuencias (11am) para que el guardrail de FR-05 (excluir a buenos
+  // pagadores de pasos agresivos) ya haya usado el score del día anterior
+  // esa mañana; el valor fresco de hoy se usará mañana.
   @Cron('30 11 * * *', { name: 'customer-score-recompute' })
-  async customerScoreRecompute(): Promise<{ recomputed: number; alerted: number }> {
+  async customerScoreRecompute(): Promise<{
+    recomputed: number;
+    alerted: number;
+  }> {
     if (!this.enabled) return { recomputed: 0, alerted: 0 };
     let recomputed = 0;
     let alerted = 0;
@@ -591,18 +611,18 @@ export class JobsService {
           deletedAt: null,
           invoices: { some: { direction: 'RECEIVABLE', deletedAt: null } },
         },
-        select: { id: true, name: true, score: true },
+        select: { id: true, name: true, score: true, riskTier: true },
       });
       if (customers.length === 0) continue;
 
       const admins = await this.orgAdmins(org.id);
       for (const customer of customers) {
-        const result = await this.customerScoring.recomputeOne(
+        const scoreResult = await this.customerScoring.recomputeOne(
           customer.id,
           customer.score,
         );
         recomputed += 1;
-        if (result.droppedSignificantly) {
+        if (scoreResult.droppedSignificantly) {
           await this.fanOut(
             org.id,
             admins,
@@ -611,12 +631,61 @@ export class JobsService {
               title: 'Riesgo alto: puntualidad en caída',
               body:
                 `El score de puntualidad de ${customer.name} cayó de ` +
-                `${result.previousScore}% a ${result.score}%. Se sugiere ` +
+                `${scoreResult.previousScore}% a ${scoreResult.score}%. Se sugiere ` +
                 'intervención humana inmediata.',
             },
             true, // crítico: también dispara WhatsApp a admins con opt-in
           );
           alerted += 1;
+          // Un solo registro por evento (no uno por admin notificado): es lo
+          // que Fase 3 (DashboardService.getPortfolioRiskAnalysis) cuenta
+          // para el "avance" del análisis semanal de cartera.
+          await this.activity.record({
+            organizationId: org.id,
+            action: 'CUSTOMER_SCORE_DROP',
+            entityType: 'Customer',
+            entityId: customer.id,
+            metadata: {
+              previousScore: scoreResult.previousScore,
+              score: scoreResult.score,
+            },
+          });
+        }
+
+        const riskResult = await this.customerRisk.recomputeOne(
+          customer.id,
+          scoreResult.score,
+          customer.riskTier,
+        );
+        if (riskResult.worsened) {
+          const critical = riskResult.tier === 'INCOBRABLE';
+          await this.fanOut(
+            org.id,
+            admins,
+            {
+              type: 'CUSTOMER_RISK_WORSENED',
+              title:
+                riskResult.tier === 'INCOBRABLE'
+                  ? 'Cliente marcado como incobrable'
+                  : `Cliente pasó a riesgo: ${riskResult.tier}`,
+              body:
+                `${customer.name} pasó a ${riskResult.tier} ` +
+                `(${riskResult.reason}). Se sugiere revisar política de crédito.`,
+            },
+            critical,
+          );
+          alerted += 1;
+          await this.activity.record({
+            organizationId: org.id,
+            action: 'CUSTOMER_RISK_WORSENED',
+            entityType: 'Customer',
+            entityId: customer.id,
+            metadata: {
+              previousTier: riskResult.previousTier,
+              tier: riskResult.tier,
+              maxDaysOverdue: riskResult.maxDaysOverdue,
+            },
+          });
         }
       }
     }

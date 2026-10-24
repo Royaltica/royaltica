@@ -727,15 +727,43 @@ export class CollectionSequencesService {
       where: { invoiceId },
     });
     if (!run) {
+      // Fase 2 (pedido de Paolo: "no se cobra igual desde un inicio a
+      // alguien que sí te paga que a otro que se atrasa"). No existe forma
+      // de variar el TEXTO de una plantilla de Meta ya aprobada por cliente
+      // (Meta exige coincidencia exacta), así que la diferenciación real
+      // posible es CUÁLES pasos recibe cada quien: un cliente ya clasificado
+      // RIESGO/INCOBRABLE (CustomerRiskService, Fase 1) salta los niveles
+      // GENTLE de "bienvenida" (0-2) y arranca directo en el primer paso
+      // STANDARD o más firme — llega "ya calentado" desde la primera
+      // factura, en vez de repetir el mismo tono amable que a un cliente sin
+      // historial de atraso. ATENCION se queda en el plan normal: es una
+      // señal temprana, no un patrón confirmado de mal pago.
+      const riskTier = invoice.customer.riskTier;
+      const fastTrack = riskTier === 'RIESGO' || riskTier === 'INCOBRABLE';
+      const gentleSteps = fastTrack
+        ? policy.sequenceSteps.filter((s) => s.tone === 'GENTLE')
+        : [];
+      const startStepOrder =
+        gentleSteps.length > 0
+          ? Math.max(...gentleSteps.map((s) => s.stepOrder))
+          : 0;
+
       run = await this.prisma.collectionSequenceRun.create({
         data: {
           organizationId: invoice.organizationId,
           invoiceId,
           collectionPolicyId: policy.id,
-          currentStepOrder: 0,
+          currentStepOrder: startStepOrder,
           status: 'ACTIVE',
         },
       });
+
+      for (const skipped of gentleSteps) {
+        await this.logStep(invoice, run, skipped, 'COLLECTION_SEQUENCE_STEP_SKIPPED', {
+          reason: 'risk-tier-fast-track',
+          riskTier,
+        });
+      }
     }
 
     if (run.status !== 'ACTIVE') {

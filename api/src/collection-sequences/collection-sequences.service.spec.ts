@@ -170,6 +170,74 @@ describe('CollectionSequencesService', () => {
     );
   });
 
+  it('Fase 2 — cliente RIESGO: salta los niveles GENTLE y arranca en el primer paso STANDARD+', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    const gentle1 = { ...step1, id: 'g1', stepOrder: 1, daysAfterDue: -14, tone: 'GENTLE' };
+    const gentle2 = { ...step1, id: 'g2', stepOrder: 2, daysAfterDue: -7, tone: 'GENTLE' };
+    const standard = { ...step1, id: 's3', stepOrder: 3, daysAfterDue: 0, tone: 'STANDARD' };
+    prisma.collectionPolicy.findFirst.mockResolvedValue({
+      ...basePolicy,
+      sequenceSteps: [gentle1, gentle2, standard],
+    });
+    prisma.invoice.findUnique.mockResolvedValue({
+      ...baseInvoice,
+      customer: { ...baseInvoice.customer, riskTier: 'RIESGO' },
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('sent');
+    expect(result.stepOrder).toBe(3); // el STANDARD, no el GENTLE 1
+    expect(prisma.collectionSequenceRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ currentStepOrder: 2 }) }),
+    );
+    // Los 2 niveles GENTLE quedan en bitácora como saltados (auditoría), no silenciosos.
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ stepOrder: 1, reason: 'risk-tier-fast-track' }),
+      }),
+    );
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ stepOrder: 2, reason: 'risk-tier-fast-track' }),
+      }),
+    );
+  });
+
+  it('Fase 2 — cliente SANO (sin riskTier) sigue el plan completo, incluido el primer GENTLE', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    const gentle1 = { ...step1, id: 'g1', stepOrder: 1, daysAfterDue: 0, tone: 'GENTLE' };
+    prisma.collectionPolicy.findFirst.mockResolvedValue({
+      ...basePolicy,
+      sequenceSteps: [gentle1],
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('sent');
+    expect(result.stepOrder).toBe(1);
+    expect(prisma.collectionSequenceRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ currentStepOrder: 0 }) }),
+    );
+  });
+
+  it('Fase 2 — cliente ATENCION NO se fast-trackea (solo RIESGO/INCOBRABLE)', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    const gentle1 = { ...step1, id: 'g1', stepOrder: 1, daysAfterDue: 0, tone: 'GENTLE' };
+    prisma.collectionPolicy.findFirst.mockResolvedValue({
+      ...basePolicy,
+      sequenceSteps: [gentle1],
+    });
+    prisma.invoice.findUnique.mockResolvedValue({
+      ...baseInvoice,
+      customer: { ...baseInvoice.customer, riskTier: 'ATENCION' },
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.stepOrder).toBe(1); // recibe el GENTLE normal, no se salta nada
+  });
+
   it('guard rail: fuera de la ventana horaria permitida, no envía y no avanza el paso', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-01T03:00:00Z')); // 03:00 UTC, fuera de 9-17
 

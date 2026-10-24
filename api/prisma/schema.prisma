@@ -368,6 +368,14 @@ model Customer {
   // CollectionSequencesService lo excluye de pasos agresivos (FR-05).
   score                Int?
   scoreUpdatedAt       DateTime?
+  // Clasificación de riesgo/incobrabilidad (ver enum CustomerRiskTier).
+  // Calculada por CustomerRiskService (cron diario, junto con `score`).
+  // Null hasta el primer cálculo. `maxDaysOverdue` queda persistido para
+  // que la UI explique el motivo sin tener que recalcularlo (0 = sin
+  // facturas abiertas vencidas al momento del cálculo).
+  riskTier             CustomerRiskTier?
+  maxDaysOverdue       Int?
+  riskTierUpdatedAt    DateTime?
   // FR-02 (spec "Mejoras V1"): el sistema debe priorizar el contacto con
   // Finanzas/Tesorería sobre el Director General, porque ese es quien
   // realmente ejecuta la firma o la transferencia. Si están capturados,
@@ -397,6 +405,7 @@ model Customer {
   @@index([organizationId])
   @@index([isActive])
   @@index([assignedAgentId])
+  @@index([riskTier])
 }
 
 // Portal de autoservicio SIN CUENTA para clientes deudores (Tradespace,
@@ -723,6 +732,24 @@ model WebhookDelivery {
   @@index([endpointId])
   @@index([event])
   @@index([createdAt])
+}
+
+// Clasificación de riesgo/incobrabilidad de un cliente CxC (pedido de Paolo:
+// "cómo analiza Royáltica cuándo un cliente se está volviendo incobrable").
+// Determinista, calculada por CustomerRiskService a partir de días de atraso
+// de sus facturas abiertas + su score de puntualidad (Customer.score) —
+// mismo criterio que Paolo describió: tiempo vencido, medio de pago y plazo
+// pactado por cliente. SANO = sin señales de riesgo. ATENCION = mismo
+// gatillo que DashboardService.getAtRiskCustomers (≥2 facturas vencidas o
+// ≥15 días de atraso) combinado con mal historial. RIESGO = ~150+ días de
+// atraso en alguna factura abierta (umbral aproximado que dio Paolo).
+// INCOBRABLE = ~200+ días de atraso. Los umbrales viven en
+// customer-risk.constants.ts, no aquí, para poder ajustarlos sin migración.
+enum CustomerRiskTier {
+  SANO
+  ATENCION
+  RIESGO
+  INCOBRABLE
 }
 
 // Canal preferido para contactar al deudor en cobranza automatizada.

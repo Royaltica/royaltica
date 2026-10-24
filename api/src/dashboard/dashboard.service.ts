@@ -7,7 +7,21 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { GOOD_PAYER_SCORE_THRESHOLD } from '../customers/scoring/customer-scoring.constants';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+
+/** Acción de política de crédito sugerida por `getPortfolioRiskAnalysis`.
+ * Es solo una SUGERENCIA (pedido de Paolo: "identificar si darle crédito,
+ * quitarle, aplicar alguna política"): nunca cambia `Customer.creditLimitDays`
+ * sola, un humano decide. */
+export type CreditPolicyAction = 'AUMENTAR_CREDITO' | 'REDUCIR_CREDITO' | 'SUSPENDER_CREDITO';
+
+/** Orden de urgencia para mostrar primero lo más crítico en el reporte. */
+const RECOMMENDATION_SEVERITY: Record<CreditPolicyAction, number> = {
+  SUSPENDER_CREDITO: 3,
+  REDUCIR_CREDITO: 2,
+  AUMENTAR_CREDITO: 1,
+};
 
 const num = (v: Prisma.Decimal | null): number => (v ? Number(v) : 0);
 
@@ -998,6 +1012,135 @@ export class DashboardService {
     return {
       count: atRisk.length,
       customers: atRisk.sort((a, b) => b.overdueAmount - a.overdueAmount),
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Análisis semanal de cartera (pedido de Paolo: "análisis semanal...
+   * diagnóstico de los clientes morosos, su avance, detección de
+   * anomalías -quién paga mejor/peor-, identificar si darle crédito,
+   * quitarle, aplicar alguna política para uno"). Se apoya 100% en lo que
+   * ya calcula el cron diario (CustomerScoringService + CustomerRiskService,
+   * Fase 1/2): aquí solo se agrega y se interpreta, nada se recalcula.
+   */
+  async getPortfolioRiskAnalysis(
+    user: AuthenticatedUser,
+    range: { from: Date; to: Date },
+  ) {
+    const organizationId = this.requireOrg(user);
+
+    const customers = await this.prisma.customer.findMany({
+      where: { organizationId, deletedAt: null, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        score: true,
+        riskTier: true,
+        maxDaysOverdue: true,
+        creditLimitDays: true,
+      },
+    });
+
+    // ── diagnóstico: distribución de la cartera por tier ──
+    const distribution = {
+      SANO: 0,
+      ATENCION: 0,
+      RIESGO: 0,
+      INCOBRABLE: 0,
+      SIN_CLASIFICAR: 0,
+    };
+    for (const c of customers) {
+      distribution[c.riskTier ?? 'SIN_CLASIFICAR'] += 1;
+    }
+
+    // ── anomalías: quién paga mejor/peor ──
+    const scored = customers.filter(
+      (c): c is typeof c & { score: number } => c.score != null,
+    );
+    const toPayerRow = (c: (typeof scored)[number]) => ({
+      customerId: c.id,
+      name: c.name,
+      score: c.score,
+    });
+    const bestPayers = [...scored].sort((a, b) => b.score - a.score).slice(0, 5).map(toPayerRow);
+    const worstPayers = [...scored].sort((a, b) => a.score - b.score).slice(0, 5).map(toPayerRow);
+
+    // ── política de crédito sugerida (nunca se aplica sola) ──
+    const recommendations: {
+      customerId: string;
+      name: string;
+      riskTier: string | null;
+      score: number | null;
+      action: CreditPolicyAction;
+      reason: string;
+    }[] = [];
+    for (const c of customers) {
+      if (c.riskTier === 'INCOBRABLE') {
+        recommendations.push({
+          customerId: c.id,
+          name: c.name,
+          riskTier: c.riskTier,
+          score: c.score,
+          action: 'SUSPENDER_CREDITO',
+          reason: `${c.maxDaysOverdue ?? 0} días de atraso sin pago: alto riesgo de pérdida total.`,
+        });
+      } else if (c.riskTier === 'RIESGO') {
+        recommendations.push({
+          customerId: c.id,
+          name: c.name,
+          riskTier: c.riskTier,
+          score: c.score,
+          action: 'REDUCIR_CREDITO',
+          reason: `${c.maxDaysOverdue ?? 0} días de atraso: reducir exposición hasta que regularice.`,
+        });
+      } else if (
+        c.riskTier === 'SANO' &&
+        c.creditLimitDays != null &&
+        (c.score ?? 0) >= GOOD_PAYER_SCORE_THRESHOLD
+      ) {
+        recommendations.push({
+          customerId: c.id,
+          name: c.name,
+          riskTier: c.riskTier,
+          score: c.score,
+          action: 'AUMENTAR_CREDITO',
+          reason: `${c.score}% de puntualidad sostenida: candidato a ampliar días de crédito.`,
+        });
+      }
+    }
+    recommendations.sort(
+      (a, b) => RECOMMENDATION_SEVERITY[b.action] - RECOMMENDATION_SEVERITY[a.action],
+    );
+
+    // ── avance: movimiento de riesgo detectado por el cron diario esta semana ──
+    const [worsenedCount, scoreDropCount] = await Promise.all([
+      this.prisma.activityLog.count({
+        where: {
+          organizationId,
+          action: 'CUSTOMER_RISK_WORSENED',
+          createdAt: { gte: range.from, lt: range.to },
+        },
+      }),
+      this.prisma.activityLog.count({
+        where: {
+          organizationId,
+          action: 'CUSTOMER_SCORE_DROP',
+          createdAt: { gte: range.from, lt: range.to },
+        },
+      }),
+    ]);
+
+    return {
+      totalCustomers: customers.length,
+      distribution,
+      bestPayers,
+      worstPayers,
+      recommendations,
+      avance: {
+        clientesQueEmpeoraronRiesgo: worsenedCount,
+        caidasDePuntualidad: scoreDropCount,
+      },
       generatedAt: new Date().toISOString(),
     };
   }

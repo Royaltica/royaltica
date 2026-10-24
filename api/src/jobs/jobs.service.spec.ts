@@ -10,6 +10,7 @@ import { DashboardService } from '../dashboard/dashboard.service';
 import { ReportsService } from '../reports/reports.service';
 import { CollectionSequencesService } from '../collection-sequences/collection-sequences.service';
 import { CustomerScoringService } from '../customers/scoring/customer-scoring.service';
+import { CustomerRiskService } from '../customers/scoring/customer-risk.service';
 import { ActivityLogService } from '../activity/activity-log.service';
 import { RedisService } from '../common/redis/redis.service';
 import { ConfigService } from '@nestjs/config';
@@ -24,7 +25,7 @@ describe('JobsService — weeklyCollectionDigest', () => {
     organization: { findMany: jest.Mock };
     user: { findMany: jest.Mock };
   };
-  let dashboard: { getReceivablesDigest: jest.Mock };
+  let dashboard: { getReceivablesDigest: jest.Mock; getPortfolioRiskAnalysis: jest.Mock };
   let reports: {
     wasReportSent: jest.Mock;
     generateCollectionReportPdf: jest.Mock;
@@ -53,6 +54,15 @@ describe('JobsService — weeklyCollectionDigest', () => {
         reminders: { total: 3, whatsapp: 1, email: 2 },
         outstanding: { amount: 5000, count: 4 },
       }),
+      getPortfolioRiskAnalysis: jest.fn().mockResolvedValue({
+        totalCustomers: 10,
+        distribution: { SANO: 7, ATENCION: 1, RIESGO: 1, INCOBRABLE: 1, SIN_CLASIFICAR: 0 },
+        bestPayers: [],
+        worstPayers: [],
+        recommendations: [],
+        avance: { clientesQueEmpeoraronRiesgo: 1, caidasDePuntualidad: 0 },
+        generatedAt: new Date().toISOString(),
+      }),
     };
     reports = {
       wasReportSent: jest.fn().mockResolvedValue(false),
@@ -74,6 +84,7 @@ describe('JobsService — weeklyCollectionDigest', () => {
       reports as unknown as ReportsService,
       { runEngineScan: jest.fn() } as unknown as CollectionSequencesService,
       {} as CustomerScoringService,
+      {} as CustomerRiskService,
       { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
       makeActivity(),
       makeRedis(),
@@ -207,6 +218,7 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
       {} as ReportsService,
       {} as CollectionSequencesService,
       {} as CustomerScoringService,
+      {} as CustomerRiskService,
       { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
       makeActivity(),
       makeRedis(),
@@ -259,6 +271,7 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
       {} as ReportsService,
       {} as CollectionSequencesService,
       {} as CustomerScoringService,
+      {} as CustomerRiskService,
       { get: jest.fn().mockReturnValue('false') } as unknown as ConfigService<Env, true>,
       makeActivity(),
       makeRedis(),

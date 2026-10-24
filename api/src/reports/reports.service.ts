@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { DashboardService } from '../dashboard/dashboard.service';
+import { DashboardService, type CreditPolicyAction } from '../dashboard/dashboard.service';
 import {
   DEFAULT_CURRENCY,
   DEFAULT_LOCALE,
@@ -30,6 +30,12 @@ interface AgingBuckets {
 }
 
 const TOP_AT_RISK = 10;
+
+const CREDIT_ACTION_LABELS: Record<CreditPolicyAction, string> = {
+  AUMENTAR_CREDITO: 'Aumentar crédito',
+  REDUCIR_CREDITO: 'Reducir crédito',
+  SUSPENDER_CREDITO: 'Suspender crédito',
+};
 const MAX_COLLECTION_REPORT_PDF_BYTES = 10 * 1024 * 1024;
 
 /**
@@ -73,13 +79,14 @@ export class ReportsService {
     const orgName = org?.name ?? 'Organización';
 
     const asUser = { organizationId } as AuthenticatedUser;
-    const [digest, aging, atRisk] = await Promise.all([
+    const [digest, aging, atRisk, portfolio] = await Promise.all([
       this.dashboard.getReceivablesDigest(asUser, {
         from: range.from.toISOString(),
         to: range.to.toISOString(),
       }),
       this.dashboard.getReceivablesAging(asUser),
       this.dashboard.getAtRiskCustomers(asUser),
+      this.dashboard.getPortfolioRiskAnalysis(asUser, range),
     ]);
 
     const money = (n: number) =>
@@ -98,6 +105,7 @@ export class ReportsService {
       digest,
       aging,
       atRisk: atRisk.customers.slice(0, TOP_AT_RISK),
+      portfolio,
       money,
       dateFmt,
     });
@@ -165,10 +173,11 @@ export class ReportsService {
     digest: Awaited<ReturnType<DashboardService['getReceivablesDigest']>>;
     aging: Awaited<ReturnType<DashboardService['getReceivablesAging']>>;
     atRisk: Awaited<ReturnType<DashboardService['getAtRiskCustomers']>>['customers'];
+    portfolio: Awaited<ReturnType<DashboardService['getPortfolioRiskAnalysis']>>;
     money: (n: number) => string;
     dateFmt: (d: Date) => string;
   }): Promise<Buffer> {
-    const { orgName, periodFrom, periodTo, digest, aging, atRisk, money, dateFmt } =
+    const { orgName, periodFrom, periodTo, digest, aging, atRisk, portfolio, money, dateFmt } =
       input;
 
     return new Promise((resolve, reject) => {
@@ -242,6 +251,49 @@ export class ReportsService {
             c.reason,
           ]),
           [150, 100, 70, 150],
+        );
+      }
+
+      // ── análisis semanal de cartera (Fase 3, pedido de Paolo) ──
+      doc.moveDown(1);
+      doc.fontSize(13).fillColor('#101828').text('Análisis semanal de cartera');
+      doc.moveDown(0.3);
+      doc.fontSize(10.5).fillColor('#344054');
+      doc.text(
+        `Distribución de riesgo: ${portfolio.distribution.SANO} sano(s) · ` +
+          `${portfolio.distribution.ATENCION} en atención · ` +
+          `${portfolio.distribution.RIESGO} en riesgo · ` +
+          `${portfolio.distribution.INCOBRABLE} incobrable(s) · ` +
+          `${portfolio.distribution.SIN_CLASIFICAR} sin clasificar.`,
+      );
+      doc.text(
+        `Esta semana: ${portfolio.avance.clientesQueEmpeoraronRiesgo} cliente(s) empeoraron de ` +
+          `tier de riesgo, ${portfolio.avance.caidasDePuntualidad} con caída significativa de puntualidad.`,
+      );
+      doc.moveDown(0.6);
+
+      if (portfolio.worstPayers.length > 0) {
+        doc.fontSize(11.5).fillColor('#101828').text('Quién paga peor');
+        doc.moveDown(0.2);
+        this.drawTable(
+          doc,
+          ['Cliente', 'Puntualidad'],
+          portfolio.worstPayers.map((c) => [c.name, `${c.score}%`]),
+          [320, 100],
+        );
+        doc.moveDown(0.6);
+      }
+
+      if (portfolio.recommendations.length > 0) {
+        doc.fontSize(11.5).fillColor('#101828').text('Sugerencias de política de crédito');
+        doc.moveDown(0.2);
+        this.drawTable(
+          doc,
+          ['Cliente', 'Sugerencia', 'Motivo'],
+          portfolio.recommendations
+            .slice(0, TOP_AT_RISK)
+            .map((r) => [r.name, CREDIT_ACTION_LABELS[r.action], r.reason]),
+          [120, 130, 170],
         );
       }
 
