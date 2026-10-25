@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { CustomersService } from './customers.service';
 import { CustomerScoringService } from './scoring/customer-scoring.service';
+import { CustomerRiskService } from './scoring/customer-risk.service';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermissions } from '../auth/decorators/permissions.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -29,6 +30,7 @@ export class CustomersController {
   constructor(
     private readonly customers: CustomersService,
     private readonly scoring: CustomerScoringService,
+    private readonly risk: CustomerRiskService,
   ) {}
 
   @Post()
@@ -80,6 +82,18 @@ export class CustomersController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.scoring.recompute(user, id);
+  }
+
+  /** Recalcula a demanda el tier de riesgo/incobrabilidad del cliente. El
+   * cron diario ya lo recalcula para todos (junto con el score); este
+   * endpoint sirve para forzarlo tras registrar/importar facturas o para
+   * pruebas. */
+  @Post(':id/risk')
+  recomputeRisk(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.risk.recompute(user, id);
   }
 
   @Delete(':id')

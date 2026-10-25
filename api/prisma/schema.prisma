@@ -194,6 +194,15 @@ model Organization {
   /// Último `status` de Stripe recibido por webhook (ver Stripe.Subscription.status).
   subscriptionStatus   String?
 
+  // ── Onboarding post-venta (Fase 5, "CONCEPTO" de Paolo: "preparar al
+  // cliente para alimentar la plataforma") ──
+  // Se marca UNA sola vez, la primera vez que el cron diario
+  // (JobsService.onboardingDataCompletion) detecta que la organización ya
+  // tiene clientes Y facturas CxC cargadas (vía el import CSV de clientes
+  // o el ZIP de facturas que YA EXISTÍAN — esto solo agrega el seguimiento
+  // de cuándo "terminó" esa carga inicial). Null = aún cargando datos.
+  onboardingDataCompletedAt DateTime?
+
   users                     User[]
   suppliers                 Supplier[]
   customers                 Customer[]
@@ -368,6 +377,14 @@ model Customer {
   // CollectionSequencesService lo excluye de pasos agresivos (FR-05).
   score                Int?
   scoreUpdatedAt       DateTime?
+  // Clasificación de riesgo/incobrabilidad (ver enum CustomerRiskTier).
+  // Calculada por CustomerRiskService (cron diario, junto con `score`).
+  // Null hasta el primer cálculo. `maxDaysOverdue` queda persistido para
+  // que la UI explique el motivo sin tener que recalcularlo (0 = sin
+  // facturas abiertas vencidas al momento del cálculo).
+  riskTier             CustomerRiskTier?
+  maxDaysOverdue       Int?
+  riskTierUpdatedAt    DateTime?
   // FR-02 (spec "Mejoras V1"): el sistema debe priorizar el contacto con
   // Finanzas/Tesorería sobre el Director General, porque ese es quien
   // realmente ejecuta la firma o la transferencia. Si están capturados,
@@ -397,6 +414,7 @@ model Customer {
   @@index([organizationId])
   @@index([isActive])
   @@index([assignedAgentId])
+  @@index([riskTier])
 }
 
 // Portal de autoservicio SIN CUENTA para clientes deudores (Tradespace,
@@ -725,6 +743,24 @@ model WebhookDelivery {
   @@index([createdAt])
 }
 
+// Clasificación de riesgo/incobrabilidad de un cliente CxC (pedido de Paolo:
+// "cómo analiza Royáltica cuándo un cliente se está volviendo incobrable").
+// Determinista, calculada por CustomerRiskService a partir de días de atraso
+// de sus facturas abiertas + su score de puntualidad (Customer.score) —
+// mismo criterio que Paolo describió: tiempo vencido, medio de pago y plazo
+// pactado por cliente. SANO = sin señales de riesgo. ATENCION = mismo
+// gatillo que DashboardService.getAtRiskCustomers (≥2 facturas vencidas o
+// ≥15 días de atraso) combinado con mal historial. RIESGO = ~150+ días de
+// atraso en alguna factura abierta (umbral aproximado que dio Paolo).
+// INCOBRABLE = ~200+ días de atraso. Los umbrales viven en
+// customer-risk.constants.ts, no aquí, para poder ajustarlos sin migración.
+enum CustomerRiskTier {
+  SANO
+  ATENCION
+  RIESGO
+  INCOBRABLE
+}
+
 // Canal preferido para contactar al deudor en cobranza automatizada.
 enum CollectionContactChannel {
   EMAIL
@@ -993,6 +1029,57 @@ model Lead {
   @@index([type])
   @@index([status])
   @@index([email])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────────────
+// Diagnóstico pre-venta (Fase 4, "CONCEPTO" de Paolo): formulario guiado
+// público para un prospecto, ANTES de contratar. Paso 1 del concepto
+// ("analizar su situación actual") + paso 2 ("entregar un primer análisis
+// de áreas a mejorar, sin decir mucho"). El paso 3 (subir CSV/clientes/
+// historial) es Fase 5, YA como cliente contratado — no vive aquí.
+// ─────────────────────────────────────────────────────
+
+/// Cómo hace seguimiento de cobranza el prospecto HOY (antes de Royáltica).
+enum CollectionMethod {
+  NINGUNO
+  MANUAL_EXCEL
+  LLAMADAS
+  WHATSAPP_MANUAL
+  SOFTWARE
+}
+
+/// Resultado del diagnóstico: qué tan sana está su cobranza hoy.
+enum DiagnosticHealthTier {
+  SALUDABLE
+  OPORTUNIDADES
+  RIESGO_ALTO
+}
+
+/// Un diagnóstico pre-venta respondido. Sin FK a Organization (es un
+/// prospecto, igual que Lead): si luego se vuelve cliente, el vínculo se
+/// hace a mano desde el panel (mismo criterio que leads convertidos).
+model PreSaleDiagnostic {
+  id                  String               @id @default(uuid())
+  contactName         String
+  contactEmail        String
+  company             String?
+  phone               String?
+  // ── respuestas del formulario guiado (paso 1: "analizar su situación actual") ──
+  hasCollectionPolicy Boolean
+  collectionMethod    CollectionMethod
+  avgDaysToCollect    Int
+  overduePortfolioPct Int
+  portfolioSize       Int?
+  usesSoftware        Boolean
+  // ── resultado (paso 2: "primer análisis, sin decir mucho") ──
+  score               Int
+  tier                DiagnosticHealthTier
+  recommendations     String[]
+  source              String?
+  createdAt           DateTime             @default(now())
+
+  @@index([contactEmail])
   @@index([createdAt])
 }
 

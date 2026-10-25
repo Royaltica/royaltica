@@ -239,6 +239,50 @@ export class OrganizationService {
     };
   }
 
+  // ── Fase 5: onboarding post-venta (carga de datos) ──────────
+
+  /** Organizaciones que aún no terminan su carga inicial de datos — las que
+   * evalúa el cron diario (JobsService.onboardingDataCompletion). */
+  async organizationsPendingOnboardingData(): Promise<{ id: string; name: string }[]> {
+    return this.prisma.organization.findMany({
+      where: { isActive: true, deletedAt: null, onboardingDataCompletedAt: null },
+      select: { id: true, name: true },
+    });
+  }
+
+  /**
+   * Detecta si una organización YA tiene lo mínimo para operar (clientes Y
+   * facturas CxC cargadas — vía el import CSV de clientes o el ZIP de
+   * facturas, ambos ya existentes) y lo marca UNA sola vez. Idempotente: si
+   * ya estaba marcada, no hace nada y regresa `justCompleted: false` — así
+   * el cron nunca manda el aviso de "ya quedó" más de una vez.
+   */
+  async checkOnboardingDataCompletion(
+    organizationId: string,
+  ): Promise<{ justCompleted: boolean }> {
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { onboardingDataCompletedAt: true },
+    });
+    if (!org || org.onboardingDataCompletedAt) return { justCompleted: false };
+
+    const [customers, receivables] = await Promise.all([
+      this.prisma.customer.count({
+        where: { organizationId, deletedAt: null, isActive: true },
+      }),
+      this.prisma.invoice.count({
+        where: { organizationId, direction: 'RECEIVABLE', deletedAt: null },
+      }),
+    ]);
+    if (customers === 0 || receivables === 0) return { justCompleted: false };
+
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: { onboardingDataCompletedAt: new Date() },
+    });
+    return { justCompleted: true };
+  }
+
   private orgColumnSelect() {
     return {
       locale: true,

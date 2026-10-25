@@ -99,14 +99,14 @@ describe('WhatsappConversationService', () => {
   });
 
   describe('sendCollectionStep (motor de secuencias)', () => {
-    const step = { customer, invoice, templateName: 'vence_3_dias', freeText: 'texto libre', locale: 'es-MX' };
+    const step = { customer, invoice, templateName: 'nivel_3', freeText: 'texto libre', locale: 'es-MX' };
 
     it('ventana cerrada → manda la PLANTILLA del nivel con sus variables en orden', async () => {
       const r = await service.sendCollectionStep(step);
       expect(r).toEqual({ sent: true, kind: 'TEMPLATE' });
       const [phone, name, lang, params] = whatsapp.sendTemplate.mock.calls[0];
       expect(phone).toBe('+5215512345678');
-      expect(name).toBe('vence_3_dias');
+      expect(name).toBe('nivel_3');
       expect(lang).toBe('es_MX');
       expect(params).toEqual(['Patricia Salas', 'F-2841', '$284,500.00 MXN', '17 de octubre', 'https://app/portal-cliente/tok']);
       expect(whatsapp.sendMessage).not.toHaveBeenCalled();
@@ -178,12 +178,12 @@ describe('WhatsappConversationService', () => {
   });
 
   describe('plan del cliente ↔ WhatsApp', () => {
-    const politica = { id: 'pol-1', sequenceSteps: [{ stepOrder: 3, whatsappTemplateName: 'recordatorio_cortesia_pago' }] };
+    const politica = { id: 'pol-1', sequenceSteps: [{ stepOrder: 3, whatsappTemplateName: 'nivel_2' }] };
 
     it('mandar la plantilla de un nivel a mano adelanta al motor a ese nivel (no la repite)', async () => {
       prisma.collectionPolicy.findFirst.mockResolvedValue(politica);
       prisma.collectionSequenceRun.findUnique.mockResolvedValue({ id: 'run-1', currentStepOrder: 1 });
-      await service.sendTemplateManual(user, 'c-1', 'inv-1', 'recordatorio_cortesia_pago');
+      await service.sendTemplateManual(user, 'c-1', 'inv-1', 'nivel_2');
       expect(prisma.collectionSequenceRun.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ currentStepOrder: 3 }) }),
       );
@@ -192,7 +192,7 @@ describe('WhatsappConversationService', () => {
     it('nunca hace retroceder al motor', async () => {
       prisma.collectionPolicy.findFirst.mockResolvedValue(politica);
       prisma.collectionSequenceRun.findUnique.mockResolvedValue({ id: 'run-1', currentStepOrder: 5 });
-      await service.sendTemplateManual(user, 'c-1', 'inv-1', 'recordatorio_cortesia_pago');
+      await service.sendTemplateManual(user, 'c-1', 'inv-1', 'nivel_2');
       expect(prisma.collectionSequenceRun.update).not.toHaveBeenCalled();
     });
 
@@ -200,40 +200,40 @@ describe('WhatsappConversationService', () => {
       prisma.whatsappMessage.findFirst.mockImplementation(({ where }: { where: { direction: string } }) =>
         where.direction === 'OUTBOUND' ? { id: 'm-previo' } : null,
       );
-      const r = await service.sendCollectionStep({ customer, invoice, templateName: 'vence_3_dias', freeText: 'x', locale: 'es-MX' });
+      const r = await service.sendCollectionStep({ customer, invoice, templateName: 'nivel_3', freeText: 'x', locale: 'es-MX' });
       expect(r.sent).toBe(true);
       expect(whatsapp.sendTemplate).not.toHaveBeenCalled();
     });
 
     it('un mensaje libre a nombre de un nivel cuenta como el contacto de ese nivel', async () => {
       clienteEscribio(1, 'PN-1');
-      await service.sendFreeText(user, 'c-1', 'Con gusto le compartimos la liga.', 'vence_hoy');
-      expect(prisma.whatsappMessage.create.mock.calls[0][0].data.templateName).toBe('vence_hoy');
+      await service.sendFreeText(user, 'c-1', 'Con gusto le compartimos la liga.', 'nivel_4');
+      expect(prisma.whatsappMessage.create.mock.calls[0][0].data.templateName).toBe('nivel_4');
     });
 
     it('planActivity: cada nivel con su envío y la primera respuesta del cliente', async () => {
       prisma.whatsappMessage.findMany.mockResolvedValue([
-        { customerId: 'c-1', direction: 'OUTBOUND', kind: 'TEMPLATE', templateName: 'aviso_preventivo_pago', body: 't1', sent: true, sentByUserId: null, createdAt: hoursAgo(300) },
-        { customerId: 'c-1', direction: 'OUTBOUND', kind: 'TEMPLATE', templateName: 'recordatorio_cortesia_pago', body: 't2', sent: true, sentByUserId: 'u-1', createdAt: hoursAgo(50) },
+        { customerId: 'c-1', direction: 'OUTBOUND', kind: 'TEMPLATE', templateName: 'nivel_1', body: 't1', sent: true, sentByUserId: null, createdAt: hoursAgo(300) },
+        { customerId: 'c-1', direction: 'OUTBOUND', kind: 'TEMPLATE', templateName: 'nivel_2', body: 't2', sent: true, sentByUserId: 'u-1', createdAt: hoursAgo(50) },
         { customerId: 'c-1', direction: 'INBOUND', kind: 'BUTTON', templateName: null, body: 'Todo claro', sent: true, sentByUserId: null, createdAt: hoursAgo(49) },
         { customerId: 'c-1', direction: 'INBOUND', kind: 'TEXT', templateName: null, body: 'gracias', sent: true, sentByUserId: null, createdAt: hoursAgo(48) },
       ]);
       const r = await service.planActivity(user);
       const niveles = r.customers[0].levels;
-      expect(niveles.aviso_preventivo_pago.reply).toBeNull();
-      expect(niveles.aviso_preventivo_pago.by).toBe('automatico');
-      expect(niveles.recordatorio_cortesia_pago.by).toBe('manual');
-      expect(niveles.recordatorio_cortesia_pago.reply).toEqual(expect.objectContaining({ kind: 'BUTTON', body: 'Todo claro' }));
+      expect(niveles.nivel_1.reply).toBeNull();
+      expect(niveles.nivel_1.by).toBe('automatico');
+      expect(niveles.nivel_2.by).toBe('manual');
+      expect(niveles.nivel_2.reply).toEqual(expect.objectContaining({ kind: 'BUTTON', body: 'Todo claro' }));
     });
 
     it('con Meta configurado, un envío rechazado NO avanza el plan; en modo prueba sí cuenta', async () => {
-      const fallido = [{ customerId: 'c-1', direction: 'OUTBOUND', kind: 'TEMPLATE', templateName: 'vence_hoy', body: 't', sent: false, sentByUserId: 'u-1', createdAt: hoursAgo(1) }];
+      const fallido = [{ customerId: 'c-1', direction: 'OUTBOUND', kind: 'TEMPLATE', templateName: 'nivel_4', body: 't', sent: false, sentByUserId: 'u-1', createdAt: hoursAgo(1) }];
       prisma.whatsappMessage.findMany.mockResolvedValue(fallido);
-      expect((await service.planActivity(user)).customers[0].levels.vence_hoy).toBeUndefined();
+      expect((await service.planActivity(user)).customers[0].levels.nivel_4).toBeUndefined();
       whatsapp.isConfigured = false;
       const prueba = await service.planActivity(user);
       expect(prueba.testMode).toBe(true);
-      expect(prueba.customers[0].levels.vence_hoy).toBeDefined();
+      expect(prueba.customers[0].levels.nivel_4).toBeDefined();
     });
   });
 
@@ -260,19 +260,19 @@ describe('WhatsappConversationService', () => {
         ok: true,
         json: async () => ({
           data: [
-            { name: 'vence_hoy', status: 'APPROVED', language: 'es_MX' },
+            { name: 'nivel_4', status: 'APPROVED', language: 'es_MX' },
             { name: 'aviso_vencida', status: 'REJECTED', language: 'es_MX', rejected_reason: 'INVALID_FORMAT' },
-            { name: 'vence_3_dias', status: 'APPROVED', language: 'en_US' },
+            { name: 'nivel_3', status: 'APPROVED', language: 'en_US' },
           ],
         }),
       } as Response);
       const r = await conConfig({ WHATSAPP_TOKEN: 't', WHATSAPP_WABA_ID: 'w' }).templatesWithStatus();
       const por = Object.fromEntries(r.templates.map((t) => [t.name, t]));
       expect(r.metaConectado).toBe(true);
-      expect(por.vence_hoy.metaStatus).toBe('APPROVED');
+      expect(por.nivel_4.metaStatus).toBe('APPROVED');
       expect(por.aviso_vencida.metaStatus).toBe('REJECTED');
       expect(por.aviso_vencida.rejectedReason).toBe('INVALID_FORMAT');
-      expect(por.vence_3_dias.metaStatus).toBe('MISSING'); // existe, pero no en es_MX
+      expect(por.nivel_3.metaStatus).toBe('MISSING'); // existe, pero no en es_MX
     });
   });
 });

@@ -12,6 +12,17 @@ describe('ReportsService — reporte de cobranza en PDF', () => {
     getReceivablesDigest: jest.Mock;
     getReceivablesAging: jest.Mock;
     getAtRiskCustomers: jest.Mock;
+    getPortfolioRiskAnalysis: jest.Mock;
+  };
+
+  const emptyPortfolio = {
+    totalCustomers: 0,
+    distribution: { SANO: 0, ATENCION: 0, RIESGO: 0, INCOBRABLE: 0, SIN_CLASIFICAR: 0 },
+    bestPayers: [],
+    worstPayers: [],
+    recommendations: [],
+    avance: { clientesQueEmpeoraronRiesgo: 0, caidasDePuntualidad: 0 },
+    generatedAt: new Date().toISOString(),
   };
 
   beforeEach(() => {
@@ -23,6 +34,7 @@ describe('ReportsService — reporte de cobranza en PDF', () => {
       getReceivablesDigest: jest.fn(),
       getReceivablesAging: jest.fn(),
       getAtRiskCustomers: jest.fn(),
+      getPortfolioRiskAnalysis: jest.fn().mockResolvedValue(emptyPortfolio),
     };
     service = new ReportsService(
       prisma as unknown as PrismaService,
@@ -84,6 +96,66 @@ describe('ReportsService — reporte de cobranza en PDF', () => {
     expect(dashboard.getReceivablesDigest).toHaveBeenCalledWith(
       expect.objectContaining({ organizationId: 'org-1' }),
       expect.objectContaining({ from: expect.any(String), to: expect.any(String) }),
+    );
+  });
+
+  it('Fase 3 — incluye la sección de análisis de cartera (distribución, peores pagadores, sugerencias de crédito)', async () => {
+    prisma.organization.findUnique.mockResolvedValue({
+      name: 'Tradespace Inc.',
+      locale: 'en-CA',
+      currency: 'CAD',
+    });
+    dashboard.getReceivablesDigest.mockResolvedValue({
+      period: { from: '', to: '' },
+      collected: { amount: 0, count: 0, invoices: [] },
+      reminders: { total: 0, whatsapp: 0, email: 0 },
+      outstanding: { amount: 0, count: 0 },
+      generatedAt: new Date().toISOString(),
+    });
+    dashboard.getReceivablesAging.mockResolvedValue({
+      totals: { amount: 0, overdue: 0, invoices: 0 },
+      buckets: {
+        current: { label: 'Vigente', count: 0, amount: 0 },
+        d1_30: { label: '1-30 días', count: 0, amount: 0 },
+        d31_60: { label: '31-60 días', count: 0, amount: 0 },
+        d61_90: { label: '61-90 días', count: 0, amount: 0 },
+        d90_plus: { label: '90+ días', count: 0, amount: 0 },
+      },
+      byCustomer: [],
+      generatedAt: new Date().toISOString(),
+    });
+    dashboard.getAtRiskCustomers.mockResolvedValue({ count: 0, customers: [], generatedAt: new Date().toISOString() });
+    dashboard.getPortfolioRiskAnalysis.mockResolvedValue({
+      totalCustomers: 3,
+      distribution: { SANO: 1, ATENCION: 0, RIESGO: 1, INCOBRABLE: 1, SIN_CLASIFICAR: 0 },
+      bestPayers: [{ customerId: 'c-1', name: 'Buen Cliente', score: 100 }],
+      worstPayers: [{ customerId: 'c-2', name: 'Mal Cliente', score: 20 }],
+      recommendations: [
+        {
+          customerId: 'c-3',
+          name: 'Cliente Incobrable',
+          riskTier: 'INCOBRABLE',
+          score: 10,
+          action: 'SUSPENDER_CREDITO',
+          reason: '210 días de atraso sin pago.',
+        },
+      ],
+      avance: { clientesQueEmpeoraronRiesgo: 2, caidasDePuntualidad: 1 },
+      generatedAt: new Date().toISOString(),
+    });
+
+    const buffer = await service.generateCollectionReportPdf('org-1', {
+      from: new Date('2026-07-25T00:00:00.000Z'),
+      to: new Date('2026-08-01T00:00:00.000Z'),
+    });
+
+    expect(buffer.subarray(0, 5).toString('ascii')).toBe('%PDF-');
+    expect(dashboard.getPortfolioRiskAnalysis).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: 'org-1' }),
+      expect.objectContaining({
+        from: new Date('2026-07-25T00:00:00.000Z'),
+        to: new Date('2026-08-01T00:00:00.000Z'),
+      }),
     );
   });
 

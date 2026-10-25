@@ -170,6 +170,74 @@ describe('CollectionSequencesService', () => {
     );
   });
 
+  it('Fase 2 — cliente RIESGO: salta los niveles GENTLE y arranca en el primer paso STANDARD+', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    const gentle1 = { ...step1, id: 'g1', stepOrder: 1, daysAfterDue: -14, tone: 'GENTLE' };
+    const gentle2 = { ...step1, id: 'g2', stepOrder: 2, daysAfterDue: -7, tone: 'GENTLE' };
+    const standard = { ...step1, id: 's3', stepOrder: 3, daysAfterDue: 0, tone: 'STANDARD' };
+    prisma.collectionPolicy.findFirst.mockResolvedValue({
+      ...basePolicy,
+      sequenceSteps: [gentle1, gentle2, standard],
+    });
+    prisma.invoice.findUnique.mockResolvedValue({
+      ...baseInvoice,
+      customer: { ...baseInvoice.customer, riskTier: 'RIESGO' },
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('sent');
+    expect(result.stepOrder).toBe(3); // el STANDARD, no el GENTLE 1
+    expect(prisma.collectionSequenceRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ currentStepOrder: 2 }) }),
+    );
+    // Los 2 niveles GENTLE quedan en bitácora como saltados (auditoría), no silenciosos.
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ stepOrder: 1, reason: 'risk-tier-fast-track' }),
+      }),
+    );
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ stepOrder: 2, reason: 'risk-tier-fast-track' }),
+      }),
+    );
+  });
+
+  it('Fase 2 — cliente SANO (sin riskTier) sigue el plan completo, incluido el primer GENTLE', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    const gentle1 = { ...step1, id: 'g1', stepOrder: 1, daysAfterDue: 0, tone: 'GENTLE' };
+    prisma.collectionPolicy.findFirst.mockResolvedValue({
+      ...basePolicy,
+      sequenceSteps: [gentle1],
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.outcome).toBe('sent');
+    expect(result.stepOrder).toBe(1);
+    expect(prisma.collectionSequenceRun.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ currentStepOrder: 0 }) }),
+    );
+  });
+
+  it('Fase 2 — cliente ATENCION NO se fast-trackea (solo RIESGO/INCOBRABLE)', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+    const gentle1 = { ...step1, id: 'g1', stepOrder: 1, daysAfterDue: 0, tone: 'GENTLE' };
+    prisma.collectionPolicy.findFirst.mockResolvedValue({
+      ...basePolicy,
+      sequenceSteps: [gentle1],
+    });
+    prisma.invoice.findUnique.mockResolvedValue({
+      ...baseInvoice,
+      customer: { ...baseInvoice.customer, riskTier: 'ATENCION' },
+    });
+
+    const result = await service.advanceSequence('inv-1');
+
+    expect(result.stepOrder).toBe(1); // recibe el GENTLE normal, no se salta nada
+  });
+
   it('guard rail: fuera de la ventana horaria permitida, no envía y no avanza el paso', async () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-08-01T03:00:00Z')); // 03:00 UTC, fuera de 9-17
 
@@ -481,10 +549,10 @@ describe('CollectionSequencesService', () => {
     });
     const plan = [
       lvl(1, -90, 'royaltica_nivel_0'),
-      lvl(2, -14, 'aviso_preventivo_pago'),
-      lvl(3, -7, 'recordatorio_cortesia_pago'),
-      lvl(4, -3, 'vence_3_dias'),
-      lvl(5, 0, 'vence_hoy'),
+      lvl(2, -14, 'nivel_1'),
+      lvl(3, -7, 'nivel_2'),
+      lvl(4, -3, 'nivel_3'),
+      lvl(5, 0, 'nivel_4'),
       lvl(6, 1, 'aviso_vencida'),
     ];
 
@@ -496,15 +564,15 @@ describe('CollectionSequencesService', () => {
 
     it('niveles previos que ya no aplican se saltan (no se manda el aviso de 14 días a 6 días de vencer)', () => {
       const r = pickNextStep(plan, 1, -6);
-      expect(r.step?.whatsappTemplateName).toBe('recordatorio_cortesia_pago');
-      expect(r.superseded.map((s) => s.whatsappTemplateName)).toEqual(['aviso_preventivo_pago']);
+      expect(r.step?.whatsappTemplateName).toBe('nivel_2');
+      expect(r.superseded.map((s) => s.whatsappTemplateName)).toEqual(['nivel_1']);
     });
 
     it('"vence en 3 días" solo se manda ese día exacto; si ya pasó, espera al siguiente nivel', () => {
       const r = pickNextStep(plan, 3, -1);
-      // vence_3_dias quedó atrás y vence_hoy (día 0) aún no toca
-      expect(r.step?.whatsappTemplateName).toBe('vence_hoy');
-      expect(r.superseded.map((s) => s.whatsappTemplateName)).toEqual(['vence_3_dias']);
+      // nivel_3 quedó atrás y nivel_4 (día 0) aún no toca
+      expect(r.step?.whatsappTemplateName).toBe('nivel_4');
+      expect(r.superseded.map((s) => s.whatsappTemplateName)).toEqual(['nivel_3']);
     });
 
     it('sin pasos negativos se comporta igual que antes: siguiente en orden si ya le toca', () => {
@@ -526,7 +594,7 @@ describe('CollectionSequencesService', () => {
 
       expect(result).toEqual({ outcome: 'sent', stepOrder: 3 });
       expect(conversations.sendCollectionStep).toHaveBeenCalledWith(
-        expect.objectContaining({ templateName: 'recordatorio_cortesia_pago' }),
+        expect.objectContaining({ templateName: 'nivel_2' }),
       );
     });
 
