@@ -292,7 +292,7 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
 describe('JobsService — onboardingDataCompletion (Fase 5)', () => {
   let service: JobsService;
   let prisma: { user: { findMany: jest.Mock } };
-  let notifications: { create: jest.Mock };
+  let notifications: { create: jest.Mock; createMany: jest.Mock };
   let organization: {
     organizationsPendingOnboardingData: jest.Mock;
     checkOnboardingDataCompletion: jest.Mock;
@@ -305,7 +305,10 @@ describe('JobsService — onboardingDataCompletion (Fase 5)', () => {
     prisma = {
       user: { findMany: jest.fn().mockResolvedValue([{ id: 'admin-1', email: 'admin@acme.com' }]) },
     };
-    notifications = { create: jest.fn().mockResolvedValue(undefined) };
+    notifications = {
+      create: jest.fn().mockResolvedValue(undefined),
+      createMany: jest.fn().mockResolvedValue(undefined),
+    };
     organization = {
       organizationsPendingOnboardingData: jest
         .fn()
