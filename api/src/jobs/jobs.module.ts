@@ -6,6 +6,7 @@ import { DashboardModule } from '../dashboard/dashboard.module';
 import { ReportsModule } from '../reports/reports.module';
 import { CollectionSequencesModule } from '../collection-sequences/collection-sequences.module';
 import { CustomersModule } from '../customers/customers.module';
+import { OrganizationModule } from '../organization/organization.module';
 
 /**
  * Registra el scheduler de NestJS y las tareas de recordatorio.
@@ -23,6 +24,7 @@ import { CustomersModule } from '../customers/customers.module';
     ReportsModule,
     CollectionSequencesModule,
     CustomersModule,
+    OrganizationModule,
   ],
   providers: [JobsService],
   exports: [JobsService],

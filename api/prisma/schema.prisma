@@ -194,6 +194,15 @@ model Organization {
   /// Último `status` de Stripe recibido por webhook (ver Stripe.Subscription.status).
   subscriptionStatus   String?
 
+  // ── Onboarding post-venta (Fase 5, "CONCEPTO" de Paolo: "preparar al
+  // cliente para alimentar la plataforma") ──
+  // Se marca UNA sola vez, la primera vez que el cron diario
+  // (JobsService.onboardingDataCompletion) detecta que la organización ya
+  // tiene clientes Y facturas CxC cargadas (vía el import CSV de clientes
+  // o el ZIP de facturas que YA EXISTÍAN — esto solo agrega el seguimiento
+  // de cuándo "terminó" esa carga inicial). Null = aún cargando datos.
+  onboardingDataCompletedAt DateTime?
+
   users                     User[]
   suppliers                 Supplier[]
   customers                 Customer[]

@@ -11,6 +11,7 @@ import { ReportsService } from '../reports/reports.service';
 import { CollectionSequencesService } from '../collection-sequences/collection-sequences.service';
 import { CustomerScoringService } from '../customers/scoring/customer-scoring.service';
 import { CustomerRiskService } from '../customers/scoring/customer-risk.service';
+import { OrganizationService } from '../organization/organization.service';
 import { ActivityLogService } from '../activity/activity-log.service';
 import { RedisService } from '../common/redis/redis.service';
 import { ConfigService } from '@nestjs/config';
@@ -85,6 +86,7 @@ describe('JobsService — weeklyCollectionDigest', () => {
       { runEngineScan: jest.fn() } as unknown as CollectionSequencesService,
       {} as CustomerScoringService,
       {} as CustomerRiskService,
+      {} as OrganizationService,
       { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
       makeActivity(),
       makeRedis(),
@@ -219,6 +221,7 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
       {} as CollectionSequencesService,
       {} as CustomerScoringService,
       {} as CustomerRiskService,
+      {} as OrganizationService,
       { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
       makeActivity(),
       makeRedis(),
@@ -272,6 +275,7 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
       {} as CollectionSequencesService,
       {} as CustomerScoringService,
       {} as CustomerRiskService,
+      {} as OrganizationService,
       { get: jest.fn().mockReturnValue('false') } as unknown as ConfigService<Env, true>,
       makeActivity(),
       makeRedis(),
@@ -282,5 +286,114 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
       skipped: 0,
     });
     expect(prisma.user.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobsService — onboardingDataCompletion (Fase 5)', () => {
+  let service: JobsService;
+  let prisma: { user: { findMany: jest.Mock } };
+  let notifications: { create: jest.Mock };
+  let organization: {
+    organizationsPendingOnboardingData: jest.Mock;
+    checkOnboardingDataCompletion: jest.Mock;
+  };
+  let email: { sendAlert: jest.Mock };
+  let whatsapp: { notifyOrgAdmins: jest.Mock };
+  let usage: { record: jest.Mock };
+
+  beforeEach(() => {
+    prisma = {
+      user: { findMany: jest.fn().mockResolvedValue([{ id: 'admin-1', email: 'admin@acme.com' }]) },
+    };
+    notifications = { create: jest.fn().mockResolvedValue(undefined) };
+    organization = {
+      organizationsPendingOnboardingData: jest
+        .fn()
+        .mockResolvedValue([{ id: 'org-1', name: 'Acme Inc' }]),
+      checkOnboardingDataCompletion: jest.fn().mockResolvedValue({ justCompleted: false }),
+    };
+    email = { sendAlert: jest.fn().mockResolvedValue({ sent: true, id: 'email-1' }) };
+    whatsapp = { notifyOrgAdmins: jest.fn().mockResolvedValue({ sent: true }) };
+    usage = { record: jest.fn().mockResolvedValue(undefined) };
+
+    service = new JobsService(
+      prisma as unknown as PrismaService,
+      {} as SettingsService,
+      notifications as unknown as NotificationsService,
+      email as unknown as EmailService,
+      whatsapp as unknown as WhatsappService,
+      usage as unknown as UsageService,
+      {} as ReceivablesService,
+      {} as DashboardService,
+      {} as ReportsService,
+      {} as CollectionSequencesService,
+      {} as CustomerScoringService,
+      {} as CustomerRiskService,
+      organization as unknown as OrganizationService,
+      { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
+      makeActivity(),
+      makeRedis(),
+    );
+  });
+
+  it('evalúa solo las organizaciones pendientes y no avisa si ninguna terminó', async () => {
+    const result = await service.onboardingDataCompletion();
+
+    expect(organization.organizationsPendingOnboardingData).toHaveBeenCalledTimes(1);
+    expect(organization.checkOnboardingDataCompletion).toHaveBeenCalledWith('org-1');
+    expect(result).toEqual({ checked: 1, completed: 0 });
+    expect(email.sendAlert).not.toHaveBeenCalled();
+    expect(notifications.create).not.toHaveBeenCalled();
+  });
+
+  it('cuando una organización completa su carga, avisa a sus admins Y a los superadmins (una sola vez)', async () => {
+    organization.checkOnboardingDataCompletion.mockResolvedValue({ justCompleted: true });
+    prisma.user.findMany
+      .mockResolvedValueOnce([{ id: 'admin-1', email: 'admin@acme.com' }]) // orgAdmins
+      .mockResolvedValueOnce([{ id: 'super-1' }]); // superadmins
+
+    const result = await service.onboardingDataCompletion();
+
+    expect(result).toEqual({ checked: 1, completed: 1 });
+    expect(email.sendAlert).toHaveBeenCalledWith(
+      'admin@acme.com',
+      expect.stringContaining('lista'),
+      expect.any(String),
+      'org-1',
+    );
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 'super-1',
+        type: 'ONBOARDING_DATA_COMPLETE',
+        metadata: { organizationId: 'org-1' },
+      }),
+    );
+  });
+
+  it('respeta el kill-switch JOBS_ENABLED', async () => {
+    service = new JobsService(
+      prisma as unknown as PrismaService,
+      {} as SettingsService,
+      notifications as unknown as NotificationsService,
+      email as unknown as EmailService,
+      whatsapp as unknown as WhatsappService,
+      {} as UsageService,
+      {} as ReceivablesService,
+      {} as DashboardService,
+      {} as ReportsService,
+      {} as CollectionSequencesService,
+      {} as CustomerScoringService,
+      {} as CustomerRiskService,
+      organization as unknown as OrganizationService,
+      { get: jest.fn().mockReturnValue('false') } as unknown as ConfigService<Env, true>,
+      makeActivity(),
+      makeRedis(),
+    );
+
+    await expect(service.onboardingDataCompletion()).resolves.toEqual({
+      checked: 0,
+      completed: 0,
+    });
+    expect(organization.organizationsPendingOnboardingData).not.toHaveBeenCalled();
   });
 });

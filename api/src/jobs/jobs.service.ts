@@ -15,6 +15,7 @@ import { ReportsService } from '../reports/reports.service';
 import { CollectionSequencesService } from '../collection-sequences/collection-sequences.service';
 import { CustomerScoringService } from '../customers/scoring/customer-scoring.service';
 import { CustomerRiskService } from '../customers/scoring/customer-risk.service';
+import { OrganizationService } from '../organization/organization.service';
 import { ActivityLogService } from '../activity/activity-log.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
@@ -78,6 +79,7 @@ export class JobsService {
     private readonly collectionSequences: CollectionSequencesService,
     private readonly customerScoring: CustomerScoringService,
     private readonly customerRisk: CustomerRiskService,
+    private readonly organization: OrganizationService,
     private readonly config: ConfigService<Env, true>,
     private readonly activity: ActivityLogService,
     private readonly redis: RedisService,
@@ -694,6 +696,67 @@ export class JobsService {
       `customer-score-recompute: ${recomputed} recalculado(s), ${alerted} alerta(s).`,
     );
     return { recomputed, alerted };
+  }
+
+  // ── Onboarding post-venta: carga inicial de datos (Fase 5, "CONCEPTO" de
+  // Paolo: "preparar al cliente para alimentar la plataforma") ──
+  // El import CSV de clientes (ExternalDataSyncService) y el ZIP de
+  // facturas (ReceivablesService) YA EXISTÍAN y ya funcionan — lo que
+  // faltaba era saber CUÁNDO una organización nueva terminó de cargar lo
+  // mínimo para operar (clientes + facturas CxC) y avisar, en vez de que
+  // quede en silencio hasta que alguien revise manualmente.
+  @Cron(CronExpression.EVERY_DAY_AT_7AM, { name: 'onboarding-data-completion' })
+  async onboardingDataCompletion(): Promise<{ checked: number; completed: number }> {
+    if (!this.enabled) return { checked: 0, completed: 0 };
+    const orgs = await this.organization.organizationsPendingOnboardingData();
+    let completed = 0;
+
+    for (const org of orgs) {
+      const { justCompleted } = await this.organization.checkOnboardingDataCompletion(org.id);
+      if (!justCompleted) continue;
+      completed += 1;
+
+      const admins = await this.orgAdmins(org.id);
+      await this.fanOut(org.id, admins, {
+        type: 'ONBOARDING_DATA_COMPLETE',
+        title: '¡Tu cobranza automática ya está lista!',
+        body:
+          `${org.name} ya tiene clientes y facturas cargadas. Activa tu ` +
+          'política de cobranza (o confirma la que ya tienes) para que los ' +
+          'recordatorios empiecen a salir solos.',
+      });
+      await this.notifySuperadminsOnboardingComplete(org);
+    }
+
+    this.logger.log(
+      `onboarding-data-completion: ${orgs.length} evaluada(s), ${completed} completada(s).`,
+    );
+    return { checked: orgs.length, completed };
+  }
+
+  /** Avisa al equipo de Royáltica (no al cliente) que una organización
+   * terminó su carga inicial — para que alguien le dé seguimiento personal
+   * si hace falta, mismo criterio que MarketingService.notifySuperadmins. */
+  private async notifySuperadminsOnboardingComplete(org: {
+    id: string;
+    name: string;
+  }): Promise<void> {
+    const superadmins = await this.prisma.user
+      .findMany({ where: { role: 'SUPERADMIN', isActive: true }, select: { id: true } })
+      .catch(() => [] as { id: string }[]);
+    await Promise.all(
+      superadmins.map((a) =>
+        this.notifications
+          .create({
+            userId: a.id,
+            type: 'ONBOARDING_DATA_COMPLETE',
+            title: 'Cliente terminó su carga inicial de datos',
+            body: `${org.name} ya tiene clientes y facturas cargadas — listo para activar cobranza automática.`,
+            metadata: { organizationId: org.id },
+          })
+          .catch(() => undefined),
+      ),
+    );
   }
 
   // ── helpers ───────────────────────────────────────────────
