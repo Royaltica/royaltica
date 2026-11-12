@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import type { Customer, Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
@@ -17,13 +18,28 @@ import { CreateCustomerDto, RFC_REGEX } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { QueryCustomersDto } from './dto/query-customers.dto';
 import { toCsv } from '../common/csv.util';
+import { ActivityLogService } from '../activity/activity-log.service';
 
 @Injectable()
 export class CustomersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sat: SatService,
+    // Opcional para no obligar a cada prueba a construirlo: si falta, no hay bitácora.
+    @Optional() private readonly activity?: ActivityLogService,
   ) {}
+
+  /** Registra en la bitácora quién hizo qué con un cliente (nunca rompe la operación). */
+  private log(user: AuthenticatedUser, action: string, id: string, metadata: Record<string, unknown> = {}) {
+    void this.activity?.record({
+      organizationId: user.organizationId,
+      userId: user.id,
+      action,
+      entityType: 'Customer',
+      entityId: id,
+      metadata,
+    });
+  }
 
   async create(admin: AuthenticatedUser, dto: CreateCustomerDto) {
     const organizationId = this.requireOrg(admin);
@@ -42,12 +58,18 @@ export class CustomersService {
     }
 
     return this.prisma.withOrg(organizationId, async (tx) => {
+      // El RFC es único por organización aunque el cliente esté eliminado.
       const exists = await tx.customer.findFirst({
-        where: { organizationId, rfc, deletedAt: null },
-        select: { id: true },
+        where: { organizationId, rfc },
+        select: { id: true, deletedAt: true },
       });
-      if (exists) {
+      if (exists && !exists.deletedAt) {
         throw new ConflictException('Ya existe un cliente con ese RFC.');
+      }
+      if (exists) {
+        throw new ConflictException(
+          'Ese RFC era de un cliente que se eliminó. Pide a un administrador que lo recupere en vez de crearlo de nuevo.',
+        );
       }
 
       return tx.customer.create({
@@ -65,8 +87,15 @@ export class CustomersService {
           financeContactName: dto.financeContactName,
           financeContactEmail: dto.financeContactEmail,
           financeContactPhone: dto.financeContactPhone,
+          notes: dto.notes,
+          doNotContact: dto.doNotContact ?? false,
+          doNotContactReason: dto.doNotContact ? dto.doNotContactReason : undefined,
+          doNotContactAt: dto.doNotContact ? new Date() : undefined,
         },
       });
+    }).then((created) => {
+      this.log(admin, 'CUSTOMER_CREATED', created.id, { name: created.name });
+      return created;
     });
   }
 
@@ -148,11 +177,33 @@ export class CustomersService {
     const organizationId = this.requireOrg(admin);
     const data: Prisma.CustomerUpdateInput = { ...dto };
     if (dto.rfc) data.rfc = dto.rfc.toUpperCase();
+    if (dto.doNotContact !== undefined) {
+      data.doNotContactAt = dto.doNotContact ? new Date() : null;
+      if (!dto.doNotContact) data.doNotContactReason = null;
+    }
 
-    return this.prisma.withOrg(organizationId, async (tx) => {
+    const updated = await this.prisma.withOrg(organizationId, async (tx) => {
       await this.ensureExists(tx, organizationId, id);
       return tx.customer.update({ where: { id }, data });
     });
+    // Solo los nombres de los campos: la bitácora no copia datos personales.
+    this.log(admin, 'CUSTOMER_UPDATED', id, { fields: Object.keys(dto) });
+    return updated;
+  }
+
+  /** Deshace un "eliminar": regresa el cliente si estaba borrado. */
+  async restore(admin: AuthenticatedUser, id: string) {
+    const organizationId = this.requireOrg(admin);
+    const restored = await this.prisma.withOrg(organizationId, async (tx) => {
+      const found = await tx.customer.findFirst({
+        where: { id, organizationId, deletedAt: { not: null } },
+        select: { id: true },
+      });
+      if (!found) throw new NotFoundException('No hay un cliente eliminado con ese id.');
+      return tx.customer.update({ where: { id }, data: { deletedAt: null } });
+    });
+    this.log(admin, 'CUSTOMER_RESTORED', id);
+    return restored;
   }
 
   async remove(admin: AuthenticatedUser, id: string) {
@@ -179,6 +230,7 @@ export class CustomersService {
         data: { deletedAt: new Date() },
       });
     });
+    this.log(admin, 'CUSTOMER_DELETED', id);
     return { deleted: true, id };
   }
 

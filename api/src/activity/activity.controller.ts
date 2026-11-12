@@ -35,6 +35,8 @@ export class ActivityController {
       organizationId: user.organizationId,
       ...(query.action ? { action: query.action } : {}),
       ...(query.userId ? { userId: query.userId } : {}),
+      ...(query.entityType ? { entityType: query.entityType } : {}),
+      ...(query.entityId ? { entityId: query.entityId } : {}),
       ...(query.dateFrom || query.dateTo ? { createdAt: dateFilter } : {}),
     };
 

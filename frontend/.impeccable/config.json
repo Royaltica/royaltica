@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "open sans",
+        "createdAt": "2026-11-03T20:24:40.371Z",
+        "reason": "User confirmed Open Sans is intentional (royaltica.com brand font)"
+      }
+    ]
+  }
+}

@@ -1,9 +1,12 @@
 import React from 'react';
-import { Download, Save } from 'lucide-react';
+import { PanelSub, Subpestanas } from './vidrio.tsx';
+import { Download, Pencil, Save, X } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { Reveal, BlockTitle, Figure } from './primitives.tsx';
 import { AGENTES, HOY, LINEAS, RESULTADOS, type Gestion } from './mockV1.ts';
+import { useAviso } from './clientes.tsx';
 import { useCobranza } from './store.tsx';
+import { AnalisisPeriodoPanel } from './AnalisisPeriodoPanel.tsx';
 
 /**
  * Reportes configurables: en vez de reportes fijos semanales/mensuales, el
@@ -76,11 +79,60 @@ const RESULTADO_TONO: Record<string, string> = {
   Enviado: 'text-brand-ink/70',
 };
 
+/**
+ * Pestaña Reportes: "Análisis del periodo" (lo que cambió en la cartera,
+ * calculado por el backend) y "Reporte a la medida" (filtros libres).
+ */
 export function ReportesPanel({ soloEquipo = false }: { soloEquipo?: boolean }) {
+  const [vista, setVista] = React.useState<'analisis' | 'medida'>('analisis');
+  return (
+    <div className="space-y-5">
+      <Subpestanas
+        grupo="reportes"
+        etiqueta="Tipo de reporte"
+        valor={vista}
+        onChange={setVista}
+        opciones={[
+          { id: 'analisis', nombre: 'Análisis del periodo' },
+          { id: 'medida', nombre: 'Reporte a la medida' },
+        ]}
+      />
+      <PanelSub id={vista}>
+        {vista === 'analisis' ? <AnalisisPeriodoPanel puedeGenerar={!soloEquipo} /> : <ReporteMedida soloEquipo={soloEquipo} />}
+      </PanelSub>
+    </div>
+  );
+}
+
+type Guardado = { nombre: string; filtros: Filtros };
+const LLAVE_GUARDADOS = 'royaltica.cobranza.reportesGuardados';
+
+function ReporteMedida({ soloEquipo }: { soloEquipo: boolean }) {
   const [f, setF] = React.useState<Filtros>(INICIAL);
-  const [guardados, setGuardados] = React.useState(GUARDADOS_INICIALES);
+  const [guardados, setGuardadosRaw] = React.useState<Guardado[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(LLAVE_GUARDADOS);
+      return raw ? (JSON.parse(raw) as Guardado[]) : GUARDADOS_INICIALES;
+    } catch {
+      return GUARDADOS_INICIALES;
+    }
+  });
+  const setGuardados = (fn: (g: Guardado[]) => Guardado[]) =>
+    setGuardadosRaw((g) => {
+      const nuevo = fn(g);
+      try {
+        window.localStorage.setItem(LLAVE_GUARDADOS, JSON.stringify(nuevo));
+      } catch {
+        /* sin almacenamiento */
+      }
+      return nuevo;
+    });
   const [nombre, setNombre] = React.useState('');
+  const [renombrando, setRenombrando] = React.useState<{ antes: string; nombre: string } | null>(null);
+  const { avisar, nodo } = useAviso();
   const { gestiones } = useCobranza();
+  // Agentes que aparecen en las gestiones (los reales, no los del ejemplo).
+  const agentesReporte = [...new Set([...gestiones.map((g) => g.agente)])].sort();
   // Lo más reciente arriba: lo que se hizo hoy se ve primero.
   const filas = aplicar(f, gestiones).sort((a, b) => (b.fecha + b.hora).localeCompare(a.fecha + a.hora));
   const set = <K extends keyof Filtros>(k: K, v: Filtros[K]) => setF((x) => ({ ...x, [k]: v }));
@@ -90,9 +142,30 @@ export function ReportesPanel({ soloEquipo = false }: { soloEquipo?: boolean }) 
   const sinGestion = filas.filter((g) => g.resultado === 'No gestionada').length;
 
   const guardar = () => {
-    if (!nombre.trim()) return;
-    setGuardados((g) => [...g, { nombre: nombre.trim(), filtros: f }]);
+    const n = nombre.trim();
+    if (!n) return;
+    // Mismo nombre = se actualiza ese reporte en vez de duplicarlo.
+    setGuardados((g) => [...g.filter((x) => x.nombre !== n), { nombre: n, filtros: f }]);
     setNombre('');
+    avisar(`Guardaste "${n}"`);
+  };
+  const borrar = (r: Guardado) => {
+    const i = guardados.findIndex((x) => x.nombre === r.nombre);
+    setGuardados((g) => g.filter((x) => x.nombre !== r.nombre));
+    avisar(`Borraste "${r.nombre}"`, {
+      deshacer: () =>
+        setGuardados((g) => {
+          const out = [...g];
+          out.splice(Math.max(0, i), 0, r);
+          return out;
+        }),
+    });
+  };
+  const renombrar = () => {
+    if (!renombrando) return;
+    const n = renombrando.nombre.trim();
+    if (n && n !== renombrando.antes) setGuardados((g) => g.map((x) => (x.nombre === renombrando.antes ? { ...x, nombre: n } : x)));
+    setRenombrando(null);
   };
 
   return (
@@ -101,25 +174,65 @@ export function ReportesPanel({ soloEquipo = false }: { soloEquipo?: boolean }) 
       <Reveal>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40 mr-1">Guardados</span>
-          {guardados.map((r) => (
-            <button
-              key={r.nombre}
-              onClick={() => setF(r.filtros)}
-              className="px-3 py-1.5 rounded-lg text-[12px] font-semibold border border-brand-ink/12 text-brand-ink/70 hover:bg-brand-cream hover:border-brand-gold/40 transition-colors"
-            >
-              {r.nombre}
-            </button>
-          ))}
+          {guardados.map((r) =>
+            renombrando?.antes === r.nombre ? (
+              <form
+                key={r.nombre}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  renombrar();
+                }}
+                className="flex items-center gap-1"
+              >
+                <input
+                  autoFocus
+                  value={renombrando.nombre}
+                  onChange={(e) => setRenombrando({ ...renombrando, nombre: e.target.value })}
+                  onBlur={renombrar}
+                  onKeyDown={(e) => e.key === 'Escape' && setRenombrando(null)}
+                  aria-label="Nuevo nombre del reporte"
+                  className="px-3 py-1.5 rounded-lg text-[12px] font-semibold border border-brand-gold/60 bg-brand-paper outline-none w-44"
+                />
+              </form>
+            ) : (
+              <span
+                key={r.nombre}
+                className="group inline-flex items-center rounded-lg border border-brand-ink/12 text-brand-ink/70 hover:bg-brand-cream hover:border-brand-gold/40 transition-colors"
+              >
+                <button onClick={() => setF(r.filtros)} className="pl-3 pr-1.5 py-1.5 text-[12px] font-semibold">
+                  {r.nombre}
+                </button>
+                <button
+                  onClick={() => setRenombrando({ antes: r.nombre, nombre: r.nombre })}
+                  aria-label={`Renombrar ${r.nombre}`}
+                  title="Renombrar"
+                  className="px-1 py-1.5 text-brand-ink/35 hover:text-brand-ink"
+                >
+                  <Pencil size={11} />
+                </button>
+                <button
+                  onClick={() => borrar(r)}
+                  aria-label={`Borrar ${r.nombre}`}
+                  title="Borrar"
+                  className="pl-1 pr-2 py-1.5 text-brand-ink/35 hover:text-rose-600"
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ),
+          )}
+          {!guardados.length && <span className="text-[12px] text-brand-ink/40">Aún no guardas reportes. Arma uno y dale un nombre.</span>}
         </div>
+        {nodo}
       </Reveal>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Filtros */}
         <Reveal delay={0.05} className="lg:col-span-1">
-          <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-6 space-y-4">
+          <div className="glass rounded-[28px] p-6 space-y-4">
             <BlockTitle>Arma tu reporte</BlockTitle>
             <Campo label="Agente">
-              <Select value={f.agente} onChange={(v) => set('agente', v)} opciones={['Todos', ...AGENTES]} />
+              <Select value={f.agente} onChange={(v) => set('agente', v)} opciones={['Todos', ...agentesReporte]} />
             </Campo>
             <Campo label="Línea de negocio">
               <Select value={f.linea} onChange={(v) => set('linea', v)} opciones={['Todas', ...LINEAS]} />
@@ -161,7 +274,7 @@ export function ReportesPanel({ soloEquipo = false }: { soloEquipo?: boolean }) 
                   value={nombre}
                   onChange={(e) => setNombre(e.target.value)}
                   placeholder="Nombre del reporte"
-                  className="flex-1 min-w-0 px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-bone/50 text-sm outline-none focus:border-brand-gold/60"
+                  className="flex-1 min-w-0 px-3 py-2 rounded-2xl glass-campo text-sm outline-none focus:border-brand-gold/60"
                 />
                 <button
                   onClick={guardar}
@@ -179,8 +292,8 @@ export function ReportesPanel({ soloEquipo = false }: { soloEquipo?: boolean }) 
 
         {/* Resultado */}
         <Reveal delay={0.1} className="lg:col-span-2">
-          <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden">
-            <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-brand-ink/8 border-b border-brand-ink/8">
+          <div className="glass rounded-[28px] overflow-hidden">
+            <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-white/70 border-b border-brand-ink/8">
               <Kpi label="Gestiones" value={filas.length} />
               <Kpi label="Monto" value={monto} moneda />
               <Kpi label="Promesas" value={promesas} />
@@ -209,7 +322,7 @@ export function ReportesPanel({ soloEquipo = false }: { soloEquipo?: boolean }) 
                     <th className="px-6 py-2.5 font-semibold text-right">Monto</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-brand-ink/6">
+                <tbody className="divide-y divide-white/70">
                   {filas.map((g, i) => (
                     <tr key={`${g.cliente}-${g.fecha}-${g.hora}-${i}`}>
                       <td className="px-6 py-2.5 text-brand-ink/55 tabular-nums whitespace-nowrap">
@@ -264,7 +377,7 @@ function Campo({ label, children }: { label: string; children: React.ReactNode }
 }
 
 const CONTROL =
-  'w-full px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-bone/50 text-sm text-brand-ink outline-none focus:border-brand-gold/60 disabled:opacity-40';
+  'w-full px-3 py-2 rounded-2xl glass-campo text-sm text-brand-ink outline-none focus:border-brand-gold/60 disabled:opacity-40';
 
 function Select({ value, onChange, opciones, disabled }: { value: string; onChange: (v: string) => void; opciones: readonly string[]; disabled?: boolean }) {
   return (

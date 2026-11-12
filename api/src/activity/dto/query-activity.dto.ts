@@ -12,6 +12,16 @@ export class QueryActivityDto extends PaginationDto {
   @IsUUID()
   userId?: string;
 
+  /** Para ver la bitácora de un registro concreto (ej. un cliente). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  entityType?: string;
+
+  @IsOptional()
+  @IsUUID()
+  entityId?: string;
+
   @IsOptional()
   @IsISO8601()
   dateFrom?: string;

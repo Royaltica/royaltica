@@ -8,6 +8,12 @@
         "value": "inter",
         "createdAt": "2026-08-11T19:31:53.733Z",
         "reason": "Inter es la tipografia de marca establecida de Royaltica (documentada en CLAUDE.md), confirmada por Paolo como intencional"
+      },
+      {
+        "rule": "overused-font",
+        "value": "open sans",
+        "createdAt": "2026-11-06T05:36:34.560Z",
+        "reason": "Paolo confirmó Open Sans como tipografía de royaltica.com (pestaña Cobranza IA)"
       }
     ]
   }

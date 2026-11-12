@@ -11,6 +11,7 @@ import {
 } from '../field-mapping.types';
 import { syntheticCfdiUuid, syntheticRfc } from '../synthetic-ids.util';
 import { friendlyImportError } from '../import-errors.util';
+import { parseFlexibleDate } from '../date-parser.util';
 
 export interface GenericRestConfig {
   baseUrl: string | null;
@@ -303,9 +304,11 @@ export class GenericRestConnector implements ExternalDataConnector {
   }
 
   private assertDate(raw: string, field: string): Date {
-    const d = new Date(raw);
-    if (Number.isNaN(d.getTime())) {
-      throw new Error(`El campo "${field}" no es una fecha válida ("${raw}").`);
+    const d = parseFlexibleDate(String(raw));
+    if (!d) {
+      throw new Error(
+        `El campo "${field}" no es una fecha válida ("${raw}"). Usa día/mes/año (31/10/2026) o año-mes-día (2026-10-31).`,
+      );
     }
     return d;
   }

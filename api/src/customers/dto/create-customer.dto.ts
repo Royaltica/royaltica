@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEmail,
   IsInt,
   IsOptional,
@@ -102,4 +103,23 @@ export class CreateCustomerDto {
       'El teléfono de Finanzas/Tesorería debe estar en formato E.164 (ej. +5215512345678).',
   })
   financeContactPhone?: string;
+
+  /**
+   * Lista de exclusión: ningún canal automático le escribe mientras sea true.
+   * Al activarlo se guarda la fecha; al quitarlo se limpia el motivo.
+   */
+  @IsOptional()
+  @IsBoolean()
+  doNotContact?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  doNotContactReason?: string;
+
+  /** Nota interna del equipo (no la ve el cliente). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
 }

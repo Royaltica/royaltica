@@ -96,6 +96,15 @@ export class CustomersController {
     return this.risk.recompute(user, id);
   }
 
+  /** Deshace un eliminar (el borrado es lógico). */
+  @Post(':id/restore')
+  restore(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.customers.restore(user, id);
+  }
+
   @Delete(':id')
   remove(
     @CurrentUser() user: AuthenticatedUser,

@@ -157,6 +157,28 @@ describe('GenericCsvConnector', () => {
     });
   });
 
+  describe('syncReceivables · fechas', () => {
+    it('acepta fechas día/mes/año (formato de México), como las que escribe Excel', async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: 'cust-db-1', rfc: 'XAX000000AAA' });
+      prisma.invoice.findFirst.mockResolvedValue(null);
+      const csv =
+        'externalId,customerExternalId,folio,total,currency,date,dueDate\n' +
+        'F-1,CUST-1,P-1,1000,MXN,20/10/26,31/10/26\n';
+      const result = await buildConnector(csv).syncReceivables('org-1');
+      expect(result.errors).toEqual([]);
+      expect(result.imported).toBe(1);
+      expect(prisma.invoice.create.mock.calls[0][0].data.dueDate.toISOString()).toBe('2026-10-31T00:00:00.000Z');
+    });
+
+    it('una fecha inválida dice cómo escribirla', async () => {
+      prisma.customer.findFirst.mockResolvedValue({ id: 'cust-db-1', rfc: 'XAX000000AAA' });
+      const csv = 'externalId,customerExternalId,total,dueDate\nF-2,CUST-1,1000,mañana\n';
+      const result = await buildConnector(csv).syncReceivables('org-1');
+      expect(result.skipped).toBe(1);
+      expect(result.errors[0]).toContain('Usa día/mes/año (31/10/2026)');
+    });
+  });
+
   describe('syncReceivables', () => {
     it('importa una factura válida ligada a un cliente ya existente', async () => {
       prisma.customer.findFirst.mockResolvedValue({ id: 'cust-db-1', rfc: 'XAX000000AAA' });

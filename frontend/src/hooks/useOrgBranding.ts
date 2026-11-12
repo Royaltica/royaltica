@@ -18,7 +18,7 @@ export interface OrgBranding {
   loaded: boolean;
 }
 
-const DEFAULT_DISPLAY_NAME = 'Royáltica';
+const DEFAULT_DISPLAY_NAME = 'ROYALTICA';
 
 const DEFAULT_BRANDING: OrgBranding = {
   displayName: DEFAULT_DISPLAY_NAME,
