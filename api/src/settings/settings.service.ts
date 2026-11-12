@@ -1,6 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
+import {
+  DEFAULT_REPORT_FREQUENCY,
+  isReportFrequency,
+  type ReportFrequency,
+} from '../portfolio-analysis/portfolio-period.util';
 
 /**
  * Configuración tipada de una organización. Se persiste en el campo JSON
@@ -91,6 +96,11 @@ export interface OrgSettings {
   recoveryFeeMinInvoiceMxn: number;
   /** Cuota fija/mínima mensual, modelos SUBSCRIPTION e HYBRID. */
   subscriptionFeeMxn: number;
+  /**
+   * Cada cuánto se genera el análisis de cartera (quién mejoró, quién
+   * empeoró, datos a corregir). Ver portfolio-analysis/.
+   */
+  portfolioReportFrequency: ReportFrequency;
 }
 
 export const DEFAULT_SETTINGS: OrgSettings = {
@@ -115,6 +125,7 @@ export const DEFAULT_SETTINGS: OrgSettings = {
   recoveryFeePercent: 0,
   recoveryFeeMinInvoiceMxn: 50000,
   subscriptionFeeMxn: 0,
+  portfolioReportFrequency: DEFAULT_REPORT_FREQUENCY,
 };
 
 /** Modelos de tarificación soportados (spec "Mejoras V1", sección 5). */
@@ -256,6 +267,9 @@ export class SettingsService {
         s.subscriptionFeeMxn,
         DEFAULT_SETTINGS.subscriptionFeeMxn,
       ),
+      portfolioReportFrequency: isReportFrequency(s.portfolioReportFrequency)
+        ? s.portfolioReportFrequency
+        : DEFAULT_SETTINGS.portfolioReportFrequency,
     };
   }
 
@@ -330,6 +344,8 @@ export class SettingsService {
       out.recoveryFeeMinInvoiceMxn = Math.max(0, Number(patch.recoveryFeeMinInvoiceMxn));
     if (patch.subscriptionFeeMxn !== undefined)
       out.subscriptionFeeMxn = Math.max(0, Number(patch.subscriptionFeeMxn));
+    if (patch.portfolioReportFrequency !== undefined && isReportFrequency(patch.portfolioReportFrequency))
+      out.portfolioReportFrequency = patch.portfolioReportFrequency;
     return out;
   }
 

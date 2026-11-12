@@ -221,6 +221,7 @@ model Organization {
   bankTransactions          BankTransaction[]
   virtualNumbers            VirtualNumber[]
   whatsappMessages          WhatsappMessage[]
+  portfolioReports          PortfolioReport[]
 
   @@index([isActive])
 }
@@ -336,7 +337,7 @@ model Supplier {
 // Cliente de la empresa (contraparte de CxC). Espejo de Supplier pero para
 // las cuentas por cobrar: a quién le factura y le cobra la organización.
 model Customer {
-  id                   String    @id @default(uuid())
+  id                   String            @id @default(uuid())
   organizationId       String
   name                 String
   rfc                  String
@@ -351,9 +352,11 @@ model Customer {
   // llamada): si es true, ningún canal automatizado debe contactar a este
   // cliente, sin importar la política/secuencia. Requisito de cumplimiento
   // (CONDUSEF/REDECO) para el guardrail de "lista de exclusión".
-  doNotContact         Boolean   @default(false)
+  doNotContact         Boolean           @default(false)
   doNotContactReason   String?
   doNotContactAt       DateTime?
+  // Nota interna del equipo de cobranza (no la ve el cliente).
+  notes                String?
   // Días de crédito otorgados (informativo; el vencimiento real vive en la
   // factura). Null = contado / sin crédito definido.
   creditLimitDays      Int?
@@ -363,7 +366,7 @@ model Customer {
   // Único por organización (no global): dos orgs pueden compartir el mismo
   // externalId si vienen de sistemas distintos.
   externalId           String?
-  isActive             Boolean   @default(true)
+  isActive             Boolean           @default(true)
   // Agente/Ejecutivo (User.operationalProfile = AGENTE_EJECUTIVO) responsable
   // de gestionar este contacto. Null = sin asignar (no aparece en la bandeja
   // de ningún agente; lo sigue viendo Supervisor/Admin normalmente).
@@ -399,8 +402,8 @@ model Customer {
   // deuda) a un cliente con score > GOOD_PAYER_SCORE_THRESHOLD. Null =
   // nunca se le ha mandado. JobsService lo reenvía cada ~6 meses.
   lastServiceMessageAt DateTime?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
   deletedAt            DateTime?
 
   organization     Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -1220,4 +1223,30 @@ model WhatsappMessage {
 
   @@index([organizationId, customerId, createdAt])
   @@index([customerId, direction, createdAt])
+}
+
+// Análisis periódico de cartera (quincenal / mensual / bimestral). Cada fila
+// es la "foto" de un periodo ya cerrado: métricas por cliente, comparación
+// contra el periodo anterior (quién mejoró / empeoró), datos por tipo de
+// cliente y la lista de datos a corregir. Todo se calcula con código
+// (determinista, auditable); `aiAnalysis` queda para la lectura de la IA
+// (paso 4), que se agrega ENCIMA de estos números sin cambiarlos.
+model PortfolioReport {
+  id                String   @id @default(uuid())
+  organizationId    String
+  // QUINCENAL | MENSUAL | BIMESTRAL
+  frequency         String
+  periodFrom        DateTime
+  // Exclusivo: el periodo es [periodFrom, periodTo).
+  periodTo          DateTime
+  data              Json
+  aiAnalysis        Json?
+  // Null = lo generó el cron; si no, la persona que pidió "Generar ahora".
+  generatedByUserId String?
+  generatedAt       DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, frequency, periodFrom])
+  @@index([organizationId, periodTo])
 }

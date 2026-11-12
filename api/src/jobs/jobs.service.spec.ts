@@ -14,6 +14,7 @@ import { CustomerRiskService } from '../customers/scoring/customer-risk.service'
 import { OrganizationService } from '../organization/organization.service';
 import { ActivityLogService } from '../activity/activity-log.service';
 import { RedisService } from '../common/redis/redis.service';
+import type { PortfolioAnalysisService } from '../portfolio-analysis/portfolio-analysis.service';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.validation';
 
@@ -90,6 +91,7 @@ describe('JobsService — weeklyCollectionDigest', () => {
       { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
       makeActivity(),
       makeRedis(),
+      {} as PortfolioAnalysisService,
     );
   });
 
@@ -225,6 +227,7 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
       { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
       makeActivity(),
       makeRedis(),
+      {} as PortfolioAnalysisService,
     );
   });
 
@@ -279,6 +282,7 @@ describe('JobsService — whatsappNotificationsDigest (ROY-25)', () => {
       { get: jest.fn().mockReturnValue('false') } as unknown as ConfigService<Env, true>,
       makeActivity(),
       makeRedis(),
+      {} as PortfolioAnalysisService,
     );
 
     await expect(service.whatsappNotificationsDigest()).resolves.toEqual({
@@ -336,6 +340,7 @@ describe('JobsService — onboardingDataCompletion (Fase 5)', () => {
       { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
       makeActivity(),
       makeRedis(),
+      {} as PortfolioAnalysisService,
     );
   });
 
@@ -391,6 +396,7 @@ describe('JobsService — onboardingDataCompletion (Fase 5)', () => {
       { get: jest.fn().mockReturnValue('false') } as unknown as ConfigService<Env, true>,
       makeActivity(),
       makeRedis(),
+      {} as PortfolioAnalysisService,
     );
 
     await expect(service.onboardingDataCompletion()).resolves.toEqual({

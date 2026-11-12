@@ -2,23 +2,9 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { CustomerRiskTier, InvoiceStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import type { AuthenticatedUser } from '../../auth/interfaces/authenticated-user.interface';
-import {
-  RISK_TIER_ATENCION_MIN_DAYS,
-  RISK_TIER_ATENCION_MIN_OVERDUE_COUNT,
-  RISK_TIER_BAD_HISTORY_SCORE_THRESHOLD,
-  RISK_TIER_INCOBRABLE_DAYS,
-  RISK_TIER_RIESGO_DAYS,
-} from './customer-risk.constants';
-
-/** Orden de severidad, de mejor a peor — usado solo para detectar si un
- * cambio de tier es un EMPEORAMIENTO (dispara alerta) o una mejora
- * (silenciosa: nadie necesita que le avisen que un cliente mejoró). */
-const TIER_SEVERITY: Record<CustomerRiskTier, number> = {
-  SANO: 0,
-  ATENCION: 1,
-  RIESGO: 2,
-  INCOBRABLE: 3,
-};
+// TIER_SEVERITY: usado para detectar si un cambio de tier es un
+// EMPEORAMIENTO (dispara alerta) o una mejora (silenciosa).
+import { classifyRiskTier, TIER_SEVERITY } from './customer-risk.classify';
 
 export interface CustomerRiskResult {
   tier: CustomerRiskTier;
@@ -150,37 +136,9 @@ export class CustomerRiskService {
     overdueCount: number,
     score: number | null,
   ): { tier: CustomerRiskTier; reason: string } {
-    if (maxDaysOverdue >= RISK_TIER_INCOBRABLE_DAYS) {
-      return {
-        tier: CustomerRiskTier.INCOBRABLE,
-        reason: `Factura abierta con ${maxDaysOverdue} días de atraso (≥${RISK_TIER_INCOBRABLE_DAYS}).`,
-      };
-    }
-    if (maxDaysOverdue >= RISK_TIER_RIESGO_DAYS) {
-      return {
-        tier: CustomerRiskTier.RIESGO,
-        reason: `Factura abierta con ${maxDaysOverdue} días de atraso (≥${RISK_TIER_RIESGO_DAYS}).`,
-      };
-    }
-
-    const overdueTrigger =
-      overdueCount >= RISK_TIER_ATENCION_MIN_OVERDUE_COUNT ||
-      maxDaysOverdue >= RISK_TIER_ATENCION_MIN_DAYS;
-    const badHistory =
-      score == null || score < RISK_TIER_BAD_HISTORY_SCORE_THRESHOLD;
-    if (overdueTrigger && badHistory) {
-      const reasons: string[] = [];
-      if (overdueCount >= RISK_TIER_ATENCION_MIN_OVERDUE_COUNT) {
-        reasons.push(`${overdueCount} facturas vencidas`);
-      }
-      if (maxDaysOverdue >= RISK_TIER_ATENCION_MIN_DAYS) {
-        reasons.push(`hasta ${maxDaysOverdue} días de atraso`);
-      }
-      reasons.push(score == null ? 'sin historial de pagos' : `${score}% de puntualidad`);
-      return { tier: CustomerRiskTier.ATENCION, reason: reasons.join(' · ') };
-    }
-
-    return { tier: CustomerRiskTier.SANO, reason: 'Sin señales de riesgo relevantes.' };
+    // La regla vive en customer-risk.classify.ts (función pura) para que el
+    // análisis de cartera la aplique igual al cierre de cada periodo.
+    return classifyRiskTier(maxDaysOverdue, overdueCount, score);
   }
 
   private requireOrg(user: AuthenticatedUser): string {

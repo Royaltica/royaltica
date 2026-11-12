@@ -214,6 +214,32 @@ describe('ReceivablesService', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
+  it('revierte un cobro (PAID → PENDING) solo con motivo y limpia la fecha de pago', async () => {
+    prisma.invoice.findFirst.mockResolvedValue({ id: 'inv-1', organizationId: 'org-1', status: InvoiceStatus.PAID });
+    prisma.invoice.update.mockResolvedValue({ id: 'inv-1', status: InvoiceStatus.PENDING, subtotal: 1, iva: 0, total: 1 });
+
+    await service.updateStatus(user, 'inv-1', InvoiceStatus.PENDING, 'Se capturó en el cliente equivocado');
+
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: InvoiceStatus.PENDING, paidDate: null }) }),
+    );
+    expect(webhooks.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('registra el cobro con la fecha que indica el usuario y rechaza fechas futuras', async () => {
+    prisma.invoice.findFirst.mockResolvedValue({ id: 'inv-1', organizationId: 'org-1', status: InvoiceStatus.PENDING });
+    prisma.invoice.update.mockResolvedValue({ id: 'inv-1', status: InvoiceStatus.PAID, subtotal: 1, iva: 0, total: 1 });
+
+    await service.updateStatus(user, 'inv-1', InvoiceStatus.PAID, undefined, '2026-10-20');
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ paidDate: new Date('2026-10-20') }) }),
+    );
+
+    await expect(
+      service.updateStatus(user, 'inv-1', InvoiceStatus.PAID, undefined, '2999-01-01'),
+    ).rejects.toThrow(BadRequestException);
+  });
+
   it('marca como PAID y dispara webhook receivable.paid', async () => {
     prisma.invoice.findFirst.mockResolvedValue({
       id: 'inv-1',

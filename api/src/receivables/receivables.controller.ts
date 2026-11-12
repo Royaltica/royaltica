@@ -10,10 +10,11 @@ import {
   Post,
   Query,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ReceivablesService } from './receivables.service';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermissions } from '../auth/decorators/permissions.decorator';
@@ -48,6 +49,30 @@ export class ReceivablesController {
     @UploadedFile() file: Express.Multer.File | undefined,
   ) {
     return this.receivables.bulkImportZip(user, file);
+  }
+
+  /**
+   * Carga de facturas con revisión, paso 1: lee XML sueltos o ZIP, empata cada
+   * CFDI con su cliente (RFC → nombre) y regresa la revisión sin guardar.
+   */
+  @Post('bulk/preview')
+  @UseInterceptors(FilesInterceptor('files', 200, { limits: { fileSize: 25 * 1024 * 1024 } }))
+  previewBulk(
+    @CurrentUser() user: AuthenticatedUser,
+    @UploadedFiles() files: Express.Multer.File[] | undefined,
+  ) {
+    return this.receivables.previewBulkCfdi(user, files);
+  }
+
+  /** Paso 2: guarda con las asignaciones que hizo el usuario (JSON uuid → clienteId | null). */
+  @Post('bulk/confirm')
+  @UseInterceptors(FilesInterceptor('files', 200, { limits: { fileSize: 25 * 1024 * 1024 } }))
+  confirmBulk(
+    @CurrentUser() user: AuthenticatedUser,
+    @UploadedFiles() files: Express.Multer.File[] | undefined,
+    @Body('asignaciones') asignaciones?: string,
+  ) {
+    return this.receivables.confirmBulkCfdi(user, files, asignaciones);
   }
 
   @Get()
@@ -85,7 +110,7 @@ export class ReceivablesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateReceivableStatusDto,
   ) {
-    return this.receivables.updateStatus(user, id, dto.status, dto.reason);
+    return this.receivables.updateStatus(user, id, dto.status, dto.reason, dto.paidDate);
   }
 
   @Post(':id/send-reminder')

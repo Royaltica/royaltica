@@ -5,6 +5,8 @@ export interface ParsedCfdi {
   rfcEmisor: string;
   rfcReceptor: string;
   emisorNombre: string | null;
+  /** Razón social del receptor (en CxC, el cliente). */
+  receptorNombre: string | null;
   subtotal: number;
   iva: number;
   total: number;
@@ -85,6 +87,7 @@ export function parseCfdiXml(xml: string): ParsedCfdi {
     rfcEmisor: rfcEmisor.toUpperCase(),
     rfcReceptor: rfcReceptor.toUpperCase(),
     emisorNombre: attr(emisor, 'Nombre') ?? null,
+    receptorNombre: attr(receptor, 'Nombre') ?? null,
     subtotal,
     iva,
     total,

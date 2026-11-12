@@ -17,6 +17,7 @@ import { CustomerScoringService } from '../customers/scoring/customer-scoring.se
 import { CustomerRiskService } from '../customers/scoring/customer-risk.service';
 import { OrganizationService } from '../organization/organization.service';
 import { ActivityLogService } from '../activity/activity-log.service';
+import { PortfolioAnalysisService } from '../portfolio-analysis/portfolio-analysis.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
 import {
@@ -83,6 +84,7 @@ export class JobsService {
     private readonly config: ConfigService<Env, true>,
     private readonly activity: ActivityLogService,
     private readonly redis: RedisService,
+    private readonly portfolioAnalysis: PortfolioAnalysisService,
   ) {}
 
   private get enabled(): boolean {
@@ -696,6 +698,16 @@ export class JobsService {
       `customer-score-recompute: ${recomputed} recalculado(s), ${alerted} alerta(s).`,
     );
     return { recomputed, alerted };
+  }
+
+  // ── Análisis periódico de cartera (quincenal/mensual/bimestral) ──
+  // Corre diario después del recálculo de score/riesgo (11:30): si a una org
+  // ya se le cerró un periodo de SU frecuencia y no tiene su reporte, lo
+  // genera. La mayoría de los días no hace nada (idempotente).
+  @Cron('0 12 * * *', { name: 'portfolio-analysis' })
+  async portfolioAnalysisReports(): Promise<{ generated: number; skipped: number }> {
+    if (!this.enabled) return { generated: 0, skipped: 0 };
+    return this.portfolioAnalysis.runScheduled();
   }
 
   // ── Onboarding post-venta: carga inicial de datos (Fase 5, "CONCEPTO" de

@@ -30,6 +30,14 @@ import {
 } from './dto/create-receivable.dto';
 import { RFC_REGEX } from '../customers/dto/create-customer.dto';
 import { QueryReceivablesDto } from './dto/query-receivables.dto';
+import { empatarCliente, rfcValido, type ClienteMatch } from './cfdi-match';
+
+/** Archivo recibido por multer (solo lo que se usa). */
+export type ArchivoSubido = { buffer: Buffer; originalname: string };
+/** Tope de facturas por carga, para que una revisión siga siendo manejable. */
+export const MAX_CFDI_POR_CARGA = 2000;
+/** Días de crédito cuando el cliente no tiene definidos (para calcular el vencimiento). */
+const DIAS_CREDITO_DEFAULT = 30;
 
 /**
  * Estados de una factura de venta (CxC). A diferencia de CxP no hay flujo de
@@ -38,7 +46,8 @@ import { QueryReceivablesDto } from './dto/query-receivables.dto';
  */
 const TRANSITIONS: Partial<Record<InvoiceStatus, InvoiceStatus[]>> = {
   [InvoiceStatus.PENDING]: [InvoiceStatus.PAID, InvoiceStatus.REJECTED],
-  [InvoiceStatus.PAID]: [],
+  // Revertir un cobro registrado por error (queda en la bitácora con el motivo).
+  [InvoiceStatus.PAID]: [InvoiceStatus.PENDING],
   [InvoiceStatus.REJECTED]: [],
 };
 
@@ -185,6 +194,10 @@ export class ReceivablesService {
           externalId: true,
           name: true,
           rfc: true,
+          legalName: true,
+          category: true,
+          creditLimitDays: true,
+          notes: true,
           contact: true,
           email: true,
           phone: true,
@@ -298,6 +311,7 @@ export class ReceivablesService {
     id: string,
     target: InvoiceStatus,
     reason?: string,
+    paidDate?: string,
   ) {
     const organizationId = this.requireOrg(user);
     const updated = await this.prisma.withOrg(organizationId, async (tx) => {
@@ -310,7 +324,19 @@ export class ReceivablesService {
       }
 
       const data: Prisma.InvoiceUpdateInput = { status: target };
-      if (target === InvoiceStatus.PAID) data.paidDate = new Date();
+      if (target === InvoiceStatus.PAID) {
+        const fecha = paidDate ? new Date(paidDate) : new Date();
+        if (fecha.getTime() > Date.now() + 86_400_000) {
+          throw new BadRequestException('La fecha de pago no puede ser futura.');
+        }
+        data.paidDate = fecha;
+      }
+      if (invoice.status === InvoiceStatus.PAID && target === InvoiceStatus.PENDING) {
+        if (!reason?.trim()) {
+          throw new BadRequestException('Para revertir un cobro escribe el motivo.');
+        }
+        data.paidDate = null;
+      }
 
       const updated = await tx.invoice.update({ where: { id }, data });
       await tx.invoiceAuditLog.create({
@@ -647,7 +673,205 @@ export class ReceivablesService {
     };
   }
 
+  /**
+   * Paso 1 de la carga de facturas: lee los XML (sueltos o dentro de ZIP),
+   * empata cada uno con su cliente (RFC → nombre → sugerencias) y regresa la
+   * revisión SIN guardar nada. El usuario corrige lo que no empató y confirma.
+   */
+  async previewBulkCfdi(user: AuthenticatedUser, files: ArchivoSubido[] | undefined) {
+    const organizationId = this.requireOrg(user);
+    const leidos = this.leerCfdis(files);
+    const clientes = await this.clientesParaEmpate(organizationId);
+
+    const uuids = leidos.flatMap((l) => (l.cfdi ? [l.cfdi.cfdiUuid] : []));
+    const existentes = uuids.length
+      ? await this.prisma.invoice.findMany({
+          where: { cfdiUuid: { in: uuids } },
+          select: { cfdiUuid: true, organizationId: true, customer: { select: { name: true } } },
+        })
+      : [];
+    const yaEsta = new Map(existentes.map((e) => [e.cfdiUuid, e]));
+    const vistos = new Set<string>();
+
+    const filas = leidos.map(({ archivo, cfdi, error }) => {
+      if (!cfdi) return { archivo, estado: 'error' as const, motivo: error };
+      const base = {
+        archivo,
+        uuid: cfdi.cfdiUuid,
+        folio: cfdi.folio,
+        total: cfdi.total,
+        moneda: cfdi.currency,
+        fecha: cfdi.date.toISOString().slice(0, 10),
+        metodoPago: cfdi.paymentType,
+        rfcReceptor: cfdi.rfcReceptor,
+        nombreReceptor: cfdi.receptorNombre,
+      };
+      if (vistos.has(cfdi.cfdiUuid)) {
+        return { ...base, estado: 'duplicada' as const, motivo: 'Viene repetida en esta carga.' };
+      }
+      vistos.add(cfdi.cfdiUuid);
+      const previa = yaEsta.get(cfdi.cfdiUuid);
+      if (previa) {
+        return {
+          ...base,
+          estado: 'duplicada' as const,
+          motivo:
+            previa.organizationId === organizationId
+              ? `Ya está registrada${previa.customer ? ` en ${previa.customer.name}` : ''}.`
+              : 'Este UUID ya existe en otra cuenta de Royáltica.',
+        };
+      }
+      const m = empatarCliente(cfdi.rfcReceptor, cfdi.receptorNombre, clientes);
+      return {
+        ...base,
+        estado: m.tipo === 'sin_match' ? ('sin_match' as const) : (`por_${m.tipo}` as const),
+        cliente: m.cliente ? { id: m.cliente.id, nombre: m.cliente.name, rfc: m.cliente.rfc } : null,
+        sugerencias: m.sugerencias.map((s) => ({
+          id: s.cliente.id,
+          nombre: s.cliente.name,
+          rfc: s.cliente.rfc,
+          parecido: Math.round(s.parecido * 100),
+        })),
+        // Si se empata por nombre y el cliente no tiene un RFC real, al confirmar se le guarda el del CFDI.
+        actualizaRfc: m.tipo === 'nombre' && !rfcValido(m.cliente.rfc) && rfcValido(cfdi.rfcReceptor),
+      };
+    });
+
+    const cuenta = (e: string) => filas.filter((f) => f.estado === e).length;
+    return {
+      total: filas.length,
+      resumen: {
+        porRfc: cuenta('por_rfc'),
+        porNombre: cuenta('por_nombre'),
+        sinMatch: cuenta('sin_match'),
+        duplicadas: cuenta('duplicada'),
+        errores: cuenta('error'),
+      },
+      filas,
+    };
+  }
+
+  /**
+   * Paso 2: guarda las facturas. `asignaciones` trae, por UUID, el cliente que
+   * eligió el usuario (o null para omitirla); las que no vengan usan el empate
+   * automático. Si el cliente no tenía un RFC real, se le guarda el del CFDI.
+   */
+  async confirmBulkCfdi(
+    user: AuthenticatedUser,
+    files: ArchivoSubido[] | undefined,
+    asignacionesJson: string | undefined,
+  ) {
+    const organizationId = this.requireOrg(user);
+    let asignaciones: Record<string, string | null> = {};
+    if (asignacionesJson) {
+      try {
+        asignaciones = JSON.parse(asignacionesJson) as Record<string, string | null>;
+      } catch {
+        throw new BadRequestException('Las asignaciones no son un JSON válido.');
+      }
+    }
+    const leidos = this.leerCfdis(files);
+    const clientes = await this.clientesParaEmpate(organizationId);
+    const porId = new Map(clientes.map((c) => [c.id, c]));
+
+    let creadas = 0;
+    let rfcActualizados = 0;
+    const omitidas: { archivo: string; motivo: string }[] = [];
+    const clientesTocados = new Set<string>();
+
+    for (const { archivo, cfdi, error } of leidos) {
+      if (!cfdi) {
+        omitidas.push({ archivo, motivo: error ?? 'No se pudo leer.' });
+        continue;
+      }
+      let cliente: ClienteMatch | null | undefined;
+      if (Object.prototype.hasOwnProperty.call(asignaciones, cfdi.cfdiUuid)) {
+        const id = asignaciones[cfdi.cfdiUuid];
+        if (id === null) {
+          omitidas.push({ archivo, motivo: 'La omitiste en la revisión.' });
+          continue;
+        }
+        cliente = porId.get(id);
+        if (!cliente) {
+          omitidas.push({ archivo, motivo: 'El cliente elegido ya no existe.' });
+          continue;
+        }
+      } else {
+        const m = empatarCliente(cfdi.rfcReceptor, cfdi.receptorNombre, clientes);
+        cliente = m.cliente;
+      }
+      if (!cliente) {
+        omitidas.push({ archivo, motivo: `Sin cliente para ${cfdi.receptorNombre ?? cfdi.rfcReceptor}.` });
+        continue;
+      }
+
+      try {
+        const r = await this.prisma.withOrg(organizationId, async (tx) => {
+          const res = await this.persistParsed(tx, organizationId, user.id, cfdi, cliente!.id);
+          if (res.skipped) return res;
+          // Completa el RFC del cliente cuando no tenía uno real (empate por nombre o manual).
+          if (!rfcValido(cliente!.rfc) && rfcValido(cfdi.rfcReceptor)) {
+            await tx.customer.update({ where: { id: cliente!.id }, data: { rfc: cfdi.rfcReceptor } });
+            cliente!.rfc = cfdi.rfcReceptor;
+            return { ...res, rfcActualizado: true };
+          }
+          return res;
+        });
+        if (r.skipped) omitidas.push({ archivo, motivo: r.reason });
+        else {
+          creadas++;
+          clientesTocados.add(cliente.id);
+          if ('rfcActualizado' in r && r.rfcActualizado) rfcActualizados++;
+        }
+      } catch (err) {
+        omitidas.push({ archivo, motivo: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    return { total: leidos.length, creadas, clientes: clientesTocados.size, rfcActualizados, omitidas };
+  }
+
   // ── helpers ───────────────────────────────────────────────
+
+  /** Abre los archivos subidos: XML sueltos y XML dentro de ZIP. */
+  private leerCfdis(files: ArchivoSubido[] | undefined) {
+    if (!files?.length) throw new BadRequestException('Sube al menos un XML o ZIP de facturas.');
+    const entradas: { archivo: string; xml: string }[] = [];
+    for (const f of files) {
+      if (/\.zip$/i.test(f.originalname)) {
+        try {
+          new AdmZip(f.buffer)
+            .getEntries()
+            .filter((e) => !e.isDirectory && /\.xml$/i.test(e.entryName) && !e.entryName.startsWith('__MACOSX'))
+            .forEach((e) => entradas.push({ archivo: e.entryName.split('/').pop() ?? e.entryName, xml: e.getData().toString('utf8') }));
+        } catch {
+          throw new BadRequestException(`${f.originalname} no es un ZIP válido.`);
+        }
+      } else if (/\.xml$/i.test(f.originalname)) {
+        entradas.push({ archivo: f.originalname, xml: f.buffer.toString('utf8') });
+      }
+    }
+    if (!entradas.length) throw new BadRequestException('No encontramos archivos .xml en lo que subiste.');
+    if (entradas.length > MAX_CFDI_POR_CARGA) {
+      throw new BadRequestException(`Son ${entradas.length} facturas; el máximo por carga es ${MAX_CFDI_POR_CARGA}.`);
+    }
+    return entradas.map(({ archivo, xml }) => {
+      try {
+        return { archivo, cfdi: parseCfdiXml(xml) as ParsedCfdi, error: undefined };
+      } catch (err) {
+        return { archivo, cfdi: null, error: err instanceof Error ? err.message : 'No es un CFDI válido.' };
+      }
+    });
+  }
+
+  private async clientesParaEmpate(organizationId: string): Promise<ClienteMatch[]> {
+    return this.prisma.withOrg(organizationId, (tx) =>
+      tx.customer.findMany({
+        where: { organizationId, deletedAt: null },
+        select: { id: true, name: true, legalName: true, rfc: true, creditLimitDays: true },
+      }),
+    );
+  }
 
   /**
    * Registra una factura de venta a partir de un CFDI ya parseado. Empata el
@@ -659,6 +883,8 @@ export class ReceivablesService {
     organizationId: string,
     userId: string,
     parsed: ParsedCfdi,
+    /** Cliente ya elegido (carga con revisión). Sin él, se empata por RFC receptor. */
+    customerId?: string,
   ): Promise<
     | { skipped: true; reason: string; invoiceId?: undefined }
     | { skipped: false; reason?: undefined; invoiceId: string }
@@ -673,8 +899,10 @@ export class ReceivablesService {
     }
 
     const customer = await tx.customer.findFirst({
-      where: { organizationId, rfc: parsed.rfcReceptor, deletedAt: null },
-      select: { id: true },
+      where: customerId
+        ? { organizationId, id: customerId, deletedAt: null }
+        : { organizationId, rfc: parsed.rfcReceptor, deletedAt: null },
+      select: { id: true, creditLimitDays: true },
     });
     if (!customer) {
       return {
@@ -696,6 +924,8 @@ export class ReceivablesService {
         total: parsed.total,
         currency: parsed.currency,
         date: parsed.date,
+        // El CFDI no trae vencimiento: se calcula con los días de crédito del cliente.
+        dueDate: new Date(parsed.date.getTime() + (customer.creditLimitDays ?? DIAS_CREDITO_DEFAULT) * 86_400_000),
         folio: parsed.folio,
         paymentType: parsed.paymentType,
       },

@@ -130,4 +130,36 @@ describe('CustomersService', () => {
     expect(res).toEqual({ deleted: true, id: 'c-1' });
     expect(prisma.customer.update).toHaveBeenCalled();
   });
+
+  it('al marcar "no contactar" guarda la fecha y al quitarlo limpia el motivo', async () => {
+    prisma.customer.findFirst.mockResolvedValue({ id: 'c-1' });
+    prisma.customer.update.mockResolvedValue({ id: 'c-1' });
+
+    await service.update(admin, 'c-1', { doNotContact: true, doNotContactReason: 'Pidió no ser contactado' });
+    expect(prisma.customer.update.mock.calls[0][0].data).toMatchObject({
+      doNotContact: true,
+      doNotContactReason: 'Pidió no ser contactado',
+      doNotContactAt: expect.any(Date),
+    });
+
+    await service.update(admin, 'c-1', { doNotContact: false });
+    expect(prisma.customer.update.mock.calls[1][0].data).toMatchObject({
+      doNotContact: false,
+      doNotContactReason: null,
+      doNotContactAt: null,
+    });
+  });
+
+  it('restaura un cliente eliminado (deshacer) y rechaza uno que no está eliminado', async () => {
+    prisma.customer.findFirst.mockResolvedValueOnce({ id: 'c-1' });
+    prisma.customer.update.mockResolvedValue({ id: 'c-1', deletedAt: null });
+    await service.restore(admin, 'c-1');
+    expect(prisma.customer.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ deletedAt: { not: null } }) }),
+    );
+    expect(prisma.customer.update).toHaveBeenCalledWith({ where: { id: 'c-1' }, data: { deletedAt: null } });
+
+    prisma.customer.findFirst.mockResolvedValueOnce(null);
+    await expect(service.restore(admin, 'c-2')).rejects.toThrow(NotFoundException);
+  });
 });
