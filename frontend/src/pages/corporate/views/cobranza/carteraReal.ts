@@ -45,6 +45,7 @@ export function cuentaDesdeApi(p: PortfolioCustomer): CuentaCartera {
   const telefono = p.financeContactPhone ?? null;
 
   const extras: Factura[] = otras.map((f) => ({
+    dbId: f.id,
     folio: f.folio,
     monto: f.total,
     emision: fechaCorta(f.date),
@@ -80,6 +81,23 @@ export function cuentaDesdeApi(p: PortfolioCustomer): CuentaCartera {
     // Real (backend)
     id: demoId ?? p.id,
     dbId: p.id,
+    facturaDbId: principal?.id,
+    datos: {
+      rfc: p.rfc,
+      razonSocial: p.legalName ?? p.name,
+      contacto: p.contact,
+      correo: p.email,
+      telefono: p.phone,
+      categoria: p.category ?? null,
+      diasCredito: p.creditLimitDays ?? null,
+      agenteId: p.agent?.id ?? null,
+      finanzasNombre: p.financeContactName,
+      finanzasTelefono: p.financeContactPhone,
+      finanzasCorreo: p.financeContactEmail,
+      noContactar: p.doNotContact,
+      motivoNoContactar: p.doNotContactReason,
+      nota: p.notes ?? null,
+    },
     cliente: p.name,
     folio: principal?.folio ?? '—',
     monto: principal?.total ?? 0,

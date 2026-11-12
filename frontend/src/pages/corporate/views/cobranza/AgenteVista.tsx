@@ -51,7 +51,7 @@ export function AgenteVista({ renderPlan }: { renderPlan: (c: CuentaViva) => Rea
   return (
     <div className="max-w-4xl space-y-6">
       <Reveal>
-        <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl px-6 py-5">
+        <div className="glass rounded-[28px] px-6 py-5">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <p className="text-sm text-brand-ink/55">
@@ -165,7 +165,7 @@ function MisCuentas({ cuentas, onAbrirWhatsapp }: { cuentas: CuentaViva[]; onAbr
             {listas.map((c) => (
               <li
                 key={c.id}
-                className="flex items-center justify-between gap-3 px-5 py-3 rounded-2xl bg-brand-bone/60 border border-brand-ink/6"
+                className="flex items-center justify-between gap-3 px-5 py-3 rounded-2xl bg-white/45 border border-brand-ink/6"
               >
                 <span className="flex items-center gap-2 text-sm text-brand-ink/60">
                   <Check size={14} className="text-emerald-600" />
@@ -228,8 +228,8 @@ function TarjetaCuenta({
 
   return (
     <div
-      className={`rounded-3xl border bg-brand-paper transition-colors ${
-        abierta ? 'border-brand-gold/50 shadow-sm' : 'border-brand-ink/10'
+      className={`glass rounded-[28px] transition-shadow duration-300 ${
+        abierta ? '!shadow-[0_0_0_2px_rgba(6,182,212,0.5),0_16px_40px_-18px_rgba(6,182,212,0.45)]' : ''
       } ${c.contactable ? '' : 'opacity-60'}`}
     >
       <button onClick={onToggle} className="w-full text-left px-6 py-5" aria-expanded={abierta}>
@@ -330,7 +330,7 @@ function TarjetaCuenta({
                     const pl = plantillaPorId(t.plantilla);
                     return (
                       <div key={i} className="rounded-2xl border border-brand-ink/8 overflow-hidden">
-                        <div className="px-4 py-2 bg-brand-bone/60 text-[11px] text-brand-ink/55 flex flex-wrap justify-between gap-2">
+                        <div className="px-4 py-2 bg-white/45 text-[11px] text-brand-ink/55 flex flex-wrap justify-between gap-2">
                           <span className="font-semibold text-brand-ink/70">{t.campana}</span>
                           <span>{pl?.etapa} · {t.hora}</span>
                         </div>
@@ -391,7 +391,7 @@ function TarjetaCuenta({
                   </div>
 
                   {esLlamada && !envio && (
-                    <p className="text-sm text-brand-ink/80 leading-relaxed bg-brand-bone/60 border border-brand-ink/6 rounded-2xl px-4 py-3">
+                    <p className="text-sm text-brand-ink/80 leading-relaxed bg-white/45 border border-brand-ink/6 rounded-2xl px-4 py-3">
                       <span className="block text-[10px] uppercase tracking-[0.14em] text-brand-ink/40 mb-1">Guion de llamada</span>
                       {llenarPlantilla(plantilla.texto, c)}
                     </p>
@@ -403,7 +403,7 @@ function TarjetaCuenta({
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 0.25, ease: EASE }}
                     >
-                      <p className="text-sm text-brand-ink/80 leading-relaxed bg-brand-bone/60 border border-brand-ink/6 rounded-2xl px-4 py-3">
+                      <p className="text-sm text-brand-ink/80 leading-relaxed bg-white/45 border border-brand-ink/6 rounded-2xl px-4 py-3">
                         {mensaje}
                       </p>
                       <p className="text-[11px] text-brand-ink/40 mt-1.5">
@@ -438,7 +438,7 @@ function TarjetaCuenta({
                   )}
                 </div>
               ) : (
-                <p className="text-sm text-brand-ink/60 bg-brand-bone/60 rounded-2xl px-4 py-3 border border-brand-ink/6">
+                <p className="text-sm text-brand-ink/60 bg-white/45 rounded-2xl px-4 py-3 border border-brand-ink/6">
                   Hoy no toca mensaje: {actual ? `${actual.etiqueta} ya se hizo (${c.resultados[actual.id]}).` : ''}{' '}
                   {proxima ? `Lo siguiente es ${proxima.etiqueta} · ${proxima.nombre}, ${proxima.faltan === 1 ? 'mañana' : `en ${proxima.faltan} días`}.` : ''}
                 </p>
@@ -498,7 +498,7 @@ function ClientesAgente({
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-      <div className="lg:col-span-2 bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden self-start">
+      <div className="lg:col-span-2 glass rounded-[28px] overflow-hidden self-start">
         {cuentas.map((c) => {
           const { actual: act, proxima } = planCuenta(c);
           return (
@@ -506,7 +506,7 @@ function ClientesAgente({
               key={c.id}
               onClick={() => onSel(c.id)}
               className={`w-full text-left px-5 py-3.5 border-b border-brand-ink/6 last:border-0 transition-colors ${
-                c.id === activa.id ? 'bg-brand-cream' : 'hover:bg-brand-bone'
+                c.id === activa.id ? 'bg-brand-cream' : 'hover:bg-white/70'
               }`}
             >
               <div className="flex items-center justify-between gap-2">
@@ -529,7 +529,7 @@ function ClientesAgente({
         })}
       </div>
 
-      <div className="lg:col-span-3 bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden">
+      <div className="lg:col-span-3 glass rounded-[28px] overflow-hidden">
         <div className="px-7 pt-6">
           <h3 className="text-[1.4rem] font-serif text-brand-ink leading-tight">{activa.cliente}</h3>
           <div className="flex flex-wrap gap-x-3 text-[11px] text-brand-ink/45 mt-1">
@@ -592,7 +592,7 @@ function FranjaCampanas({ cuentas }: { cuentas: CuentaViva[] }) {
   const respuestas = porCampana.reduce((s, x) => s + x.respondieron.length, 0);
 
   return (
-    <div className="rounded-2xl border border-brand-ink/10 bg-brand-paper">
+    <div className="rounded-[22px] glass">
       <button onClick={() => setAbierta(!abierta)} className="w-full flex flex-wrap items-center gap-3 px-5 py-3 text-left">
         <Megaphone size={14} className="text-brand-gold" />
         <span className="text-[13px] text-brand-ink">
@@ -603,7 +603,7 @@ function FranjaCampanas({ cuentas }: { cuentas: CuentaViva[] }) {
         <ChevronDown size={14} className={`ml-auto text-brand-ink/35 transition-transform ${abierta ? 'rotate-180' : ''}`} />
       </button>
       {abierta && (
-        <ul className="border-t border-brand-ink/8 divide-y divide-brand-ink/6">
+        <ul className="border-t border-brand-ink/8 divide-y divide-white/70">
           {porCampana.map(({ camp, tocadas, llamadas, respondieron }) => {
             const pl = PLANTILLAS.find((p) => p.id === camp.config.plantilla);
             return (

@@ -62,6 +62,131 @@ export const endImpersonation = (): void => {
   else clearToken();
 };
 
+// ── Análisis periódico de cartera (espejo de api/src/portfolio-analysis) ──
+
+export type ReportFrequency = 'QUINCENAL' | 'MENSUAL' | 'BIMESTRAL';
+export type RiskTier = 'SANO' | 'ATENCION' | 'RIESGO' | 'INCOBRABLE';
+export type CustomerTrend = 'MEJORO' | 'EMPEORO' | 'ESTABLE' | 'NUEVO' | 'SIN_ACTIVIDAD';
+
+export interface PortfolioCustomerMetrics {
+  openAmount: number;
+  overdueAmount: number;
+  maxDaysOverdue: number;
+  punctualityPct: number | null;
+  paidCount: number;
+  paidAmount: number;
+  avgPaymentDelayDays: number | null;
+  messagesSent: number;
+  repliesReceived: number;
+  responded: boolean;
+}
+
+export interface PortfolioCustomerRow {
+  customerId: string;
+  name: string;
+  segment: 'PUNTUAL' | 'TARDIO' | 'MOROSO' | 'NUEVO';
+  tier: RiskTier;
+  previousTier: RiskTier | null;
+  trend: CustomerTrend;
+  trendReasons: string[];
+  creditDays: number | null;
+  current: PortfolioCustomerMetrics;
+  previous: PortfolioCustomerMetrics | null;
+  daysToUncollectible?: number;
+}
+
+export interface PortfolioTotals {
+  customersWithBalance: number;
+  openAmount: number;
+  overdueAmount: number;
+  overduePct: number | null;
+  collectedAmount: number;
+  collectedCount: number;
+  paidOnTimePct: number | null;
+  avgPaymentDelayDays: number | null;
+  customersMessaged: number;
+  customersResponded: number;
+  responseRatePct: number | null;
+  distribution: Record<RiskTier, number>;
+}
+
+export interface PortfolioSegmentStats {
+  key: string;
+  label: string;
+  customers: number;
+  openAmount: number;
+  overdueAmount: number;
+  paidOnTimePct: number | null;
+  avgPaymentDelayDays: number | null;
+  medianCreditDays: number | null;
+  responseRatePct: number | null;
+  paidAfterLevel: Record<string, number>;
+  improved: number;
+  worsened: number;
+}
+
+export interface PortfolioDataQualityIssue {
+  code: string;
+  severity: 'ALTA' | 'MEDIA' | 'BAJA';
+  title: string;
+  fix: string;
+  count: number;
+  samples: { id: string; label: string }[];
+}
+
+export interface PortfolioStrategyStat {
+  key: string;
+  label: string;
+  sends: number;
+  responded: number;
+  paid: number;
+  responseRatePct: number | null;
+  paidRatePct: number | null;
+  avgDaysToPay: number | null;
+}
+
+export interface PortfolioStrategies {
+  replyWindowHours: number;
+  payWindowDays: number;
+  minSample: number;
+  totalSends: number;
+  working: PortfolioStrategyStat[];
+  notWorking: PortfolioStrategyStat[];
+  lowSample: PortfolioStrategyStat[];
+}
+
+export interface PortfolioReportData {
+  frequency: ReportFrequency;
+  period: { from: string; to: string; label: string };
+  previousPeriod: { from: string; to: string; label: string };
+  totals: { current: PortfolioTotals; previous: PortfolioTotals };
+  trendCounts: Record<CustomerTrend, number>;
+  improved: PortfolioCustomerRow[];
+  worsened: PortfolioCustomerRow[];
+  nonResponders: PortfolioCustomerRow[];
+  becomingUncollectible: PortfolioCustomerRow[];
+  segments: PortfolioSegmentStats[];
+  customers: PortfolioCustomerRow[];
+  dataQuality: PortfolioDataQualityIssue[];
+  /** Ausente en reportes generados antes de medir estrategias. */
+  strategies?: PortfolioStrategies;
+  generatedAt: string;
+}
+
+export interface PortfolioReportRecord {
+  id: string;
+  frequency: ReportFrequency;
+  periodFrom: string;
+  periodTo: string;
+  generatedAt: string;
+  data: PortfolioReportData;
+}
+
+export interface PortfolioReportList {
+  frequency: ReportFrequency;
+  reports: { id: string; frequency: ReportFrequency; periodFrom: string; periodTo: string; label: string; generatedAt: string }[];
+}
+
 // ── Núcleo de peticiones ───────────────────────────────────
 
 async function request<T>(
@@ -271,6 +396,37 @@ export interface CxcCustomer {
   scoreUpdatedAt?: string | null;
   sat69b?: { listed: boolean; status: string | null; rfcValid: boolean } | null;
   createdAt: string;
+}
+
+/** Revisión de una carga de CFDI (ver ReceivablesService.previewBulkCfdi). */
+export type EstadoCfdi = 'por_rfc' | 'por_nombre' | 'sin_match' | 'duplicada' | 'error';
+export interface FilaRevisionCfdi {
+  archivo: string;
+  estado: EstadoCfdi;
+  motivo?: string;
+  uuid?: string;
+  folio?: string | null;
+  total?: number;
+  moneda?: string;
+  fecha?: string;
+  metodoPago?: 'PPD' | 'PUE' | null;
+  rfcReceptor?: string;
+  nombreReceptor?: string | null;
+  cliente?: { id: string; nombre: string; rfc: string } | null;
+  sugerencias?: { id: string; nombre: string; rfc: string; parecido: number }[];
+  actualizaRfc?: boolean;
+}
+export interface RevisionCfdi {
+  total: number;
+  resumen: { porRfc: number; porNombre: number; sinMatch: number; duplicadas: number; errores: number };
+  filas: FilaRevisionCfdi[];
+}
+export interface ResultadoCargaCfdi {
+  total: number;
+  creadas: number;
+  clientes: number;
+  rfcActualizados: number;
+  omitidas: { archivo: string; motivo: string }[];
 }
 
 export interface Receivable {
@@ -1474,36 +1630,33 @@ export const api = {
     return res.data;
   },
 
-  async createCustomer(payload: {
-    name: string;
-    rfc: string;
-    legalName: string;
-    email?: string;
-    phone?: string;
-    creditLimitDays?: number;
-    assignedAgentId?: string;
-  }): Promise<CxcCustomer> {
+  async createCustomer(payload: CustomerPayload & { name: string; rfc: string; legalName: string }): Promise<CxcCustomer> {
     return request<CxcCustomer>('POST', '/customers', payload);
   },
 
-  async updateCustomer(
-    id: string,
-    payload: Partial<{
-      name: string;
-      email: string;
-      phone: string;
-      creditLimitDays: number;
-      assignedAgentId: string;
-      financeContactName: string;
-      financeContactPhone: string;
-      financeContactEmail: string;
-    }>,
-  ): Promise<CxcCustomer> {
+  async updateCustomer(id: string, payload: CustomerPayload): Promise<CxcCustomer> {
     return request<CxcCustomer>('PATCH', `/customers/${id}`, payload);
   },
 
   async deleteCustomer(id: string): Promise<void> {
     await request('DELETE', `/customers/${id}`);
+  },
+
+  /** Deshace un eliminar (el borrado es lógico). */
+  async restoreCustomer(id: string): Promise<void> {
+    await request('POST', `/customers/${id}/restore`);
+  },
+
+  /** Descarga el padrón de clientes en CSV. */
+  async exportCustomersCsv(): Promise<void> {
+    return downloadCsv('/customers/export', 'clientes.csv');
+  },
+
+  /** Bitácora de cambios de un registro (solo administradores). */
+  async getEntityActivity(entityType: string, entityId: string): Promise<ActivityRow[]> {
+    const q = new URLSearchParams({ entityType, entityId, limit: '50' });
+    const r = await request<Paginated<ActivityRow>>('GET', `/activity?${q.toString()}`);
+    return r.data;
   },
 
   /** Facturas de venta (CxC) de la organización, con filtros opcionales. */
@@ -1528,6 +1681,21 @@ export const api = {
       `/receivables?${q.toString()}`,
     );
     return res.data;
+  },
+
+  /** Carga de facturas, paso 1: lee XML/ZIP y empata cada CFDI con su cliente, sin guardar. */
+  async previewReceivablesCfdi(files: File[]): Promise<RevisionCfdi> {
+    const form = new FormData();
+    files.forEach((f) => form.append('files', f));
+    return uploadForm<RevisionCfdi>('/receivables/bulk/preview', form);
+  },
+
+  /** Paso 2: guarda con las asignaciones (uuid → id del cliente, o null para omitirla). */
+  async confirmReceivablesCfdi(files: File[], asignaciones: Record<string, string | null>): Promise<ResultadoCargaCfdi> {
+    const form = new FormData();
+    files.forEach((f) => form.append('files', f));
+    form.append('asignaciones', JSON.stringify(asignaciones));
+    return uploadForm<ResultadoCargaCfdi>('/receivables/bulk/confirm', form);
   },
 
   /** Importa facturas de venta desde un ZIP de CFDI (exportado del ERP). */
@@ -1567,10 +1735,12 @@ export const api = {
     id: string,
     status: 'PENDING' | 'PAID' | 'REJECTED',
     reason?: string,
+    paidDate?: string,
   ): Promise<Receivable> {
     return request<Receivable>('PATCH', `/receivables/${id}/status`, {
       status,
       ...(reason ? { reason } : {}),
+      ...(paidDate ? { paidDate } : {}),
     });
   },
 
@@ -1726,6 +1896,25 @@ export const api = {
   /** Recordatorios automáticos cada mañana (true) o con aprobación (false). */
   async setLevelPlanAutoSend(autoSend: boolean): Promise<{ policy: CollectionLevelPlan }> {
     return request<{ policy: CollectionLevelPlan }>('PATCH', '/collection-sequences/level-plan', { autoSend });
+  },
+
+  // ── Análisis periódico de cartera (Cobranza IA → Reportes) ──
+
+  async listPortfolioReports(): Promise<PortfolioReportList> {
+    return request<PortfolioReportList>('GET', '/portfolio-analysis/reports');
+  },
+
+  async getPortfolioReport(id: string): Promise<PortfolioReportRecord> {
+    return request<PortfolioReportRecord>('GET', `/portfolio-analysis/reports/${id}`);
+  },
+
+  /** `current: true` = periodo en curso hasta hoy (vista previa). */
+  async generatePortfolioReport(opts: { frequency?: ReportFrequency; current?: boolean }): Promise<PortfolioReportRecord> {
+    return request<PortfolioReportRecord>('POST', '/portfolio-analysis/generate', opts);
+  },
+
+  async setPortfolioReportFrequency(frequency: ReportFrequency): Promise<{ frequency: ReportFrequency }> {
+    return request<{ frequency: ReportFrequency }>('PATCH', '/portfolio-analysis/frequency', { frequency });
   },
 
   // ── Conciliación bancaria CxC ───────────────────────────
@@ -2531,6 +2720,11 @@ export interface PortfolioCustomer {
   externalId: string | null;
   name: string;
   rfc: string;
+  legalName?: string | null;
+  category?: string | null;
+  creditLimitDays?: number | null;
+  /** Nota interna del equipo. */
+  notes?: string | null;
   contact: string | null;
   email: string | null;
   phone: string | null;
@@ -2557,3 +2751,31 @@ export interface WaTemplatesStatus {
   })[];
 }
 
+/** Campos editables de un cliente. `null` borra el dato. */
+export type CustomerPayload = Partial<{
+  name: string;
+  rfc: string;
+  legalName: string;
+  contact: string | null;
+  email: string | null;
+  phone: string | null;
+  category: string | null;
+  creditLimitDays: number | null;
+  assignedAgentId: string | null;
+  financeContactName: string | null;
+  financeContactPhone: string | null;
+  financeContactEmail: string | null;
+  doNotContact: boolean;
+  doNotContactReason: string;
+  notes: string | null;
+}>;
+
+export interface ActivityRow {
+  id: string;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  user: { id: string; name: string; email: string } | null;
+}

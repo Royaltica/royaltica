@@ -30,6 +30,8 @@ export type PlanConfig = {
 };
 
 export type Factura = {
+  /** ID de la factura en la base (solo cartera real): permite cobrarla o cancelarla. */
+  dbId?: string;
   folio: string;
   monto: number;
   emision: string;
@@ -42,6 +44,8 @@ export type CuentaCartera = {
   id: string;
   /** ID del cliente en la base de datos (solo cartera real). */
   dbId?: string;
+  /** ID en la base de la factura principal (la que está en cobro). */
+  facturaDbId?: string;
   cliente: string;
   folio: string;
   monto: number;
@@ -75,6 +79,26 @@ export type CuentaCartera = {
   historial: number[];
   promesas: { cumplidas: number; rotas: number };
   resultados: Resultados;
+  /** Ficha del cliente tal como está en la base (solo cartera real). */
+  datos?: DatosCliente;
+};
+
+/** Datos editables del cliente (los mismos campos que guarda el backend). */
+export type DatosCliente = {
+  rfc: string;
+  razonSocial: string;
+  contacto: string | null;
+  correo: string | null;
+  telefono: string | null;
+  categoria: string | null;
+  diasCredito: number | null;
+  agenteId: string | null;
+  finanzasNombre: string | null;
+  finanzasTelefono: string | null;
+  finanzasCorreo: string | null;
+  noContactar: boolean;
+  motivoNoContactar: string | null;
+  nota: string | null;
 };
 
 export const CARTERA: CuentaCartera[] = [
@@ -363,7 +387,12 @@ export function llenarPlantilla(texto: string, c: CuentaCartera, oferta = 'las f
 // van solo a los clientes que se elijan.
 
 export type Ocasion = 'buen_fin' | 'black_friday' | 'cierre' | 'personalizada' | 'contacto';
-export type Oferta = { tipo: 'descuento' | 'parcialidades' | 'ninguna'; valor: number };
+export type Oferta = {
+  tipo: 'descuento' | 'parcialidades' | 'condonacion' | 'prorroga' | 'beneficio' | 'ninguna';
+  valor: number;
+  /** Solo 'beneficio': lo que escribe el usuario (ej. "envío gratis en su próximo pedido"). */
+  texto?: string;
+};
 
 export const OCASIONES: { id: Ocasion; nombre: string; fechas: string; inicio: string; fin: string; plantilla: string; oferta: Oferta }[] = [
   { id: 'buen_fin', nombre: 'Buen Fin', fechas: '13 al 16 de noviembre', inicio: '2026-11-13', fin: '2026-11-16', plantilla: 'E1', oferta: { tipo: 'parcialidades', valor: 3 } },
@@ -376,10 +405,19 @@ export const OCASIONES: { id: Ocasion; nombre: string; fechas: string; inicio: s
 export function textoOferta(o: Oferta): string {
   if (o.tipo === 'descuento') return `${o.valor}% de descuento por pronto pago`;
   if (o.tipo === 'parcialidades') return `hasta ${o.valor} parcialidades sin recargo`;
+  if (o.tipo === 'condonacion')
+    return o.valor >= 100 ? 'condonación total de intereses moratorios' : `${o.valor}% menos en intereses moratorios`;
+  if (o.tipo === 'prorroga') return `${o.valor} días extra para pagar sin recargo`;
+  if (o.tipo === 'beneficio') return o.texto?.trim() ?? '';
   return '';
 }
 
+/** Para qué es la campaña. Decide qué fechas, oferta y clientes se sugieren. */
+export type Objetivo = 'recuperar' | 'adelantar' | 'cierre' | 'contactos';
+
 export type CampanaConfig = {
+  /** Opcional: las campañas viejas no lo guardaban; se deduce de la ocasión. */
+  objetivo?: Objetivo;
   ocasion: Ocasion;
   plantilla: string;
   oferta: Oferta;

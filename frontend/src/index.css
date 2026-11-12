@@ -10,6 +10,24 @@
   unicode-range: U+0024-0039, U+002C, U+002E, U+0025;
 }
 
+/* Open Sans: el tipo de letra de royaltica.com (mismo archivo variable
+   300-800 que la landing). Solo se aplica dentro de .font-royaltica
+   (pestaña Cobranza IA); el resto de la app conserva su tipografía. */
+@font-face {
+  font-family: "Open Sans";
+  src: url('./assets/fonts/OpenSans-normal-var.woff2') format('woff2');
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Open Sans";
+  src: url('./assets/fonts/OpenSans-italic-var.woff2') format('woff2');
+  font-weight: 300 800;
+  font-style: italic;
+  font-display: swap;
+}
+
 @theme {
   /* Paleta de marca: Grafito + Cian. */
   --color-brand-paper: #FFFFFF;
@@ -91,7 +109,85 @@
   @apply bg-white/40 border border-white/60 px-4 py-2 rounded-full;
 }
 
+/* ── Vidrio de Cobranza IA ───────────────────────────────────────────
+   Un solo lenguaje para todas las pestañas (nació en Campañas): vidrio
+   claro sobre la paleta Grafito + Cian. Se usan como clases simples para
+   poder combinarlas con el resto de utilidades. */
+.glass {
+  background: rgb(255 255 255 / 0.62);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  border: 1px solid rgb(255 255 255 / 0.8);
+  box-shadow:
+    0 0 0 1px rgb(17 24 39 / 0.06),
+    0 1px 0 rgb(255 255 255 / 0.9) inset,
+    0 12px 32px -16px rgb(17 24 39 / 0.18);
+}
+/* Cada sección pinta su acento (--acento) muy suave arriba de sus tarjetas:
+   la paleta sigue clara, pero cada parte tiene su propia temperatura. */
+[style*='--acento'] .glass {
+  background-image: linear-gradient(170deg, rgb(var(--acento) / 0.06), rgb(var(--acento) / 0) 45%);
+  box-shadow:
+    0 0 0 1px rgb(var(--acento) / 0.1),
+    0 1px 0 rgb(255 255 255 / 0.9) inset,
+    0 12px 32px -16px rgb(17 24 39 / 0.2);
+}
+/* Capas que flotan (menús, ventanas, avisos): más densa y con más sombra. */
+.glass-flotante {
+  background: rgb(255 255 255 / 0.82);
+  backdrop-filter: blur(40px) saturate(150%);
+  -webkit-backdrop-filter: blur(40px) saturate(150%);
+  border: 1px solid rgb(255 255 255 / 0.9);
+  box-shadow:
+    0 0 0 1px rgb(17 24 39 / 0.08),
+    0 24px 60px -20px rgb(17 24 39 / 0.35);
+}
+/* Bloques dentro de una tarjeta de vidrio (sin desenfoque extra). */
+.glass-suave {
+  background: rgb(255 255 255 / 0.5);
+  border: 1px solid rgb(255 255 255 / 0.75);
+  box-shadow: 0 0 0 1px rgb(17 24 39 / 0.05);
+}
+/* Campos de formulario sobre vidrio. */
+.glass-campo {
+  background: rgb(255 255 255 / 0.72);
+  border: 1px solid rgb(255 255 255 / 0.95);
+  box-shadow: 0 0 0 1px rgb(17 24 39 / 0.09);
+  transition: box-shadow 0.2s, background-color 0.2s;
+}
+.glass-campo:focus,
+.glass-campo:focus-within {
+  background: rgb(255 255 255 / 0.95);
+  box-shadow: 0 0 0 2px rgb(6 182 212 / 0.6);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-flotante {
+    background: rgb(255 255 255 / 0.96);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 @keyframes fadeInTip {
   from { opacity: 0; transform: translateY(6px) scale(0.97); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Cobranza IA con la tipografía de royaltica.com. Se redefinen las
+   variables de fuente que usan las utilidades font-sans/font-serif, así
+   que el diseño (tamaños, colores, espacios) no cambia. Las cifras y
+   títulos que antes eran serif toman el peso de los titulares de la web;
+   en la capa components para que un font-bold explícito siga ganando. */
+.font-royaltica {
+  --font-sans: "Open Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-serif: "Open Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
+}
+@layer components {
+  .font-royaltica .font-serif,
+  .font-royaltica :is(h1, h2, h3, h4) {
+    font-weight: 650;
+    letter-spacing: -0.02em;
+  }
 }

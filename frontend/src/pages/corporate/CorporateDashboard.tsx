@@ -25,8 +25,11 @@ import { FiscalAuditDashboard } from './views/FiscalAuditDashboard.tsx';
 import { ContabilidadView } from './views/ContabilidadView.tsx';
 import { HistorialView } from './views/HistorialView.tsx';
 import { GrowthOpsView } from './views/GrowthOpsView.tsx';
-import { CobranzaInteligenteView } from './views/CobranzaInteligenteView.tsx';
+import { CobranzaInteligenteView, NavCobranzaViva } from './views/CobranzaInteligenteView.tsx';
+import { CobranzaProvider } from './views/cobranza/store.tsx';
+import { useSeccionEnUrl } from './views/cobranza/secciones.tsx';
 import { useOrgBranding } from '../../hooks/useOrgBranding.ts';
+import marcaRoyaltica from '../../assets/brand/marca.png';
 
 /** Mensaje del chat con el asistente de IA (backend /ai/chat). */
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
@@ -55,6 +58,9 @@ const TAB_AREA: Record<CorporateTab, string> = {
  * Las áreas que no aparecen aquí (dashboard, estados, configuración) son
  * compartidas entre ambos productos y nunca se ocultan por esto.
  */
+/** Enfoque actual del portal: solo Cobranza IA en la barra lateral (ver `soloCobranza`). */
+const SOLO_COBRANZA = true;
+
 const AREA_PRODUCT: Partial<Record<string, 'CXP' | 'CXC'>> = {
   proveedores: 'CXP',
   finanzas: 'CXP',
@@ -86,17 +92,29 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
     AREA_PRODUCT[area] != null &&
     AREA_PRODUCT[area] !== organizationProduct;
   const canSee = (area: string) => !productBlocked(area) && (isFullAccess || permissions.includes(area));
+  // Etapa actual: el portal se enfoca en Cobranza IA. Si la organización puede
+  // ver CxC y no es de CxP, la barra lateral muestra solo Cobranza IA (con sus
+  // secciones) y Configuración; las demás vistas siguen en el código, ocultas.
+  // Un cliente de CxP no cambia nada. Para regresarlas: SOLO_COBRANZA = false.
+  const soloCobranza = SOLO_COBRANZA && organizationProduct !== 'CXP' && canSee('cxc');
+  const inicio: CorporateTab = soloCobranza ? 'cobranza_ia' : 'dashboard';
+  const cobranza = useSeccionEnUrl(location.search, (q) => navigate({ pathname: '/cobranza_ia', search: q }));
 
   // Si la URL no corresponde a ninguna pestaña conocida (o el usuario no
   // tiene permiso para verla), redirige a /dashboard en vez de mostrar una
   // pantalla en blanco o dejar una pestaña oculta accesible solo por URL.
   useEffect(() => {
     if (!CORPORATE_TABS.includes(pathTab)) {
-      navigate('/dashboard', { replace: true });
+      // Al entrar, Cobranza IA abre siempre en Clientes.
+      navigate(inicio === 'cobranza_ia' ? '/cobranza_ia?seccion=clientes' : `/${inicio}`, { replace: true });
+      return;
+    }
+    if (soloCobranza && pathTab !== 'cobranza_ia' && pathTab !== 'settings') {
+      navigate('/cobranza_ia?seccion=clientes', { replace: true });
       return;
     }
     if (!canSee(TAB_AREA[pathTab]) && pathTab !== 'dashboard') {
-      navigate('/dashboard', { replace: true });
+      navigate(`/${inicio}`, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathTab]);
@@ -328,7 +346,7 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
     [],
   );
 
-  return (
+  const contenido = (
     <div className="h-screen w-full bg-brand-bone flex overflow-hidden" style={isImpersonating ? { paddingTop: 28 } : undefined}>
       {/* Banner "Entrar como este cliente": visible solo mientras un SUPERADMIN
           está viendo el portal de un cliente desde el panel admin. */}
@@ -372,18 +390,36 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
                   {branding.logoUrl ? (
                     <img src={branding.logoUrl} alt={branding.displayName} className="w-full h-full object-contain" />
                   ) : (
-                    <span className="font-serif font-bold text-brand-ink leading-none text-sm">{branding.displayName.charAt(0)}</span>
+                    // Silueta del caballo de Royáltica pintada con máscara (igual que
+                    // royaltica.com): el color lo pone la paleta, no el archivo.
+                    <span
+                      role="img"
+                      aria-label={branding.displayName}
+                      className="w-6 h-6 bg-brand-ink"
+                      style={{
+                        WebkitMask: `url(${marcaRoyaltica}) center / contain no-repeat`,
+                        mask: `url(${marcaRoyaltica}) center / contain no-repeat`,
+                      }}
+                    />
                   )}
                </div>
               {!isSidebarCollapsed && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                  <span className="label-caps mb-1 block !opacity-40">IA Fintech</span>
                   <h1 className="text-xl font-serif tracking-widest leading-none">{branding.displayName}</h1>
                 </motion.div>
               )}
             </button>
           </div>
 
+          {soloCobranza ? (
+            <nav className="flex-1 -mx-1">
+              <NavCobranzaViva
+                rol={cobranza.rol}
+                seccion={cobranza.seccion}
+                onSeccion={(s) => (activeTab === 'cobranza_ia' ? cobranza.irA(s) : navigate({ pathname: '/cobranza_ia', search: `?seccion=${s === 'recordatorios' ? 'clientes' : s}` }))}
+              />
+            </nav>
+          ) : (
           <nav className="flex-1 space-y-2">
             {canSee('dashboard') && <SidebarLink icon={<BarChart3 size={18} />} label="Tablero" active={activeTab === 'dashboard'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('dashboard')} />}
             {canSee('proveedores') && <SidebarLink icon={<Building2 size={18} />} label="Proveedores" active={activeTab === 'suppliers'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('suppliers')} />}
@@ -397,9 +433,19 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
             {canSee('factoraje') && <SidebarLink icon={<Zap size={18} />} label="Factoraje" active={activeTab === 'financing'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('financing')} />}
             {canSee('estados') && <SidebarLink icon={<FolderArchive size={18} />} label="Historial" active={activeTab === 'historial'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('historial')} />}
           </nav>
+          )}
 
           <div className="mt-auto py-8 border-t border-brand-paper/10 flex flex-col gap-6">
-            {canSee('configuracion') && <SidebarLink icon={<Settings size={18} />} label="Configuración" active={activeTab === 'settings'} collapsed={isSidebarCollapsed} onClick={() => handleTabChange('settings')} />}
+            {canSee('configuracion') && (
+              <SidebarLink
+                icon={<Settings size={18} />}
+                label="Configuración"
+                active={soloCobranza ? activeTab === 'cobranza_ia' && cobranza.seccion === 'configuracion' : activeTab === 'settings'}
+                collapsed={isSidebarCollapsed}
+                // En Cobranza IA la configuración es la de cobranza (equipo, alertas al celular, reglas).
+                onClick={() => (soloCobranza ? navigate({ pathname: '/cobranza_ia', search: '?seccion=configuracion' }) : handleTabChange('settings'))}
+              />
+            )}
 
             {!isSidebarCollapsed && (
               <div className="px-3 py-3 bg-green-900/20 border border-green-500/20 rounded-2xl space-y-2">
@@ -452,7 +498,7 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col p-10 pb-0 overflow-y-auto bg-brand-bone text-[var(--brand-bone-text)] min-h-0">
+      <main className={`flex-1 flex flex-col ${activeTab === 'cobranza_ia' ? 'px-5 sm:px-8 pt-6 sm:pt-8' : 'p-10'} pb-0 overflow-y-auto bg-brand-bone text-[var(--brand-bone-text)] min-h-0`}>
         <div className="flex-1 flex flex-col min-h-0 pb-0">
           {activeTab === 'dashboard' && (
               <DashboardView
@@ -533,7 +579,7 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
           )}
 
           {activeTab === 'cobranza_ia' && (
-              <CobranzaInteligenteView />
+              <CobranzaInteligenteView seccion={cobranza.seccion} rol={cobranza.rol} onSeccion={cobranza.irA} onRol={cobranza.cambiarRol} />
           )}
 
           {activeTab === 'growth' && (
@@ -777,4 +823,7 @@ export function CorporateDashboard({ user, onLogout, onBackToRole, sessionStarte
       </motion.button>
     </div>
   );
+  // El estado de Cobranza IA se comparte entre la barra lateral (contador de
+  // alertas) y la vista; solo se monta para quien puede ver CxC.
+  return canSee('cxc') ? <CobranzaProvider>{contenido}</CobranzaProvider> : contenido;
 }

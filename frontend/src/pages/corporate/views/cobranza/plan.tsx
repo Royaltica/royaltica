@@ -256,7 +256,7 @@ export function PasoEscalera({
               ? 'bg-brand-paper border-brand-ink/8'
               : omitido
                 ? 'bg-transparent border-dashed border-brand-ink/12'
-                : 'bg-brand-bone/40 border-brand-ink/6 opacity-50'
+                : 'bg-white/35 border-brand-ink/6 opacity-50'
         }`}
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -312,6 +312,143 @@ export function CanalIcon({ canal }: { canal: string }) {
   return <Icon size={11} />;
 }
 
+
+/**
+ * Plan en una sola franja horizontal: los 9 pasos de un vistazo, con la
+ * marca del vencimiento en medio. Al tocar un paso se ve su detalle abajo,
+ * así el plan completo no ocupa media pantalla.
+ */
+export function PlanCompacto({ pasos }: { pasos: PasoPlan[] }) {
+  const reduce = useReducedMotion();
+  const inicial = pasos.find((p) => p.estado === 'actual') ?? pasos.find((p) => p.estado === 'programado') ?? pasos[pasos.length - 1];
+  const [elegido, setElegido] = React.useState(inicial.id);
+  const paso = pasos.find((p) => p.id === elegido) ?? inicial;
+  const vigentes = pasos.filter((p) => p.estado !== 'omitido');
+  const hechos = vigentes.filter((p) => p.estado === 'hecho').length;
+  const corte = pasos.findIndex((p) => p.fase !== 'temprana');
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <BlockTitle>Plan de cobranza</BlockTitle>
+        <div className="flex items-center gap-3 text-[10.5px] text-brand-ink/45">
+          {(Object.keys(FASES) as (keyof typeof FASES)[]).map((f) => (
+            <span key={f} className="hidden sm:flex items-center gap-1.5">
+              <FaseDot fase={f} /> {FASES[f].label}
+            </span>
+          ))}
+          <span className="tabular-nums font-semibold text-brand-ink/60">
+            {hechos} de {vigentes.length}
+          </span>
+        </div>
+      </div>
+
+      <div className="glass-suave rounded-[22px] px-3 pt-4 pb-3 overflow-x-auto [scrollbar-width:none]">
+        <ol className="flex items-start min-w-[620px]" aria-label="Pasos del plan">
+          {pasos.map((p, i) => {
+            const f = FASES[p.fase];
+            const hecho = p.estado === 'hecho';
+            const hoy = p.estado === 'actual';
+            const omitido = p.estado === 'omitido';
+            const activo = p.id === paso.id;
+            const sigueHecho = pasos[i + 1] && (pasos[i + 1].estado === 'hecho' || pasos[i + 1].estado === 'actual');
+            return (
+              <React.Fragment key={p.id}>
+                {i === corte && (
+                  <li aria-hidden className="relative w-6 shrink-0 self-stretch flex justify-center">
+                    <span className="absolute top-0 bottom-3 w-px border-l border-dashed border-rose-300" />
+                    <span className="absolute -bottom-0.5 text-[8.5px] font-bold uppercase tracking-[0.1em] text-rose-500 whitespace-nowrap">Vence</span>
+                  </li>
+                )}
+                <li className="relative flex-1 min-w-0">
+                  {/* Tramo hacia el siguiente paso */}
+                  {i < pasos.length - 1 && (
+                    <span
+                      aria-hidden
+                      className={`absolute top-[13px] left-1/2 right-[-50%] h-[2px] rounded-full ${sigueHecho || hecho ? f.linea : 'bg-brand-ink/[0.08]'}`}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setElegido(p.id)}
+                    aria-pressed={activo}
+                    aria-label={`${p.etiqueta}: ${p.nombre}`}
+                    className="group relative w-full flex flex-col items-center gap-1.5 rounded-xl px-1 pb-1.5 outline-none focus-visible:ring-2 focus-visible:ring-brand-gold/70"
+                  >
+                    <span
+                      className={`relative z-[1] w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold transition-transform group-hover:scale-110 ${
+                        hoy
+                          ? `${f.punto} text-white ring-4 ring-brand-gold/25`
+                          : hecho
+                            ? `${f.punto} text-white`
+                            : omitido
+                              ? 'bg-white text-brand-ink/25 ring-1 ring-dashed ring-brand-ink/15 line-through'
+                              : 'bg-white text-brand-ink/40 ring-1 ring-brand-ink/12'
+                      }`}
+                    >
+                      {hecho ? <Check size={13} strokeWidth={3} /> : p.id}
+                    </span>
+                    <span className={`text-[10.5px] leading-tight text-center truncate max-w-full ${activo ? 'font-semibold text-brand-ink' : omitido ? 'text-brand-ink/25' : 'text-brand-ink/50'}`}>
+                      {p.nombre}
+                    </span>
+                    {activo && (
+                      <motion.span
+                        layoutId={reduce ? undefined : 'paso-elegido'}
+                        className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 w-5 h-[3px] rounded-full bg-brand-ink"
+                      />
+                    )}
+                  </button>
+                </li>
+              </React.Fragment>
+            );
+          })}
+        </ol>
+      </div>
+
+      {/* Detalle del paso elegido */}
+      <motion.div
+        key={paso.id}
+        initial={reduce ? false : { opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2, ease: EASE }}
+        className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-2xl bg-white/55 ring-1 ring-brand-ink/[0.06] px-4 py-3"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${FASES[paso.fase].chip}`}>{paso.etiqueta}</span>
+            <span className={`text-[13.5px] font-semibold ${paso.estado === 'omitido' ? 'text-brand-ink/40 line-through' : 'text-brand-ink'}`}>{paso.nombre}</span>
+            {paso.obligatorio && <span className="audit-badge bg-amber-50 text-amber-700">Obligatorio</span>}
+          </div>
+          <div className="text-[11.5px] text-brand-ink/45 mt-0.5">
+            {paso.estado === 'omitido'
+              ? `Omitido · ${paso.motivo ?? 'no aplica a este cliente'}`
+              : paso.estado === 'actual'
+                ? `Hoy · ${cuandoPaso(paso.id, paso.dia)}`
+                : paso.estado === 'hecho'
+                  ? `Hecho · ${cuandoPaso(paso.id, paso.dia)}`
+                  : `Se activa ${paso.faltan === 1 ? 'mañana' : `en ${paso.faltan} días`} · ${cuandoPaso(paso.id, paso.dia)}`}
+          </div>
+        </div>
+        {paso.estado !== 'omitido' && (
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-brand-ink/60">
+            <span className="inline-flex items-center gap-1 rounded-full bg-brand-ink/[0.05] px-2.5 py-1">
+              <CanalIcon canal={paso.canal} /> {paso.canal}
+            </span>
+            <span className="rounded-full bg-brand-ink/[0.05] px-2.5 py-1">Tono {paso.tono.toLowerCase()}</span>
+            {paso.liga && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-brand-ink/[0.05] px-2.5 py-1">
+                <Link2 size={11} /> Liga de pago
+              </span>
+            )}
+            {paso.resultado && paso.estado === 'hecho' && (
+              <span className="rounded-full bg-emerald-500/10 text-emerald-800 font-semibold px-2.5 py-1">{paso.resultado}</span>
+            )}
+          </div>
+        )}
+      </motion.div>
+    </div>
+  );
+}
 
 /** Línea de tiempo completa del plan: antes y después del vencimiento. */
 export function LineaPlan({ pasos }: { pasos: PasoPlan[] }) {

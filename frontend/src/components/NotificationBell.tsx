@@ -30,7 +30,7 @@ export function NotificationBell() {
   const fmtTime = (iso: string) => new Date(iso).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className="fixed top-6 right-8 z-[95]">
+    <div className="fixed top-6 right-8 z-[75]">
       <button onClick={() => setOpen(o => !o)}
         className="relative w-11 h-11 rounded-2xl bg-white shadow-lg border border-brand-sand/30 flex items-center justify-center hover:bg-brand-bone/40 transition-all cursor-pointer">
         <Bell size={18} className="text-brand-ink/60" />

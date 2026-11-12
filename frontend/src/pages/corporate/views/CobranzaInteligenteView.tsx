@@ -1,31 +1,54 @@
 import React from 'react';
-import { motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
+  ChevronLeft,
+  ChevronRight,
   ChevronDown,
   Check,
   Info,
   Link2,
   MessageSquare,
+  PhoneCall,
+  Download,
+  ListChecks,
+  Search,
+  SlidersHorizontal,
+  MessageCircle,
+  Pause,
+  Wallet as WalletIcon,
+  X,
   Scale,
   TrendingDown,
-  TrendingUp,
+  Users,
+  Wallet,
 } from 'lucide-react';
+import { GLASS, SPRING, SPRING_SUAVE } from './cobranza/campanasUi.tsx';
+import { PanelSub, Subpestanas } from './cobranza/vidrio.tsx';
+import { NavCobranza, SECCIONES, estiloAcento, grupoDe, seccionesDe, type Section } from './cobranza/secciones.tsx';
 import { EASE, Reveal, Figure, Bar, Tag, BlockTitle, type FigureFormat } from './cobranza/primitives.tsx';
-import { RolSelector, type Rol } from './cobranza/RolSelector.tsx';
+import type { Rol } from './cobranza/RolSelector.tsx';
 import {
   CANAL_ICON,
   FASES,
   FaseDot,
-  LineaPlan,
+  PlanCompacto,
   textoHoy,
   CanalIcon,
 } from './cobranza/plan.tsx';
 import { planDe, planConfig, saldoDe, AGENTES } from './cobranza/mockV1.ts';
-import { CobranzaProvider, useCobranza, planCuenta, type CuentaViva } from './cobranza/store.tsx';
+import { CobranzaProvider, useCobranzaOpcional, useCobranza, planCuenta, type CuentaViva } from './cobranza/store.tsx';
 import { SegmentoChip, SegmentosPanel } from './cobranza/segmento.tsx';
 import { SubFacturas } from './cobranza/facturas.tsx';
+import { AlertasPanel, useAlertas, type Destino } from './cobranza/alertas.tsx';
+import {
+  BTN_SEC,
+  CONTROL,
+  exportarCuentasCsv,
+  useAviso,
+} from './cobranza/clientes.tsx';
 import { AgenteVista } from './cobranza/AgenteVista.tsx';
 import { CampanasPanel } from './cobranza/CampanasPanel.tsx';
 import { PlantillasPanel } from './cobranza/PlantillasPanel.tsx';
@@ -33,6 +56,7 @@ import { ReportesPanel } from './cobranza/ReportesPanel.tsx';
 import { DatosPagosPanel, AsignacionPanel } from './cobranza/DatosPagosPanel.tsx';
 import { PagosPanel, AvisoPagos } from './cobranza/PagosPanel.tsx';
 import { SubWhatsapp, ModoEnvio } from './cobranza/WhatsappPanel.tsx';
+import { ConfiguracionPanel } from './cobranza/ConfiguracionPanel.tsx';
 import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
 
 /**
@@ -46,41 +70,6 @@ import { CURRENCY_FORMATTER } from '../../../utils/format.ts';
  * Cuando exista el backend, cada panel cambia su fuente de datos por el
  * endpoint correspondiente y el resto del componente se queda igual.
  */
-
-type Section =
-  | 'alertas'
-  | 'recordatorios'
-  | 'campanas'
-  | 'plantillas'
-  | 'reportes'
-  | 'datos'
-  | 'pagos'
-  | 'estrategias'
-  | 'segmentos'
-  | 'equipo';
-
-const LABEL: Record<Section, string> = {
-  alertas: 'Alertas',
-  recordatorios: 'Clientes',
-  campanas: 'Campañas',
-  plantillas: 'Plantillas',
-  reportes: 'Reportes',
-  datos: 'Datos',
-  pagos: 'Pagos',
-  estrategias: 'Estrategias',
-  segmentos: 'Segmentos',
-  equipo: 'Equipo',
-};
-
-// Cada perfil ve solo sus pestañas, agrupadas en Operación y Configuración.
-// El Agente no tiene pestañas: una sola lista (ver AgenteVista).
-const SECCIONES_POR_ROL: Record<Exclude<Rol, 'agente'>, Section[][]> = {
-  admin: [
-    ['recordatorios', 'alertas', 'campanas', 'pagos'],
-    ['segmentos', 'plantillas', 'reportes', 'datos', 'estrategias', 'equipo'],
-  ],
-  supervisor: [['recordatorios', 'campanas', 'pagos', 'equipo'], ['segmentos', 'reportes']],
-};
 
 const ENCABEZADO: Record<Rol, { titulo: string; texto: string }> = {
   admin: {
@@ -324,26 +313,6 @@ const MOCK = {
       ],
     },
   ],
-  estrategias: {
-    efectividad: {
-      enviados: 412,
-      respondidos: 247,
-      cobradasTrasContacto: 168,
-      diasAhorrados: 9,
-    },
-    funcionan: [
-      { nombre: 'Recordatorio con liga de pago incluida', exito: 81, usos: 96, nota: 'Resuelve en el momento, el cliente no tiene que buscar los datos.' },
-      { nombre: 'Plan de pagos en parcialidades', exito: 74, usos: 38, nota: 'Convierte un "no puedo" en un acuerdo. Solo con planes pre-aprobados.' },
-      { nombre: 'Aviso 3 días antes del vencimiento', exito: 69, usos: 124, nota: 'Previene el atraso en vez de perseguirlo después.' },
-      { nombre: 'Escalamiento a llamada del encargado', exito: 62, usos: 27, nota: 'Funciona en cuentas grandes que ignoran el texto.' },
-    ],
-    noFuncionan: [
-      { nombre: 'Insistir 3+ veces en la misma semana', exito: 12, usos: 41, nota: 'Baja la tasa de respuesta y deteriora la relación. Roza el hostigamiento.' },
-      { nombre: 'Correo sin asunto personalizado', exito: 19, usos: 63, nota: 'Se pierde en la bandeja. El folio en el asunto sube la apertura.' },
-      { nombre: 'Tono firme en el primer contacto', exito: 23, usos: 34, nota: 'Genera fricción con clientes que solo se distrajeron.' },
-      { nombre: 'Mensajes fuera de horario laboral', exito: 8, usos: 19, nota: 'Sin respuesta, y además fuera de la ventana permitida.' },
-    ],
-  },
   equipo: [
     {
       nombre: 'María Jiménez',
@@ -377,126 +346,157 @@ const MOCK = {
 
 // ─── Vista principal ─────────────────────────────────────────────────
 
-export function CobranzaInteligenteView() {
+export function CobranzaInteligenteView(props: VistaProps = {}) {
+  // Si quien la monta ya trae el estado (para la barra lateral), se comparte.
+  const yaHay = useCobranzaOpcional();
+  if (yaHay) return <CobranzaIA {...props} />;
   return (
     <CobranzaProvider>
-      <CobranzaIA />
+      <CobranzaIA {...props} />
     </CobranzaProvider>
   );
 }
 
-function CobranzaIA() {
-  const [rol, setRol] = React.useState<Rol>('admin');
-  const [section, setSection] = React.useState<Section>('recordatorios');
+type VistaProps = {
+  /** Sección y perfil controlados desde fuera (barra lateral + URL). */
+  seccion?: Section;
+  rol?: Rol;
+  onSeccion?: (s: Section) => void;
+  onRol?: (r: Rol) => void;
+};
+
+/** Navegación de la barra lateral con el contador de alertas en vivo. Va dentro de <CobranzaProvider>. */
+export function NavCobranzaViva(props: { rol: Rol; seccion: Section; onSeccion: (s: Section) => void }) {
+  return <NavCobranza {...props} pendientesAlertas={usePendientesAlertas()} />;
+}
+
+/** Alertas pendientes, para el contador de la barra lateral. Usar dentro de <CobranzaProvider>. */
+export function usePendientesAlertas(): number {
+  return useAlertas(MOCK.alertas).vigentes.length;
+}
+
+function CobranzaIA({ seccion: seccionProp, rol: rolProp, onSeccion, onRol }: VistaProps) {
+  const [rolLocal, setRolLocal] = React.useState<Rol>('admin');
+  const [seccionLocal, setSeccionLocal] = React.useState<Section>('recordatorios');
+  const rol = rolProp ?? rolLocal;
+  const section = seccionProp ?? seccionLocal;
+  // Sin barra lateral que la controle (uso suelto), se muestran pestañas arriba.
+  const controlada = !!onSeccion;
+  const setSection = (s: Section) => (onSeccion ? onSeccion(s) : setSeccionLocal(s));
+  // "Ver cliente" desde otra pestaña: abre Clientes con ese cliente elegido.
+  const [foco, setFoco] = React.useState<{ cliente: string; n: number; sub?: SubSeccion } | null>(null);
+  const verCliente = (cliente: string, sub?: SubSeccion) => {
+    setFoco((f) => ({ cliente, sub, n: (f?.n ?? 0) + 1 }));
+    setSection('recordatorios');
+  };
   const reduce = useReducedMotion();
-  const grupos = rol === 'agente' ? [] : SECCIONES_POR_ROL[rol];
+  const meta = SECCIONES[section];
+  const titulo = rol === 'agente' ? ENCABEZADO.agente.titulo : meta.titulo;
+  const texto = rol === 'agente' ? ENCABEZADO.agente.texto : meta.texto;
 
   const cambiarRol = (r: Rol) => {
-    setRol(r);
-    if (r !== 'agente' && !SECCIONES_POR_ROL[r].flat().includes(section)) setSection('recordatorios');
+    if (onRol) return onRol(r);
+    setRolLocal(r);
+    if (r !== 'agente' && !seccionesDe(r).includes(section)) setSeccionLocal('recordatorios');
   };
 
   return (
-    <div className="pb-12 max-w-[1400px]">
-      {/* Encabezado + selector de perfil */}
-      <Reveal>
-        <div className="flex flex-wrap items-end justify-between gap-6">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.28em] font-semibold text-brand-ink/35">
-              Cobranza inteligente
-            </p>
-            <h2 className="text-[2.5rem] leading-[1.05] font-serif text-brand-ink mt-2">
-              {ENCABEZADO[rol].titulo}
-            </h2>
-            <p className="text-sm text-brand-ink/55 max-w-[62ch] mt-3 leading-relaxed">
-              {ENCABEZADO[rol].texto}
-            </p>
-          </div>
-          <div className="w-full lg:w-auto lg:min-w-[560px]">
-            <RolSelector rol={rol} onChange={cambiarRol} />
-          </div>
-        </div>
-      </Reveal>
+    <div className="relative isolate flex-1 pb-12 w-full font-royaltica" style={estiloAcento(section)}>
+      {/* Luz ambiente con el color de la sección: cada parte se reconoce sin gritar.
+          Se sale del margen del contenido para cubrir toda la pantalla, sin cortes. */}
+      <div aria-hidden className="pointer-events-none absolute -top-6 sm:-top-8 -inset-x-5 sm:-inset-x-8 bottom-0 -z-10 overflow-hidden">
+        <div className="absolute -top-24 right-[4%] w-[560px] h-[560px] rounded-full bg-[rgb(var(--acento)/0.12)] blur-[120px] transition-colors duration-700" />
+        <div className="absolute top-[420px] -left-28 w-[520px] h-[520px] rounded-full bg-cyan-200/30 blur-[120px]" />
+        <div className="absolute top-[1000px] right-[20%] w-[560px] h-[560px] rounded-full bg-[rgb(var(--acento)/0.1)] blur-[130px] transition-colors duration-700" />
+      </div>
 
-      {rol !== 'agente' && (
-        <Reveal delay={0.06}>
-          {/* Pestañas del perfil: grupos separados por un divisor fino. El
-              indicador se desliza (layoutId) para confirmar el clic. */}
-          <nav
-            className="mt-8 border-b border-brand-ink/10 flex items-center gap-1 overflow-x-auto scrollbar-custom"
-            aria-label="Secciones de cobranza"
+      {/* Encabezado compacto: nombre de la sección, para qué sirve y el estado de los datos. */}
+      <header className="flex flex-wrap items-center gap-x-6 gap-y-3 pr-14">
+        <div className="flex items-center gap-3.5 min-w-0 flex-1">
+          <motion.span
+            key={section + rol}
+            initial={reduce ? false : { scale: 0.7, opacity: 0, rotate: -8 }}
+            animate={{ scale: 1, opacity: 1, rotate: 0 }}
+            transition={SPRING}
+            className="shrink-0 w-11 h-11 rounded-[15px] flex items-center justify-center bg-brand-ink shadow-[0_12px_26px_-12px_rgba(17,24,39,0.6)]"
+            style={{ color: `rgb(${meta.acento})` }}
           >
-            {grupos.map((grupo, gi) => (
-              <React.Fragment key={gi}>
-                {gi > 0 && <span className="w-px h-4 bg-brand-ink/12 mx-2 shrink-0" aria-hidden />}
-                {grupo.map((id) => {
-                  const activa = section === id;
-                  return (
-                    <button
-                      key={id}
-                      onClick={() => setSection(id)}
-                      aria-current={activa ? 'page' : undefined}
-                      className={`relative shrink-0 px-4 py-3 text-[13px] font-semibold transition-colors duration-200 ${
-                        activa ? 'text-brand-ink' : 'text-brand-ink/40 hover:text-brand-ink/70'
-                      }`}
-                    >
-                      {LABEL[id]}
-                      {activa && (
-                        <motion.span
-                          layoutId={reduce ? undefined : 'seccion-activa'}
-                          className="absolute left-3 right-3 -bottom-px h-0.5 bg-brand-gold rounded-full"
-                          transition={{ duration: 0.32, ease: EASE }}
-                        />
-                      )}
-                    </button>
-                  );
-                })}
-              </React.Fragment>
-            ))}
-          </nav>
-          <div className="mt-3">
-            <AvisoPagos onIr={() => setSection('pagos')} />
-          </div>
-        </Reveal>
+            <meta.Icono size={19} />
+          </motion.span>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={section + rol}
+              initial={reduce ? { opacity: 0 } : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reduce ? { opacity: 0 } : { opacity: 0, y: -4 }}
+              transition={SPRING}
+              className="min-w-0"
+            >
+              <h2 className="text-[26px] leading-tight tracking-tight text-brand-ink">{titulo}</h2>
+              <p className="text-[13px] text-brand-ink/50 leading-snug truncate max-w-[80ch]">{texto}</p>
+            </motion.div>
+          </AnimatePresence>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Solo el Administrador decide si los recordatorios salen solos o con su aprobación. */}
+          {rol === 'admin' && section === 'recordatorios' && <ModoEnvio />}
+          <FuenteDatos />
+        </div>
+      </header>
+
+      {/* Uso suelto (sin barra lateral): pestañas de vidrio arriba. */}
+      {!controlada && rol !== 'agente' && (
+        <nav className="mt-5 glass rounded-full p-1.5 flex items-center gap-0.5 overflow-x-auto [scrollbar-width:none]" aria-label="Secciones de cobranza">
+          {seccionesDe(rol).map((id) => {
+            const activa = section === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setSection(id)}
+                aria-current={activa ? 'page' : undefined}
+                className={`relative shrink-0 rounded-full px-4 py-2.5 text-[13px] font-semibold outline-none transition-colors ${
+                  activa ? 'text-white' : 'text-brand-ink/50 hover:text-brand-ink'
+                }`}
+              >
+                {activa && (
+                  <motion.span layoutId={reduce ? undefined : 'seccion-activa'} transition={SPRING} className="absolute inset-0 rounded-full bg-brand-ink" />
+                )}
+                <span className="relative">{SECCIONES[id].nombre}</span>
+              </button>
+            );
+          })}
+        </nav>
       )}
 
-      {rol !== 'agente' && (
-        <Reveal delay={0.08}>
-          <div className="mt-6">
-            <ResumenHoy />
-          </div>
-        </Reveal>
+      {rol !== 'agente' && section !== 'pagos' && section !== 'configuracion' && (
+        <div className="mt-3 pl-[58px]">
+          <AvisoPagos onIr={() => setSection('pagos')} />
+        </div>
       )}
-
-      <Reveal delay={0.1}>
-        <PrototypeNotice />
-      </Reveal>
+      <div className="h-6" />
 
       <motion.div
         key={`${rol}-${section}`}
-        initial={reduce ? false : { opacity: 0, y: 8 }}
+        initial={reduce ? false : { opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25, ease: EASE }}
+        transition={reduce ? { duration: 0 } : SPRING_SUAVE}
       >
         {rol === 'agente' ? (
           <AgenteVista renderPlan={(c) => <SubPlan registro={registroDe(c)} />} />
         ) : (
           <>
-            {section === 'alertas' && <AlertasPanel />}
-            {section === 'recordatorios' && <RecordatoriosPanel esAdmin={rol === 'admin'} />}
+            {section === 'alertas' && (
+              <AlertasPanel onVerCliente={verCliente} onIr={(d: Destino) => setSection(d)} />
+            )}
+            {section === 'recordatorios' && <RecordatoriosPanel foco={foco} />}
             {section === 'campanas' && <CampanasPanel />}
-            {section === 'plantillas' && <PlantillasPanel />}
+            {section === 'plantillas' && <PlantillasPanel onIrSegmentos={() => setSection('segmentos')} />}
             {section === 'reportes' && <ReportesPanel soloEquipo={rol === 'supervisor'} />}
             {section === 'datos' && <DatosPagosPanel />}
-            {section === 'pagos' && <PagosPanel soloLectura={rol === 'supervisor'} />}
-            {section === 'estrategias' && <EstrategiasPanel />}
-            {section === 'segmentos' && <SegmentosPanel />}
-            {section === 'equipo' && (
-              <>
-                <EquipoPanel />
-                <AsignacionPanel />
-              </>
-            )}
+            {section === 'pagos' && <PagosPanel soloLectura={rol === 'supervisor'} onVerCliente={verCliente} />}
+            {section === 'segmentos' && <SegmentosPanel onVerPlantillas={() => setSection('plantillas')} />}
+            {section === 'equipo' && <EquipoConSub />}
+            {section === 'configuracion' && <ConfiguracionPanel />}
           </>
         )}
       </motion.div>
@@ -504,29 +504,48 @@ function CobranzaIA() {
   );
 }
 
-/** Aviso permanente: nada de lo que se ve aquí viene de datos reales todavía. */
-function PrototypeNotice() {
-  const { fuente } = useCobranza();
-  if (fuente === 'cargando') return <div className="my-7 h-4" />;
-  const real = fuente === 'real';
+/** Equipo en dos partes: cómo va cada persona y a quién le toca cada cuenta. */
+function EquipoConSub() {
+  const [parte, setParte] = React.useState<'desempeno' | 'asignacion'>('desempeno');
+  const { cartera } = useCobranza();
+  const sinAsignar = cartera.filter((c) => (c.agente as string) === 'Sin asignar').length;
   return (
-    <div className={`my-7 flex items-start gap-3 pl-4 border-l-2 ${real ? 'border-emerald-500' : 'border-amber-400'}`}>
-      <p className="text-[11px] text-brand-ink/60 leading-relaxed max-w-[75ch]">
-        {real ? (
-          <>
-            <span className="font-semibold text-brand-ink">Datos reales de tu base.</span> Clientes, facturas,
-            agentes, historial de pagos, plan y WhatsApp vienen de tu cartera. Pagos, campañas y reportes todavía
-            usan datos de ejemplo.
-          </>
-        ) : (
-          <>
-            <span className="font-semibold text-brand-ink">Datos de ejemplo.</span> Tu base todavía no tiene
-            clientes (o no hubo conexión con el servidor). Carga tu cartera en la pestaña Datos para trabajar con
-            tus clientes reales.
-          </>
-        )}
-      </p>
+    <div className="space-y-5">
+      <Subpestanas
+        grupo="equipo"
+        etiqueta="Partes de Equipo"
+        valor={parte}
+        onChange={setParte}
+        opciones={[
+          { id: 'desempeno', nombre: 'Desempeño' },
+          { id: 'asignacion', nombre: 'Asignación de cuentas', n: sinAsignar, alerta: true },
+        ]}
+      />
+      <PanelSub id={parte}>{parte === 'desempeno' ? <EquipoPanel /> : <AsignacionPanel />}</PanelSub>
     </div>
+  );
+}
+
+/** De dónde salen los datos: chip discreto, el detalle va en el tooltip. */
+function FuenteDatos() {
+  const { fuente } = useCobranza();
+  if (fuente === 'cargando') return <span className="h-6" />;
+  const real = fuente === 'real';
+  const detalle = real
+    ? 'Clientes, facturas, agentes, historial de pagos, plan y WhatsApp vienen de tu cartera. Pagos, campañas y reportes todavía usan datos de ejemplo.'
+    : 'Tu base todavía no tiene clientes (o no hubo conexión con el servidor). Carga tu cartera en la pestaña Datos para trabajar con tus clientes reales.';
+  return (
+    <span
+      title={detalle}
+      className="inline-flex items-center gap-2 rounded-full pl-2.5 pr-3 py-1 text-[11.5px] text-brand-ink/60 bg-white/55 backdrop-blur-xl border border-white/80 ring-1 ring-brand-ink/[0.06]"
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${real ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+      <span className="font-semibold text-brand-ink/80">{real ? 'Datos reales de tu base' : 'Datos de ejemplo'}</span>
+      <span className="hidden md:inline text-brand-ink/45">
+        {real ? '· pagos, campañas y reportes aún de ejemplo' : '· carga tu cartera en Datos'}
+      </span>
+      <Info size={12} className="text-brand-ink/35" aria-hidden />
+    </span>
   );
 }
 
@@ -575,90 +594,26 @@ function ResumenHoy() {
   const vencida = abiertas.filter((c) => c.dias > 0).reduce((a, c) => a + saldoDe(c), 0);
   const humano = hoy.filter(({ paso }) => paso!.canal === 'Llamada').length;
 
+  const pctVencida = porCobrar ? Math.round((vencida / porCobrar) * 100) : 0;
+
   return (
-    <StatRow>
-      <MiniStat label="Para atender hoy" value="" numeric={hoy.length} sub="clientes con un paso que toca hoy" />
-      <MiniStat label="Monto en juego" value="" numeric={montoHoy} format="moneda" sub="saldo de los clientes de hoy" />
-      <MiniStat
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <KpiVidrio i={0} icono={<Users size={16} />} label="Para atender hoy" numeric={hoy.length} sub="clientes con un paso que toca hoy" />
+      <KpiVidrio i={1} icono={<Wallet size={16} />} label="Saldo de hoy" numeric={montoHoy} format="moneda" sub="lo que deben los clientes de hoy" />
+      <KpiVidrio
+        i={2}
+        icono={<TrendingDown size={16} />}
         label="Cartera vencida"
-        value=""
         numeric={vencida}
         format="moneda"
-        sub={`${porCobrar ? Math.round((vencida / porCobrar) * 100) : 0}% de lo que está por cobrar`}
+        sub={`${pctVencida}% de todo lo que está por cobrar`}
+        barra={pctVencida}
       />
-      <MiniStat label="Requieren humano" value="" numeric={humano} sub="hoy toca llamada, no mensaje" accent />
-    </StatRow>
-  );
-}
-
-
-const SEVERIDAD = {
-  critica: { rail: 'bg-rose-500', chip: 'bg-rose-50 text-rose-700', label: 'Crítica' },
-  alta: { rail: 'bg-amber-400', chip: 'bg-amber-50 text-amber-700', label: 'Alta' },
-  media: { rail: 'bg-brand-gold', chip: 'bg-brand-gold/10 text-brand-ink/70', label: 'Media' },
-} as const;
-
-function AlertasPanel() {
-  const reduce = useReducedMotion();
-  const { cartera } = useCobranza();
-  // Alerta calculada (no fija): sale del contador histórico de cada cliente.
-  const esperan = cartera.filter((c) => !c.saldada && c.comportamiento.esperaDescuentos);
-  const alertas = [
-    ...(esperan.length
-      ? [
-          {
-            severidad: 'alta' as const,
-            titulo: `${esperan.length} ${esperan.length === 1 ? 'cliente espera' : 'clientes esperan'} campañas con descuento para pagar`,
-            detalle: `${esperan.map((c) => `${c.cliente} (pagó en ${c.comportamiento.campanasPagadas.length} campañas, ${c.comportamiento.negociaciones} negociaciones)`).join(' y ')}. Se atrasan y pagan cuando llega la oferta. Quedan fuera de las campañas por defecto.`,
-            cuando: 'Calculado hoy',
-          },
-        ]
-      : []),
-    ...MOCK.alertas,
-  ];
-
-  return (
-    <div className="space-y-5">
-      <Reveal>
-        <p className="text-sm text-brand-ink/55 max-w-[62ch] leading-relaxed">
-          Estas alertas se disparan por patrones, no por vencimientos. Avisan antes de que el
-          problema sea evidente en el aging.
-        </p>
-      </Reveal>
-
-      <div className="space-y-3">
-        {alertas.map((a, i) => {
-          const s = SEVERIDAD[a.severidad];
-          return (
-            <Reveal key={a.titulo} delay={0.06 + i * 0.06}>
-              {/* El rail de color a la izquierda carga la severidad, así el
-                  ojo puede escanear la columna sin leer cada etiqueta. */}
-              <motion.article
-                whileHover={reduce ? undefined : { x: 3 }}
-                transition={{ duration: 0.2, ease: EASE }}
-                className="flex bg-brand-paper border border-brand-ink/10 rounded-2xl overflow-hidden"
-              >
-                <div className={`w-1 shrink-0 ${s.rail}`} aria-hidden />
-                <div className="flex-1 px-6 py-5 space-y-2">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <h4 className="text-[15px] font-semibold text-brand-ink">{a.titulo}</h4>
-                    <span className={`audit-badge ${s.chip}`}>{s.label}</span>
-                    <span className="text-[11px] text-brand-ink/35 ml-auto whitespace-nowrap">
-                      {a.cuando}
-                    </span>
-                  </div>
-                  <p className="text-[13px] text-brand-ink/60 leading-relaxed max-w-[80ch]">
-                    {a.detalle}
-                  </p>
-                </div>
-              </motion.article>
-            </Reveal>
-          );
-        })}
-      </div>
+      <KpiVidrio i={3} icono={<PhoneCall size={16} />} label="Requieren llamada" numeric={humano} sub="hoy toca una persona, no un mensaje" accent />
     </div>
   );
 }
+
 
 // ─── 3 · Recordatorios enviados ──────────────────────────────────────
 
@@ -670,15 +625,14 @@ const RESULTADO_STYLES = {
 
 type RecordatorioItem = (typeof MOCK.recordatorios)[number];
 
-type SubSeccion = 'facturas' | 'plan' | 'whatsapp' | 'historial' | 'resumen' | 'simulador';
+type SubSeccion = 'facturas' | 'plan' | 'whatsapp' | 'historial' | 'riesgo';
 
 const SUB_SECCIONES: { id: SubSeccion; label: string }[] = [
   { id: 'facturas', label: 'Facturas' },
   { id: 'plan', label: 'Plan' },
   { id: 'whatsapp', label: 'WhatsApp' },
   { id: 'historial', label: 'Historial' },
-  { id: 'resumen', label: 'Riesgo' },
-  { id: 'simulador', label: 'Simulador' },
+  { id: 'riesgo', label: 'Riesgo y simulador' },
 ];
 
 /**
@@ -708,14 +662,91 @@ function registroDe(c: CuentaViva): RecordatorioItem {
  * 511px de la lista: eso dejaba 1,750px de columna izquierda vacía. Con las
  * subpestañas cada vista cabe de un vistazo y las alturas se emparejan.
  */
-function RecordatoriosPanel({ esAdmin = false }: { esAdmin?: boolean }) {
-  const { cartera } = useCobranza();
+type FiltroCli = 'todos' | 'vencidos' | 'sin_finanzas' | 'pausados' | 'espera' | 'sin_plan';
+const FILTROS_CLI: { id: FiltroCli; nombre: string; prueba: (c: CuentaViva) => boolean }[] = [
+  { id: 'todos', nombre: 'Todos', prueba: () => true },
+  { id: 'vencidos', nombre: 'Vencidos', prueba: (c) => !c.saldada && c.dias > 0 },
+  { id: 'sin_finanzas', nombre: 'Sin contacto', prueba: (c) => !c.finanzas },
+  { id: 'pausados', nombre: 'Pausados', prueba: (c) => !c.contactable },
+  { id: 'espera', nombre: 'Espera descuentos', prueba: (c) => c.comportamiento.esperaDescuentos },
+  { id: 'sin_plan', nombre: 'Factura sin plan', prueba: (c) => c.facturas.some((f) => !f.planInicio) },
+];
+
+function RecordatoriosPanel({ foco }: { foco?: { cliente: string; n: number; sub?: SubSeccion } | null }) {
+  const { cartera, reasignar, pausarContacto, agentesReales } = useCobranza();
+  const { avisar, nodo } = useAviso();
+  const [filtro, setFiltro] = React.useState<FiltroCli>('todos');
+  const [agenteF, setAgenteF] = React.useState('');
+  const [orden, setOrden] = React.useState<'original' | 'saldo' | 'dias' | 'nombre'>('original');
+  const [seleccion, setSeleccion] = React.useState<string[] | null>(null);
+  const [destino, setDestino] = React.useState('');
   const planDeCliente = (cliente: string) => planCuenta(cartera.find((c) => c.cliente === cliente)!);
-  const [selected, setSelected] = React.useState(cartera[0].cliente);
+  const [selected, setSelected] = React.useState(cartera[0]?.cliente ?? '');
   const [sub, setSub] = React.useState<SubSeccion>('facturas');
   const [buscar, setBuscar] = React.useState('');
+  const [masFiltros, setMasFiltros] = React.useState(false);
+  // La lista ocupa toda la pantalla; el expediente de un cliente se abre aparte.
+  const [vista, setVista] = React.useState<'lista' | 'cliente'>('lista');
+  const abrir = (cliente: string) => {
+    setSelected(cliente);
+    setVista('cliente');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  // Tocar "Clientes" en la barra lateral regresa a la lista.
+  React.useEffect(() => {
+    const volver = (e: Event) => (e as CustomEvent<string>).detail === 'recordatorios' && setVista('lista');
+    window.addEventListener('cobranza:inicio-seccion', volver);
+    return () => window.removeEventListener('cobranza:inicio-seccion', volver);
+  }, []);
+  // Viene de "Ver cliente" (Alertas u otra pestaña).
+  React.useEffect(() => {
+    if (!foco) return;
+    setVista('cliente');
+    setSelected(foco.cliente);
+    setSub(foco.sub ?? 'facturas');
+    setBuscar('');
+    setFiltro('todos');
+  }, [foco]);
   const registros = cartera.map(registroDe);
-  const visibles = registros.filter((r) => r.cliente.toLowerCase().includes(buscar.toLowerCase()));
+  const cuentaPor = (n: string) => cartera.find((c) => c.cliente === n)!;
+  const pruebaF = FILTROS_CLI.find((f) => f.id === filtro)!.prueba;
+  const visibles = registros
+    .filter((r) => {
+      const c = cuentaPor(r.cliente);
+      if (!c) return false;
+      const q = buscar.trim().toLowerCase();
+      if (q && ![r.cliente, c.datos?.rfc, c.folio, c.finanzas?.nombre].join(' ').toLowerCase().includes(q)) return false;
+      if (agenteF && c.agente !== agenteF) return false;
+      return pruebaF(c);
+    })
+    .sort((a, b) => {
+      const ca = cuentaPor(a.cliente);
+      const cb = cuentaPor(b.cliente);
+      if (orden === 'saldo') return saldoDe(cb) - saldoDe(ca);
+      if (orden === 'dias') return cb.dias - ca.dias;
+      if (orden === 'nombre') return a.cliente.localeCompare(b.cliente, 'es');
+      return 0;
+    });
+  const agentesLista = agentesReales?.map((a) => a.nombre) ?? [...new Set([...AGENTES, ...cartera.map((c) => c.agente)])];
+  const alternarSel = (n: string) => setSeleccion((s) => (s ? (s.includes(n) ? s.filter((x) => x !== n) : [...s, n]) : [n]));
+  const elegidas = (seleccion ?? []).map(cuentaPor).filter(Boolean);
+  const reasignarSel = () => {
+    if (!destino || !elegidas.length) return;
+    elegidas.forEach((c) => reasignar(c.id, destino as CuentaViva['agente']));
+    avisar(`${elegidas.length} ${elegidas.length === 1 ? 'cliente reasignado' : 'clientes reasignados'} a ${destino}`);
+    setSeleccion([]);
+    setDestino('');
+  };
+  const pausarSel = async () => {
+    const reales = elegidas.filter((c) => c.dbId && c.contactable);
+    if (!reales.length) return avisar('Ninguno de los elegidos se puede pausar (ya pausados o de ejemplo).', { error: true });
+    const errs = (await Promise.all(reales.map((c) => pausarContacto(c.id, true, 'Pausado en lote')))).filter(Boolean);
+    if (errs.length) return avisar(errs[0]!, { error: true });
+    avisar(`Pausaste el contacto con ${reales.length} ${reales.length === 1 ? 'cliente' : 'clientes'}`, {
+      deshacer: () => void Promise.all(reales.map((c) => pausarContacto(c.id, false))),
+    });
+    setSeleccion([]);
+  };
   const activo = registros.find((r) => r.cliente === selected) ?? registros[0];
   const reduce = useReducedMotion();
   // El riesgo de la cuenta vive en MOCK.cartera y se enlaza por nombre de
@@ -735,212 +766,477 @@ function RecordatoriosPanel({ esAdmin = false }: { esAdmin?: boolean }) {
     planDeCliente(r.cliente).actual?.fase === 'escalamiento',
   ).length;
 
+  const filtrosActivos = (agenteF ? 1 : 0) + (orden !== 'original' ? 1 : 0);
+  const planActivo = planCuenta(activoVivo);
+  const saldoActivo = saldoDe(activoVivo);
+
+  const posicion = visibles.findIndex((r) => r.cliente === activo.cliente);
+  const vecino = (d: number) => {
+    if (!visibles.length) return;
+    const i = posicion < 0 ? 0 : (posicion + d + visibles.length) % visibles.length;
+    setSelected(visibles[i].cliente);
+  };
+
   return (
-    <div className="space-y-5">
-      {/* Solo el Administrador decide si los recordatorios salen solos o con su aprobación. */}
-      {esAdmin && <ModoEnvio />}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-      {/* Lista de clientes */}
-      <Reveal className="lg:col-span-2">
-        <div className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden lg:sticky lg:top-4">
-          <div className="px-6 py-4 border-b border-brand-ink/8 space-y-3">
-            <BlockTitle>Clientes · {cartera.length}</BlockTitle>
-            <input
-              value={buscar}
-              onChange={(e) => setBuscar(e.target.value)}
-              placeholder="Buscar cliente"
-              className="w-full px-3 py-2 rounded-xl border border-brand-ink/12 bg-brand-bone/50 text-sm text-brand-ink outline-none focus:border-brand-gold/60"
-            />
+    <div>
+      <AnimatePresence mode="wait" initial={false}>
+      {vista === 'lista' ? (
+      <motion.div
+        key="lista"
+        initial={reduce ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={reduce ? { opacity: 0 } : { opacity: 0, y: -8 }}
+        transition={SPRING_SUAVE}
+        className="space-y-5"
+      >
+        <ResumenHoy />
+        <div className="glass rounded-[28px] overflow-hidden flex flex-col">
+          <div className="px-5 pt-4 pb-3 space-y-3 border-b border-brand-ink/[0.06]">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[15px] font-semibold text-brand-ink">Clientes</span>
+              <span className="rounded-full bg-brand-ink/[0.06] px-2 py-0.5 text-[11px] font-semibold tabular-nums text-brand-ink/55">
+                {visibles.length === cartera.length ? cartera.length : `${visibles.length} de ${cartera.length}`}
+              </span>
+              <label className="glass-campo order-last md:order-none w-full md:w-auto md:flex-1 md:max-w-[440px] md:ml-4 flex items-center gap-2 rounded-full px-3.5 py-2">
+                <Search size={14} className="text-brand-ink/35 shrink-0" />
+                <input
+                  value={buscar}
+                  onChange={(e) => setBuscar(e.target.value)}
+                  placeholder="Buscar cliente, RFC o folio"
+                  className="w-full bg-transparent text-[13px] text-brand-ink placeholder:text-brand-ink/35 outline-none"
+                />
+                {buscar && (
+                  <button type="button" onClick={() => setBuscar('')} aria-label="Limpiar búsqueda" className="text-brand-ink/35 hover:text-brand-ink">
+                    <X size={13} />
+                  </button>
+                )}
+              </label>
+              <span className="flex-1" />
+              <button
+                type="button"
+                onClick={() => setMasFiltros((v) => !v)}
+                aria-expanded={masFiltros}
+                aria-label="Más filtros"
+                title="Agente y orden"
+                className={`relative w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-colors ${
+                  masFiltros ? 'bg-brand-ink text-white' : 'glass-campo text-brand-ink/55 hover:text-brand-ink'
+                }`}
+              >
+                <SlidersHorizontal size={15} />
+                {filtrosActivos > 0 && !masFiltros && (
+                  <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-brand-gold text-[9.5px] font-bold text-brand-ink flex items-center justify-center">
+                    {filtrosActivos}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSeleccion((s) => (s ? null : []))}
+                aria-pressed={!!seleccion}
+                className={`ml-auto inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold transition-colors ${
+                  seleccion ? 'bg-brand-ink text-white' : 'text-brand-ink/55 hover:text-brand-ink hover:bg-brand-ink/[0.05]'
+                }`}
+              >
+                {seleccion ? <X size={12} /> : <ListChecks size={12} />} {seleccion ? 'Terminar' : 'Seleccionar'}
+              </button>
+            </div>
+
+            <AnimatePresence initial={false}>
+              {masFiltros && (
+                <motion.div
+                  initial={reduce ? false : { opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={reduce ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2, ease: EASE }}
+                  className="overflow-hidden"
+                >
+                  <div className="grid grid-cols-2 gap-2 max-w-md">
+                    <select value={agenteF} onChange={(e) => setAgenteF(e.target.value)} className={CONTROL + ' !rounded-full !py-2 !text-[12px]'} aria-label="Filtrar por agente">
+                      <option value="">Todos los agentes</option>
+                      {[...new Set(cartera.map((c) => c.agente))].sort().map((a) => (
+                        <option key={a}>{a}</option>
+                      ))}
+                    </select>
+                    <select value={orden} onChange={(e) => setOrden(e.target.value as typeof orden)} className={CONTROL + ' !rounded-full !py-2 !text-[12px]'} aria-label="Ordenar">
+                      <option value="original">Por prioridad</option>
+                      <option value="saldo">Mayor saldo</option>
+                      <option value="dias">Más días vencida</option>
+                      <option value="nombre">Nombre</option>
+                    </select>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <div className="flex gap-1.5 overflow-x-auto -mx-5 px-5 [scrollbar-width:none]">
+              {FILTROS_CLI.map((f) => {
+                const n = cartera.filter(f.prueba).length;
+                if (f.id !== 'todos' && !n) return null;
+                const on = filtro === f.id;
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setFiltro(f.id)}
+                    aria-pressed={on}
+                    className={`shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold transition-colors ${
+                      on ? 'bg-brand-ink text-white' : 'bg-white/55 ring-1 ring-brand-ink/[0.07] text-brand-ink/55 hover:text-brand-ink hover:bg-white'
+                    }`}
+                  >
+                    {f.nombre}
+                    <span className={`tabular-nums text-[10.5px] ${on ? 'text-white/60' : 'text-brand-ink/35'}`}>{n}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {seleccion && (
+              <div className="rounded-2xl bg-[rgb(var(--acento)/0.08)] ring-1 ring-[rgb(var(--acento)/0.25)] px-3 py-2.5 space-y-2">
+                <div className="flex items-center gap-3 text-[12px]">
+                  <span className="font-semibold text-brand-ink tabular-nums">{seleccion.length} elegidos</span>
+                  <button type="button" onClick={() => setSeleccion(visibles.map((r) => r.cliente))} className="text-[11.5px] font-semibold text-brand-ink/55 hover:text-brand-ink">
+                    Todos
+                  </button>
+                  <button type="button" onClick={() => setSeleccion([])} className="text-[11.5px] font-semibold text-brand-ink/55 hover:text-brand-ink">
+                    Ninguno
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <select value={destino} onChange={(e) => setDestino(e.target.value)} className={CONTROL + ' !w-auto !rounded-full !py-1.5 !text-[12px]'} aria-label="Reasignar a">
+                    <option value="">Reasignar a…</option>
+                    {agentesLista.map((a) => (
+                      <option key={a}>{a}</option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={reasignarSel} disabled={!destino || !elegidas.length} className={BTN_SEC}>
+                    <Users size={11} /> Reasignar
+                  </button>
+                  <button type="button" onClick={() => void pausarSel()} disabled={!elegidas.length} className={BTN_SEC}>
+                    <Pause size={11} /> Pausar
+                  </button>
+                  <button type="button" onClick={() => exportarCuentasCsv(elegidas, 'clientes-seleccionados.csv')} disabled={!elegidas.length} className={BTN_SEC}>
+                    <Download size={11} /> Exportar
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="max-h-[620px] overflow-y-auto">
+
+          {visibles.length > 0 && (
+            <div className="hidden md:grid grid-cols-[minmax(0,2.3fr)_minmax(0,1.7fr)_minmax(0,1fr)_120px_120px_24px] gap-4 px-5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-brand-ink/35">
+              <span className="pl-[52px]">Cliente</span>
+              <span>Hoy toca</span>
+              <span>Agente</span>
+              <span className="text-right">Saldo</span>
+              <span className="text-right">Vencimiento</span>
+              <span />
+            </div>
+          )}
+          <div className="p-2 space-y-0.5">
             {visibles.map((r) => {
+              const c = cuentaPor(r.cliente);
               const cuentaFila = cuentaDe(r.cliente);
               const activa = selected === r.cliente;
+              const elegida = !!seleccion?.includes(r.cliente);
               const planFila = planDeCliente(r.cliente);
               const pasoActual = planFila.actual;
               const siguiente = !pasoActual ? planFila.proxima : undefined;
+              const riesgo = cuentaFila ? nivelRiesgo(scoreOf(cuentaFila.factores)) : null;
+              const insignia = c.saldada
+                ? { t: 'Saldada', cls: 'bg-emerald-500/10 text-emerald-700' }
+                : !c.contactable
+                  ? { t: 'Pausado', cls: 'bg-amber-500/12 text-amber-800' }
+                  : c.facturas.some((f) => !f.planInicio)
+                    ? { t: 'Sin plan', cls: 'bg-amber-500/12 text-amber-800' }
+                    : c.comportamiento.esperaDescuentos
+                      ? { t: 'Espera descuento', cls: 'bg-rose-500/10 text-rose-700' }
+                      : null;
               return (
                 <button
                   key={r.cliente}
-                  onClick={() => setSelected(r.cliente)}
-                  aria-current={activa ? 'true' : undefined}
-                  className={`relative w-full text-left px-6 py-4 border-b border-brand-ink/6 last:border-0 transition-colors duration-200 ${
-                    activa ? 'bg-brand-cream' : 'hover:bg-brand-bone'
+                  type="button"
+                  onClick={() => (seleccion ? alternarSel(r.cliente) : abrir(r.cliente))}
+                  aria-current={activa && !seleccion ? 'true' : undefined}
+                  aria-pressed={seleccion ? elegida : undefined}
+                  className={`group relative w-full text-left rounded-[18px] px-3 py-3 flex md:grid md:grid-cols-[minmax(0,2.3fr)_minmax(0,1.7fr)_minmax(0,1fr)_120px_120px_24px] items-center gap-3 md:gap-4 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-gold/70 hover:bg-white/70 ${
+                    elegida ? 'bg-[rgb(var(--acento)/0.08)]' : ''
                   }`}
                 >
-                  {/* La marca de selección se desliza entre renglones en vez
-                      de parpadear: confirma el clic sin cortar la lectura. */}
-                  {activa && (
-                    <motion.span
-                      layoutId={reduce ? undefined : 'cliente-activo'}
-                      className="absolute left-0 top-0 bottom-0 w-0.5 bg-brand-gold"
-                      transition={{ duration: 0.3, ease: EASE }}
-                    />
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                  {seleccion ? (
+                    <span
+                      aria-hidden
+                      className={`relative w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-colors ${
+                        elegida ? 'bg-brand-ink text-white' : 'bg-white ring-1 ring-brand-ink/15 text-transparent'
+                      }`}
+                    >
+                      <Check size={15} strokeWidth={3} />
+                    </span>
+                  ) : (
+                    <Iniciales nombre={r.cliente} riesgo={riesgo} />
                   )}
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-sm font-semibold text-brand-ink truncate">{r.cliente}</span>
-                        <SegmentoChip cuenta={cartera.find((c) => c.cliente === r.cliente)!} />
-                        {cartera.find((c) => c.cliente === r.cliente)!.saldada && (
-                          <span className="audit-badge bg-emerald-50 text-emerald-700">Saldada</span>
-                        )}
-                        {cartera.find((c) => c.cliente === r.cliente)!.comportamiento.esperaDescuentos && (
-                          <span className="audit-badge bg-rose-50 text-rose-700" title="Espera campañas con descuento para pagar">
-                            Espera descuentos
-                          </span>
-                        )}
-                        {cartera.find((c) => c.cliente === r.cliente)!.facturas.some((f) => !f.planInicio) && (
-                          <span className="audit-badge bg-amber-50 text-amber-700">Factura sin plan</span>
-                        )}
-                      </div>
-                      {pasoActual && (
-                        <div className="flex items-center gap-1.5 mt-1.5">
-                          <FaseDot fase={pasoActual.fase} />
-                          <span className="text-[11px] text-brand-ink/55 truncate">
-                            {pasoActual.etiqueta} · {pasoActual.nombre}
-                          </span>
-                        </div>
+                  <div className="relative min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-[13.5px] font-semibold text-brand-ink truncate">{r.cliente}</span>
+                      {insignia && (
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${insignia.cls}`}>{insignia.t}</span>
                       )}
-                      {/* El nivel de hoy ya salió por WhatsApp: se muestra el que sigue. */}
-                      {siguiente && (
-                        <div className="flex items-center gap-1.5 mt-1.5">
-                          <Check size={11} className="text-emerald-600 shrink-0" />
-                          <span className="text-[11px] text-brand-ink/45 truncate">
-                            Al día · sigue {siguiente.etiqueta} en {siguiente.faltan} d
-                          </span>
-                        </div>
-                      )}
-                      {cuentaFila && (
-                        <div className="mt-2">
-                          <div className="flex items-baseline justify-between gap-2 mb-1">
-                            <span className="text-[10px] text-brand-ink/40">
-                              Pagado{' '}
-                              <span className="font-semibold text-brand-ink/70 tabular-nums">
-                                {pctPagado(cuentaFila)}%
-                              </span>
-                            </span>
-                            <span className="text-[10px] text-brand-ink/35 tabular-nums">
-                              falta {CURRENCY_FORMATTER.format(cuentaFila.monto - cuentaFila.pagado)}
-                            </span>
-                          </div>
-                          <Bar value={pctPagado(cuentaFila)} tone="positivo" delay={0.15} />
-                        </div>
-                      )}
-                      <div className="text-[11px] text-brand-ink/35 mt-2 tabular-nums">
-                        {r.enviados ? `${r.enviados} mensajes · ${r.tasa}% respuesta` : 'Sin mensajes todavía'}
-                      </div>
                     </div>
-                    <div className="shrink-0 text-right">
-                      {cuentaFila && <RiskChip score={scoreOf(cuentaFila.factores)} />}
+                    <div className="text-[11.5px] text-brand-ink/40 font-mono truncate hidden md:block">{c.folio}</div>
+                    <div className="flex md:hidden items-center gap-1.5 mt-0.5 text-[11.5px] text-brand-ink/50 min-w-0">
+                      {pasoActual ? <FaseDot fase={pasoActual.fase} /> : null}
+                      <span className="truncate">{pasoActual ? `${pasoActual.etiqueta} · ${pasoActual.nombre}` : siguiente ? `Al día · ${siguiente.etiqueta} en ${siguiente.faltan} d` : c.agente}</span>
                     </div>
                   </div>
+                  </div>
+                    <div className="hidden md:flex items-center gap-1.5 text-[12.5px] text-brand-ink/60 min-w-0">
+                      {pasoActual ? (
+                        <>
+                          <FaseDot fase={pasoActual.fase} />
+                          <span className="truncate">
+                            {pasoActual.etiqueta} · {pasoActual.nombre}
+                          </span>
+                        </>
+                      ) : siguiente ? (
+                        <>
+                          <Check size={11} className="text-emerald-600 shrink-0" />
+                          <span className="truncate">
+                            Al día · {siguiente.etiqueta} en {siguiente.faltan} d
+                          </span>
+                        </>
+                      ) : (
+                        <span className="truncate text-brand-ink/40">Plan terminado</span>
+                      )}
+                    </div>
+                  <span className="hidden md:block text-[12.5px] text-brand-ink/55 truncate">{c.agente}</span>
+                  <div className="shrink-0 text-right md:contents">
+                    <div className="text-[13px] font-semibold tabular-nums text-brand-ink md:text-right">{c.saldada ? '—' : compacto(saldoDe(c))}</div>
+                    <div className={`text-[10.5px] md:text-[12px] tabular-nums md:text-right ${c.dias > 0 && !c.saldada ? 'text-rose-600 font-semibold' : 'text-brand-ink/45'}`}>
+                      {c.saldada ? 'pagada' : c.dias > 0 ? `${c.dias} d vencida` : c.dias === 0 ? 'vence hoy' : `vence en ${-c.dias} d`}
+                    </div>
+                  </div>
+                  <ChevronRight size={16} className="hidden md:block text-brand-ink/25 group-hover:text-brand-ink/60 group-hover:translate-x-0.5 transition-all" />
                 </button>
               );
             })}
+            {!visibles.length && (
+              <div className="px-6 py-10 text-center">
+                <p className="text-[13px] text-brand-ink/45">Ningún cliente coincide.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBuscar('');
+                    setFiltro('todos');
+                    setAgenteF('');
+                  }}
+                  className="mt-3 text-[12px] font-semibold text-brand-ink/60 hover:text-brand-ink underline underline-offset-2"
+                >
+                  Quitar filtros
+                </button>
+              </div>
+            )}
           </div>
 
-          {/* Resumen de la cartera contactada */}
-          <div className="grid grid-cols-3 divide-x divide-brand-ink/8 border-t border-brand-ink/10 bg-brand-bone/50">
+          {/* Pulso de la cartera contactada */}
+          <div className="grid grid-cols-3 border-t border-brand-ink/[0.06] bg-white/40">
             <ListaStat label="Mensajes" value={String(totalMensajes)} />
             <ListaStat label="Respuesta" value={`${tasaPromedio}%`} />
             <ListaStat label="Escalando" value={String(enEscalamiento)} alerta={enEscalamiento > 0} />
           </div>
         </div>
-      </Reveal>
-
-      {/* Expediente del cliente, en subpestañas */}
-      <div className="lg:col-span-3">
-        <motion.div
-          key={activo.cliente}
-          initial={reduce ? false : { opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.28, ease: EASE }}
-          className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden"
+      </motion.div>
+      ) : (
+      <motion.div
+        key="cliente"
+        initial={reduce ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={reduce ? { opacity: 0 } : { opacity: 0, y: -8 }}
+        transition={SPRING_SUAVE}
+        className="space-y-4"
+      >
+      {/* Volver a la lista y pasar al cliente de al lado */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setVista('lista')}
+          className="inline-flex items-center gap-1.5 h-10 pl-3 pr-4 rounded-full bg-white/70 ring-1 ring-brand-ink/10 text-[13px] font-semibold text-brand-ink/70 hover:bg-white hover:text-brand-ink transition-colors"
         >
-          {/* Cabecera fija del expediente */}
-          <div className="px-7 pt-6 pb-0">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <BlockTitle>Cuenta seleccionada</BlockTitle>
-                <h3 className="text-[1.6rem] leading-tight font-serif text-brand-ink mt-1.5">
-                  {activo.cliente}
-                </h3>
-                <div className="flex items-center gap-2 mt-1 text-[11px] text-brand-ink/40">
-                  <span className="font-mono">{activoVivo.folio}</span>
-                  <span className="w-px h-3 bg-brand-ink/15" aria-hidden />
-                  <span>{activoVivo.agente}</span>
-                  <SegmentoChip cuenta={activoVivo} />
-                </div>
+          <ArrowLeft size={15} /> Clientes
+        </button>
+        <span className="flex-1" />
+        {posicion >= 0 && (
+          <span className="text-[12px] text-brand-ink/45 tabular-nums mr-1">
+            {posicion + 1} de {visibles.length}
+          </span>
+        )}
+        <button type="button" onClick={() => vecino(-1)} aria-label="Cliente anterior" className="w-10 h-10 rounded-full bg-white/70 ring-1 ring-brand-ink/10 flex items-center justify-center text-brand-ink/60 hover:bg-white hover:text-brand-ink">
+          <ChevronLeft size={16} />
+        </button>
+        <button type="button" onClick={() => vecino(1)} aria-label="Cliente siguiente" className="w-10 h-10 rounded-full bg-white/70 ring-1 ring-brand-ink/10 flex items-center justify-center text-brand-ink/60 hover:bg-white hover:text-brand-ink">
+          <ChevronRight size={16} />
+        </button>
+      </div>
+      <motion.div
+        key={activo.cliente}
+        initial={reduce ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={SPRING_SUAVE}
+        className="glass rounded-[28px] overflow-hidden min-w-0"
+      >
+        <div className="relative px-5 sm:px-7 pt-6 pb-5">
+          <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-[rgb(var(--acento)/0.08)] to-transparent" />
+          <div className="relative flex flex-wrap items-start gap-4">
+            <Iniciales nombre={activo.cliente} grande riesgo={cuenta ? nivelRiesgo(scoreOf(cuenta.factores)) : null} />
+            <div className="min-w-0 flex-1">
+              <h3 className="text-[1.55rem] leading-tight font-serif text-brand-ink truncate">{activo.cliente}</h3>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1 text-[12px] text-brand-ink/45">
+                <span className="font-mono text-[11.5px]">{activoVivo.folio}</span>
+                <span aria-hidden>·</span>
+                <span>{activoVivo.agente}</span>
+                {activoVivo.finanzas && (
+                  <>
+                    <span aria-hidden>·</span>
+                    <span className="truncate">{activoVivo.finanzas.nombre}</span>
+                  </>
+                )}
+                <SegmentoChip cuenta={activoVivo} />
               </div>
-              {(() => {
-                const { actual: act, proxima } = planCuenta(activoVivo);
-                if (activoVivo.saldada) return <span className="audit-badge shrink-0 bg-emerald-50 text-emerald-700">Saldada</span>;
-                if (act) {
-                  return (
-                    <span className="audit-badge shrink-0 bg-brand-ink/5 text-brand-ink/70">
-                      Hoy: {act.etiqueta} · {act.nombre}
-                    </span>
-                  );
-                }
-                return proxima ? (
-                  <span className="audit-badge shrink-0 bg-emerald-50 text-emerald-700">
-                    Al día · sigue {proxima.etiqueta} en {proxima.faltan} d
-                  </span>
-                ) : null;
-              })()}
             </div>
-
-            {/* Subpestañas: indicador deslizante, mismo lenguaje que la
-                navegación principal para que se lea como el mismo sistema. */}
-            <nav className="flex gap-1 mt-5 border-b border-brand-ink/10 -mx-7 px-7">
-              {SUB_SECCIONES.map((s) => {
-                const activa = sub === s.id;
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => setSub(s.id)}
-                    aria-current={activa ? 'page' : undefined}
-                    className={`relative px-3.5 py-2.5 text-xs font-semibold transition-colors duration-200 ${
-                      activa ? 'text-brand-ink' : 'text-brand-ink/40 hover:text-brand-ink/70'
-                    }`}
-                  >
-                    {s.label}
-                    {activa && (
-                      <motion.span
-                        layoutId={reduce ? undefined : 'subseccion-activa'}
-                        className="absolute left-2 right-2 -bottom-px h-0.5 bg-brand-gold rounded-full"
-                        transition={{ duration: 0.3, ease: EASE }}
-                      />
-                    )}
-                  </button>
-                );
-              })}
-            </nav>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setSub('facturas')}
+                className="inline-flex items-center gap-1.5 h-10 px-4 rounded-full bg-white/70 ring-1 ring-brand-ink/10 text-[12.5px] font-semibold text-brand-ink/70 hover:bg-white hover:text-brand-ink transition-colors"
+              >
+                <WalletIcon size={14} /> Registrar pago
+              </button>
+              <button
+                type="button"
+                onClick={() => setSub('whatsapp')}
+                className="inline-flex items-center gap-1.5 h-10 px-4 rounded-full bg-emerald-600 text-white text-[12.5px] font-semibold hover:bg-emerald-700 shadow-[0_10px_24px_-12px_rgba(5,150,105,0.7)] transition-colors"
+              >
+                <MessageCircle size={14} /> WhatsApp
+              </button>
+            </div>
           </div>
 
+          {/* La cuenta en cuatro datos */}
+          <div className="relative grid grid-cols-2 lg:grid-cols-4 gap-2 mt-5">
+            <DatoCuenta label="Saldo" value={activoVivo.saldada ? 'Saldada' : CURRENCY_FORMATTER.format(saldoActivo)} />
+            <DatoCuenta
+              label="Vencimiento"
+              value={activoVivo.dias > 0 ? `${activoVivo.dias} días vencida` : activoVivo.dias === 0 ? 'Vence hoy' : `En ${-activoVivo.dias} días`}
+              tono={activoVivo.dias > 0 && !activoVivo.saldada ? 'rojo' : undefined}
+            />
+            <DatoCuenta
+              label="Hoy toca"
+              value={
+                activoVivo.saldada
+                  ? 'Nada'
+                  : planActivo.actual
+                    ? `${planActivo.actual.etiqueta} · ${planActivo.actual.nombre}`
+                    : planActivo.proxima
+                      ? `Al día · ${planActivo.proxima.etiqueta} en ${planActivo.proxima.faltan} d`
+                      : 'Plan terminado'
+              }
+            />
+            <DatoCuenta label="Pagado" value={`${Math.round((activoVivo.pagado / Math.max(1, activoVivo.monto)) * 100)}%`} barra={(activoVivo.pagado / Math.max(1, activoVivo.monto)) * 100} />
+          </div>
+
+          {!activoVivo.contactable && (
+            <p className="relative mt-3 flex items-center gap-2 text-[12px] text-amber-900 bg-amber-500/10 rounded-2xl px-3.5 py-2.5">
+              <Pause size={13} className="shrink-0" /> Contacto en pausa: {activoVivo.motivo ?? 'sin motivo'}. Ningún canal automático le escribe.
+            </p>
+          )}
+
+          <div className="relative mt-5">
+            <Subpestanas
+              grupo="expediente"
+              etiqueta={`Expediente de ${activo.cliente}`}
+              valor={sub}
+              onChange={setSub}
+              opciones={SUB_SECCIONES.map((x) => ({ id: x.id, nombre: x.label }))}
+            />
+          </div>
+        </div>
+
+        <div className="border-t border-brand-ink/[0.06]">
           <motion.div
             key={`${activo.cliente}-${sub}`}
-            initial={reduce ? false : { opacity: 0, y: 6 }}
+            initial={reduce ? false : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.22, ease: EASE }}
+            transition={reduce ? { duration: 0 } : SPRING_SUAVE}
           >
             {sub === 'facturas' && <SubFacturas cuenta={activoVivo} />}
-            {sub === 'resumen' && <SubResumen cuenta={cuenta} />}
             {sub === 'plan' && <SubPlan registro={activo} />}
             {sub === 'whatsapp' && <SubWhatsapp cuenta={activoVivo} />}
             {sub === 'historial' && <SubHistorial registro={activo} reduce={reduce} />}
-            {sub === 'simulador' && cuenta && <SimuladorCuenta cuenta={cuenta} />}
-            {sub === 'simulador' && !cuenta && (
-              <p className="px-7 py-8 text-sm text-brand-ink/45">
-                El simulador está disponible para las cuentas con análisis de riesgo. Este cliente
-                todavía no tiene uno.
-              </p>
+            {sub === 'riesgo' && (
+              <>
+                <SubResumen cuenta={cuenta} />
+                {cuenta && (
+                  <div className="border-t border-brand-ink/8">
+                    <SimuladorCuenta cuenta={cuenta} />
+                  </div>
+                )}
+              </>
             )}
           </motion.div>
-        </motion.div>
-      </div>
-      </div>
+        </div>
+      </motion.div>
+      </motion.div>
+      )}
+      </AnimatePresence>
+      {nodo}
+    </div>
+  );
+}
+
+const compacto = (n: number) =>
+  n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(1)} M` : n >= 1000 ? `$${Math.round(n / 1000)} mil` : CURRENCY_FORMATTER.format(n);
+
+const TONO_INICIAL = {
+  alto: 'bg-rose-500',
+  medio: 'bg-amber-400',
+  bajo: 'bg-emerald-500',
+} as const;
+
+/** Círculo con iniciales; el punto de color dice el riesgo de la cuenta. */
+function Iniciales({ nombre, riesgo, grande = false }: { nombre: string; riesgo: keyof typeof TONO_INICIAL | null; grande?: boolean }) {
+  const ini = nombre
+    .replace(/\b(S\.?A\.?|de|C\.?V\.?|SAPI|S\.? de R\.?L\.?)\b/gi, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase())
+    .join('');
+  return (
+    <span
+      className={`relative shrink-0 rounded-full flex items-center justify-center font-bold text-brand-ink/75 bg-gradient-to-br from-[rgb(var(--acento)/0.2)] to-[rgb(var(--acento)/0.06)] ring-1 ring-[rgb(var(--acento)/0.22)] ${
+        grande ? 'w-14 h-14 text-[17px]' : 'w-10 h-10 text-[12.5px]'
+      }`}
+    >
+      {ini || '?'}
+      {riesgo && (
+        <span
+          title={`Riesgo ${riesgo}`}
+          className={`absolute bottom-0 right-0 rounded-full ring-2 ring-white ${TONO_INICIAL[riesgo]} ${grande ? 'w-3.5 h-3.5' : 'w-2.5 h-2.5'}`}
+        />
+      )}
+    </span>
+  );
+}
+
+function DatoCuenta({ label, value, tono, barra }: { label: string; value: string; tono?: 'rojo'; barra?: number }) {
+  return (
+    <div className="rounded-2xl bg-white/55 ring-1 ring-brand-ink/[0.06] px-3.5 py-2.5 min-w-0">
+      <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">{label}</div>
+      <div title={value} className={`text-[13.5px] font-semibold mt-0.5 truncate tabular-nums ${tono === 'rojo' ? 'text-rose-600' : 'text-brand-ink'}`}>{value}</div>
+      {barra !== undefined && (
+        <div className="mt-1.5 h-1 rounded-full bg-brand-ink/[0.07] overflow-hidden">
+          <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(100, Math.max(0, barra))}%` }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -963,12 +1259,12 @@ function ListaStat({ label, value, alerta = false }: { label: string; value: str
 function BestFit({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
     <div
-      className={`px-3.5 py-3 rounded-xl border ${
-        accent ? 'bg-brand-gold/10 border-brand-gold/40' : 'bg-brand-bone border-brand-ink/8'
+      className={`px-3.5 py-2.5 rounded-2xl ring-1 ${
+        accent ? 'bg-cyan-500/[0.08] ring-cyan-500/20' : 'bg-white/55 ring-brand-ink/[0.06]'
       }`}
     >
       <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">{label}</div>
-      <div className="text-sm font-semibold text-brand-ink mt-1.5">{value}</div>
+      <div className="text-[13px] font-semibold text-brand-ink mt-1 truncate">{value}</div>
     </div>
   );
 }
@@ -1012,7 +1308,7 @@ function SimuladorCuenta({ cuenta }: { cuenta: CarteraItem }) {
   const favorable = delta >= 0;
 
   return (
-    <section className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-7 space-y-6">
+    <section className="glass rounded-[28px] p-7 space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <BlockTitle>Simulador de esta cuenta</BlockTitle>
@@ -1155,7 +1451,7 @@ function SubResumen({ cuenta }: { cuenta: CarteraItem | undefined }) {
 
   return (
     <div className="px-7 py-6 space-y-6">
-      <div className="grid grid-cols-3 divide-x divide-brand-ink/8 border-y border-brand-ink/8">
+      <div className="grid grid-cols-3 divide-x divide-white/70 border-y border-brand-ink/8">
         <div className="pr-4 py-3.5">
           <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">Monto</div>
           <div className="text-xl font-serif text-brand-ink mt-1.5 tabular-nums">
@@ -1189,7 +1485,7 @@ function SubResumen({ cuenta }: { cuenta: CarteraItem | undefined }) {
           </span>
         </div>
         <Bar value={pctPagado(cuenta)} tone="positivo" delay={0.1} />
-        <div className="grid grid-cols-2 divide-x divide-brand-ink/8">
+        <div className="grid grid-cols-2 divide-x divide-white/70">
           <div className="pr-4">
             <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">Pagado</div>
             <div className="text-base font-serif text-emerald-700 mt-1 tabular-nums">
@@ -1245,67 +1541,63 @@ function SubPlan({ registro }: { registro: RecordatorioItem }) {
   const { cartera } = useCobranza();
   const cuentaViva = cartera.find((c) => c.cliente === registro.cliente)!;
   const { pasos, actual, proxima, ajustes } = planCuenta(cuentaViva);
-  const vigentes = pasos.filter((p) => p.estado !== 'omitido');
-  const hechos = vigentes.filter((p) => p.estado === 'hecho').length;
-  const avance = Math.round((hechos / vigentes.length) * 100);
-  const antes = pasos.filter((p) => p.fase === 'temprana');
-  const despues = pasos.filter((p) => p.fase !== 'temprana');
   const vencida = registro.plan.hoy > 0;
+  const foco = actual ?? proxima;
 
   return (
-    <div className="px-7 py-6 space-y-6">
-      {/* Hoy + próxima acción: lo primero que alguien necesita saber */}
-      <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-4 bg-brand-cream border border-brand-gold/30 rounded-2xl">
-        <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40">
-            {proxima ? 'Próxima acción' : 'Etapa en curso'}
+    <div className="px-5 sm:px-7 py-6 space-y-5">
+      {/* Lo que sigue, en una franja */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-[22px] px-5 py-4 bg-gradient-to-r from-[rgb(var(--acento)/0.1)] to-white/50 ring-1 ring-[rgb(var(--acento)/0.18)]">
+        <div className="min-w-[12rem] flex-1">
+          <div className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-brand-ink/40">
+            {actual ? 'Toca hoy' : proxima ? 'Lo que sigue' : 'Plan terminado'}
           </div>
-          <div className="text-base font-semibold text-brand-ink mt-1">
-            {(proxima ?? actual)?.etiqueta} · {(proxima ?? actual)?.nombre}
-          </div>
-          <div className={`text-[11px] mt-1 font-semibold ${vencida ? 'text-rose-600' : 'text-emerald-700'}`}>
-            Hoy: {textoHoy(registro.plan.hoy)}
+          <div className="flex items-center gap-2 mt-1">
+            {foco && <FaseDot fase={foco.fase} />}
+            <span className="text-[15px] font-semibold text-brand-ink truncate">
+              {foco ? `${foco.etiqueta} · ${foco.nombre}` : 'Sin pasos pendientes'}
+            </span>
           </div>
         </div>
-        {(proxima ?? actual) && (
-          <div className="flex items-center gap-4 shrink-0">
-            <Tag icon={<CanalIcon canal={(proxima ?? actual)!.canal} />} text={(proxima ?? actual)!.canal} />
-            <div className="text-right">
-              <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/35">Cuándo</div>
-              <div className="text-sm font-semibold text-brand-ink mt-0.5">
-                {proxima ? (proxima.faltan === 1 ? 'mañana' : `en ${proxima.faltan} días`) : 'en curso'}
-              </div>
-            </div>
+        {foco && (
+          <div className="flex flex-wrap items-center gap-1.5 text-[11.5px]">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/80 ring-1 ring-brand-ink/[0.07] px-3 py-1.5 font-semibold text-brand-ink/70">
+              <CanalIcon canal={foco.canal} /> {foco.canal}
+            </span>
+            <span className="rounded-full bg-white/80 ring-1 ring-brand-ink/[0.07] px-3 py-1.5 font-semibold text-brand-ink/70">
+              {actual ? 'Hoy' : proxima!.faltan === 1 ? 'Mañana' : `En ${proxima!.faltan} días`}
+            </span>
           </div>
         )}
+        <span className={`w-full sm:w-auto text-[11.5px] font-semibold ${vencida ? 'text-rose-600' : 'text-emerald-700'}`}>
+          {textoHoy(registro.plan.hoy)}
+        </span>
       </div>
 
-      {/* Por qué este plan: plantilla general + ajustes de este cliente */}
-      <div>
-        <BlockTitle>Por qué este plan</BlockTitle>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-3">
-          <BestFit label="Canal" value={mejor.canal} />
-          <BestFit label="Tono" value={mejor.tono} />
-          <BestFit label="Horario" value={mejor.hora} />
-          <BestFit label="Respuesta" value={`${registro.tasa}%`} accent />
-        </div>
-        <p className="text-xs text-brand-ink/50 leading-relaxed mt-3">{nota}</p>
-        <div className="mt-3 px-4 py-3 rounded-xl bg-brand-bone/60 border border-brand-ink/6">
-          <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40">
-            Plantilla general · ajustes para este cliente
-          </div>
-          <ul className="mt-1.5 space-y-1">
-            {ajustes.map((a) => (
-              <li key={a} className="flex gap-2 text-xs text-brand-ink/65 leading-relaxed">
-                <span className="text-brand-gold">•</span>
-                {a}
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
+      <PlanCompacto pasos={pasos} />
 
-      <LineaPlan pasos={pasos} />
+      {/* Por qué este plan: corto, con el detalle a un clic */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <BestFit label="Canal" value={mejor.canal} />
+        <BestFit label="Tono" value={mejor.tono} />
+        <BestFit label="Horario" value={mejor.hora} />
+        <BestFit label="Respuesta" value={`${registro.tasa}%`} accent />
+      </div>
+      <details className="group rounded-2xl bg-white/45 ring-1 ring-brand-ink/[0.06] px-4 py-3 [&_summary::-webkit-details-marker]:hidden">
+        <summary className="flex items-center gap-2 cursor-pointer list-none text-[12px] font-semibold text-brand-ink/60 hover:text-brand-ink">
+          <Info size={13} className="text-brand-ink/35" /> Por qué este plan
+          <ChevronDown size={14} className="ml-auto text-brand-ink/30 transition-transform group-open:rotate-180" />
+        </summary>
+        <p className="text-[12px] text-brand-ink/55 leading-relaxed mt-2.5">{nota}</p>
+        <ul className="mt-2 space-y-1">
+          {ajustes.map((a) => (
+            <li key={a} className="flex gap-2 text-[12px] text-brand-ink/60 leading-relaxed">
+              <span className="text-brand-gold">•</span>
+              {a}
+            </li>
+          ))}
+        </ul>
+      </details>
     </div>
   );
 }
@@ -1456,113 +1748,21 @@ function Burbuja({
   );
 }
 
-// ─── 4 · Estrategias ─────────────────────────────────────────────────
-
-function EstrategiasPanel() {
-  const e = MOCK.estrategias.efectividad;
-  const tasaRespuesta = Math.round((e.respondidos / e.enviados) * 100);
-
-  return (
-    <div className="space-y-6">
-      <Reveal>
-        <StatRow>
-          <MiniStat
-            label="Mensajes enviados"
-            value=""
-            numeric={e.enviados}
-            sub="en los últimos 90 días"
-          />
-          <MiniStat
-            label="Tasa de respuesta"
-            value=""
-            numeric={tasaRespuesta}
-            format="porcentaje"
-            sub={`${e.respondidos} clientes respondieron`}
-          />
-          <MiniStat
-            label="Cobradas tras contacto"
-            value=""
-            numeric={e.cobradasTrasContacto}
-            sub="facturas liquidadas"
-          />
-          <MiniStat
-            label="Días ahorrados"
-            value=""
-            numeric={e.diasAhorrados}
-            sub="contra la línea base de cobro"
-            accent
-          />
-        </StatRow>
-      </Reveal>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-        <Reveal delay={0.08}>
-          <StrategyColumn
-            titulo="Lo que sí funciona"
-            icono={<TrendingUp size={14} className="text-emerald-600" />}
-            estrategias={MOCK.estrategias.funcionan}
-            positivo
-          />
-        </Reveal>
-        <Reveal delay={0.14}>
-          <StrategyColumn
-            titulo="Lo que no funciona"
-            icono={<TrendingDown size={14} className="text-rose-500" />}
-            estrategias={MOCK.estrategias.noFuncionan}
-            positivo={false}
-          />
-        </Reveal>
-      </div>
-    </div>
-  );
-}
-
-function StrategyColumn({
-  titulo,
-  icono,
-  estrategias,
-  positivo,
-}: {
-  titulo: string;
-  icono: React.ReactNode;
-  estrategias: readonly { nombre: string; exito: number; usos: number; nota: string }[];
-  positivo: boolean;
-}) {
-  return (
-    <section className="bg-brand-paper border border-brand-ink/10 rounded-3xl overflow-hidden h-full">
-      <div className="px-6 py-4 border-b border-brand-ink/8 flex items-center gap-2">
-        {icono}
-        <BlockTitle>{titulo}</BlockTitle>
-      </div>
-      <div className="divide-y divide-brand-ink/6">
-        {estrategias.map((s, i) => (
-          <div key={s.nombre} className="px-6 py-5 space-y-2.5">
-            <div className="flex items-baseline justify-between gap-4">
-              <span className="text-sm font-semibold text-brand-ink">{s.nombre}</span>
-              <span
-                className={`text-2xl font-serif tabular-nums shrink-0 ${
-                  positivo ? 'text-emerald-700' : 'text-rose-600'
-                }`}
-              >
-                <Figure value={s.exito} format="porcentaje" />
-              </span>
-            </div>
-            <Bar value={s.exito} tone={positivo ? 'positivo' : 'negativo'} delay={0.2 + i * 0.08} />
-            <p className="text-xs text-brand-ink/55 leading-relaxed">{s.nota}</p>
-            <p className="text-[11px] text-brand-ink/30">{s.usos} veces usada</p>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 // ─── 6 · Equipo ──────────────────────────────────────────────────────
 
+/** Quién lleva cuentas: usuarios reales (si hay acceso) + los que ya tienen cartera. */
+function nombresEquipo(cartera: CuentaViva[], reales: { nombre: string; activo: boolean }[] | null, fuente: string): string[] {
+  const conCartera = [...new Set(cartera.map((c) => c.agente))];
+  const base = fuente === 'real' ? (reales ?? []).filter((a) => a.activo).map((a) => a.nombre) : [...AGENTES];
+  const todos = [...new Set([...base, ...conCartera])];
+  // "Sin asignar" al final: es cartera que nadie está trabajando.
+  return [...todos.filter((n) => n !== 'Sin asignar').sort((a, b) => a.localeCompare(b, 'es')), ...(todos.includes('Sin asignar') ? ['Sin asignar'] : [])];
+}
+
 function EquipoPanel() {
-  const { cartera, envios, resultadosHoy } = useCobranza();
+  const { cartera, envios, resultadosHoy, agentesReales, fuente } = useCobranza();
   // Todo sale de la misma cartera que ven Supervisor y Agente.
-  const equipo = AGENTES.map((nombre) => {
+  const equipo = nombresEquipo(cartera, agentesReales, fuente).map((nombre) => {
     const suyas = cartera.filter((c) => c.agente === nombre);
     const vencidas = suyas.filter((c) => c.dias > 0);
     return {
@@ -1584,21 +1784,23 @@ function EquipoPanel() {
       <Reveal>
         <p className="text-sm text-brand-ink/55 max-w-[62ch] leading-relaxed">
           Comparativo entre encargados de cobranza para identificar qué está funcionando y
-          replicarlo, no para señalar a nadie.
+          replicarlo, no para señalar a nadie. Para invitar o desactivar personas ve a Configuración → Usuarios.
         </p>
       </Reveal>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {equipo.map((persona, i) => {
-          const pct = Math.round((persona.recuperado / persona.cartera) * 100);
+          const pct = persona.cartera ? Math.round((persona.recuperado / persona.cartera) * 100) : 0;
           const saturado = persona.pendientes >= 4;
           return (
             <Reveal key={persona.nombre} delay={0.06 + i * 0.06}>
-              <article className="bg-brand-paper border border-brand-ink/10 rounded-3xl p-6 space-y-5 h-full">
+              <article className="glass rounded-[28px] p-6 space-y-5 h-full">
                 <div>
-                  <h4 className="text-lg font-semibold text-brand-ink">{persona.nombre}</h4>
+                  <h4 className={`text-lg font-semibold ${persona.nombre === 'Sin asignar' ? 'text-amber-700' : 'text-brand-ink'}`}>{persona.nombre}</h4>
                   <p className="text-[11px] text-brand-ink/40 mt-0.5">
-                    {persona.cuentas} cuentas asignadas
+                    {persona.nombre === 'Sin asignar'
+                      ? `${persona.cuentas} ${persona.cuentas === 1 ? 'cuenta' : 'cuentas'} sin responsable · asígnalas abajo`
+                      : `${persona.cuentas} ${persona.cuentas === 1 ? 'cuenta asignada' : 'cuentas asignadas'}`}
                   </p>
                 </div>
 
@@ -1614,7 +1816,7 @@ function EquipoPanel() {
                   <Bar value={pct} tone="accent" delay={0.2 + i * 0.06} />
                 </div>
 
-                <div className="divide-y divide-brand-ink/6 border-t border-brand-ink/8">
+                <div className="divide-y divide-white/70 border-t border-brand-ink/8">
                   <EquipoStat
                     label="Cartera total"
                     value={CURRENCY_FORMATTER.format(persona.cartera)}
@@ -1680,50 +1882,65 @@ function EquipoStat({
 // aparecen solo como estado semántico real (riesgo, severidad, resultado de un
 // escenario), nunca como decoración.
 
-/**
- * Métrica de cabecera. A densidad alta las cifras respiran en la retícula
- * en vez de vivir cada una en su caja: el separador es una línea, no un
- * borde de tarjeta.
- */
-function MiniStat({
+/** Cifra del resumen del día en vidrio, con el mismo lenguaje que Campañas. */
+function KpiVidrio({
   label,
-  value,
-  sub,
-  accent = false,
-  format = 'entero',
   numeric,
+  sub,
+  icono,
+  format = 'entero',
+  accent = false,
+  barra,
+  i = 0,
 }: {
   label: string;
-  value: string;
+  numeric: number;
   sub: string;
-  accent?: boolean;
+  icono: React.ReactNode;
   format?: FigureFormat;
-  /** Si se pasa, la cifra transiciona en vez de saltar. */
-  numeric?: number;
+  /** Destaca la cifra que pide acción humana. */
+  accent?: boolean;
+  /** Porcentaje 0–100 para una barra fina bajo la cifra. */
+  barra?: number;
+  i?: number;
 }) {
+  const reduce = useReducedMotion();
   return (
-    <div className="px-5 py-4">
-      <div className="text-[10px] uppercase tracking-[0.16em] font-semibold text-brand-ink/35">
-        {label}
+    <motion.div
+      initial={reduce ? false : { opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ ...SPRING_SUAVE, delay: reduce ? 0 : 0.05 + i * 0.04 }}
+      className={`min-w-0 rounded-[24px] p-4 sm:p-5 ${GLASS}`}
+    >
+      <div className="flex items-center gap-2.5">
+        <span
+          className={`shrink-0 w-8 h-8 rounded-xl flex items-center justify-center ${
+            accent ? 'bg-brand-ink text-brand-gold' : 'bg-[rgb(var(--acento)/0.12)] text-[rgb(var(--acento))]'
+          }`}
+        >
+          {icono}
+        </span>
+        <span className="text-[12px] text-brand-ink/55 truncate">{label}</span>
       </div>
       <div
-        className={`text-[2rem] leading-none font-serif mt-2.5 ${
-          accent ? 'text-brand-gold' : 'text-brand-ink'
+        className={`text-[22px] sm:text-[28px] font-semibold tracking-tight tabular-nums leading-none mt-4 truncate ${
+          accent ? 'text-cyan-700' : 'text-brand-ink'
         }`}
       >
-        {numeric !== undefined ? <Figure value={numeric} format={format} /> : value}
+        <Figure value={numeric} format={format} />
       </div>
-      <div className="text-[11px] text-brand-ink/40 mt-2">{sub}</div>
-    </div>
-  );
-}
-
-/** Fila de métricas separadas por línea vertical, no por tarjetas. */
-function StatRow({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-brand-ink/8 border-y border-brand-ink/10 bg-brand-paper rounded-2xl">
-      {children}
-    </div>
+      {barra !== undefined && (
+        <div className="mt-3 h-1 rounded-full bg-brand-ink/[0.07] overflow-hidden">
+          <motion.div
+            className="h-full rounded-full bg-gradient-to-r from-amber-400 to-rose-400"
+            initial={reduce ? false : { width: 0 }}
+            animate={{ width: `${Math.min(100, Math.max(0, barra))}%` }}
+            transition={{ ...SPRING_SUAVE, delay: reduce ? 0 : 0.2 }}
+          />
+        </div>
+      )}
+      <div className="text-[11.5px] text-brand-ink/45 mt-2 leading-snug">{sub}</div>
+    </motion.div>
   );
 }
 
