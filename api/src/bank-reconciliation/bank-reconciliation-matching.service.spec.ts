@@ -90,7 +90,7 @@ describe('BankReconciliationMatchingService', () => {
         aggregate: jest.fn(),
       },
       $queryRaw: jest.fn(),
-      $executeRaw: jest.fn().mockResolvedValue(undefined),
+      $executeRaw: jest.fn().mockResolvedValue(1),
     };
     prisma = {
       withOrg: jest.fn((_org: string, fn: (tx: unknown) => unknown) => fn(txMock)),
@@ -411,6 +411,13 @@ describe('BankReconciliationMatchingService', () => {
       await service.confirmMatch('tx-9', ORG_ID, 'user-1', 'inv-1');
 
       expect(Number(txMock.invoicePayment.create.mock.calls[0][0].data.amount)).toBe(1000);
+    });
+
+    it('si otra persona ya lo concilió (confirmación simultánea), no registra el pago dos veces', async () => {
+      txMock.$queryRaw.mockResolvedValueOnce([txRow({ matchedInvoiceId: 'inv-1' })]);
+      txMock.$executeRaw.mockResolvedValueOnce(0); // el UPDATE condicional no tomó la fila
+      await expect(service.confirmMatch('tx-9', ORG_ID, 'user-1')).rejects.toThrow('ya se concilió');
+      expect(txMock.invoicePayment.create).not.toHaveBeenCalled();
     });
 
     it('rechaza conciliar un cargo (retiro)', async () => {

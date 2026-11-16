@@ -22,6 +22,7 @@ import { COLLECTION_TEMPLATES, findTemplate } from '../whatsapp/collection-templ
 import { NotificationsService } from '../notifications/notifications.service';
 import { GOOD_PAYER_SCORE_THRESHOLD } from '../customers/scoring/customer-scoring.constants';
 import { CollectionSafetyService } from '../collection-safety/collection-safety.service';
+import { outstandingOf } from '../payment-ledger/payment-ledger';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateSequenceStepDto } from './dto/create-sequence-step.dto';
 import { UpdateSequenceStepDto } from './dto/update-sequence-step.dto';
@@ -910,7 +911,8 @@ export class CollectionSequencesService {
     });
     const locale = org?.locale ?? 'es-MX';
     const currency = org?.currency ?? 'MXN';
-    const amount = `${money(Number(invoice.total), locale)} ${currency}`;
+    // Saldo pendiente (total menos pagos parciales del libro), no el total.
+    const amount = `${money(outstandingOf(invoice), locale)} ${currency}`;
     const dueDateStr = invoice.dueDate.toLocaleDateString(locale);
     const customerName = invoice.customer.name;
     const isLastStep = !policy.sequenceSteps.some(
@@ -928,7 +930,7 @@ export class CollectionSequencesService {
         customerId: invoice.customer.id,
         customerName,
         daysOverdue,
-        amount: Number(invoice.total),
+        amount: outstandingOf(invoice),
         currency,
         step: nextStep,
         policy: {

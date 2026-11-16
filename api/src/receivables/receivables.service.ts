@@ -59,6 +59,7 @@ const serialize = (i: Invoice) => ({
   subtotal: Number(i.subtotal),
   iva: Number(i.iva),
   total: Number(i.total),
+  amountPaid: Number(i.amountPaid ?? 0),
 });
 
 /**
@@ -1066,7 +1067,8 @@ export class ReceivablesService {
     const locale = org?.locale ?? 'es-MX';
     const currency = org?.currency ?? 'MXN';
 
-    const total = money(Number(invoice.total), locale);
+    // Saldo pendiente (total menos pagos parciales del libro), no el total.
+    const total = money(outstandingOf(invoice), locale);
     const due = (invoice.dueDate ?? invoice.date).toLocaleDateString(locale);
     const folio = invoice.folio ?? invoice.cfdiUuid.slice(0, 8);
 

@@ -23,6 +23,7 @@ import {
 } from './collection-templates';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
+import { outstandingOf } from '../payment-ledger/payment-ledger';
 
 /** Ventana de servicio de Meta: texto libre solo 24h después del último mensaje del cliente. */
 export const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -45,7 +46,10 @@ type CustomerContact = Pick<
   Customer,
   'id' | 'organizationId' | 'name' | 'contact' | 'phone' | 'financeContactName' | 'financeContactPhone'
 >;
-type InvoiceLite = Pick<Invoice, 'id' | 'folio' | 'cfdiUuid' | 'total' | 'currency' | 'dueDate'>;
+type InvoiceLite = Pick<Invoice, 'id' | 'folio' | 'cfdiUuid' | 'total' | 'currency' | 'dueDate'> & {
+  // Pagos parciales del libro: el monto que se le pide al cliente es el saldo.
+  amountPaid?: Invoice['amountPaid'] | number | null;
+};
 
 /**
  * Conversación de WhatsApp con el cliente deudor (CxC). Es la pieza que une
@@ -281,6 +285,8 @@ export class WhatsappConversationService {
         id: i.id,
         folio: i.folio ?? i.cfdiUuid.slice(0, 8),
         total: Number(i.total),
+        // Saldo por cobrar (total menos pagos parciales registrados).
+        outstanding: outstandingOf(i),
         currency: i.currency,
         dueDate: i.dueDate,
         daysToDue: i.dueDate ? daysBetween(new Date(), i.dueDate) : null,
@@ -374,7 +380,7 @@ export class WhatsappConversationService {
             const d = i.dueDate ? daysBetween(new Date(), i.dueDate) : null;
             const cuando =
               d == null ? 'sin fecha' : d > 0 ? `vence en ${d} día(s)` : d === 0 ? 'vence hoy' : `venció hace ${-d} día(s)`;
-            return `- Factura ${i.folio ?? i.cfdiUuid.slice(0, 8)}: ${formatMoney(Number(i.total), i.currency)}, vencimiento ${formatDate(i.dueDate)} (${cuando})`;
+            return `- Factura ${i.folio ?? i.cfdiUuid.slice(0, 8)}: ${formatMoney(outstandingOf(i), i.currency)}, vencimiento ${formatDate(i.dueDate)} (${cuando})`;
           })
           .join('\n')
       : '- (sin facturas pendientes)';
@@ -639,7 +645,8 @@ ${hilo}
     return {
       contacto: customer.financeContactName ?? customer.contact ?? customer.name,
       folio: invoice.folio ?? invoice.cfdiUuid.slice(0, 8),
-      monto: formatMoney(Number(invoice.total), invoice.currency, locale),
+      // Saldo, no el total: si ya hubo un pago parcial no se pide de más.
+      monto: formatMoney(outstandingOf(invoice), invoice.currency, locale),
       fecha: formatDate(invoice.dueDate, locale),
       liga,
     };
@@ -664,7 +671,15 @@ ${hilo}
           deletedAt: null,
         },
         orderBy: [{ dueDate: 'asc' }],
-        select: { id: true, folio: true, cfdiUuid: true, total: true, currency: true, dueDate: true },
+        select: {
+          id: true,
+          folio: true,
+          cfdiUuid: true,
+          total: true,
+          amountPaid: true,
+          currency: true,
+          dueDate: true,
+        },
       }),
     );
   }

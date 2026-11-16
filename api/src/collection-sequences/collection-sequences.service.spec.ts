@@ -623,6 +623,17 @@ describe('CollectionSequencesService', () => {
   });
 
   describe('guardias de pago y modo sombra', () => {
+    it('con un pago parcial registrado, el mensaje pide el saldo y no el total', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      prisma.invoice.findUnique.mockResolvedValue({ ...baseInvoice, total: 1000, amountPaid: 400 });
+
+      await service.advanceSequence('inv-1');
+
+      const body = email.sendCollectionSequenceStep.mock.calls[0][2] as string;
+      expect(body).toContain('600.00');
+      expect(body).not.toContain('1,000.00');
+    });
+
     it('no envía si la guardia de pago lo bloquea y deja el motivo registrado', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
       safety.checkBeforeSend.mockResolvedValue({

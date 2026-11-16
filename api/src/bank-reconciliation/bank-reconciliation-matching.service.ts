@@ -311,6 +311,20 @@ export class BankReconciliationMatchingService {
     const settled: string[] = [];
     const partial: string[] = [];
     await this.prisma.withOrg(organizationId, async (tx) => {
+      // Primero se "toma" el depósito: si dos personas confirman a la vez,
+      // solo una lo logra y no se registra el pago dos veces.
+      const taken = await tx.$executeRaw`
+        UPDATE "BankTransaction"
+        SET "matchStatus" = 'MANUALLY_MATCHED'::"BankTransactionMatchStatus",
+            "matchedInvoiceId" = ${plan[0].invoiceId},
+            "matchedAt" = now(),
+            "matchedBy" = ${userId}
+        WHERE "id" = ${transactionId}
+          AND "matchStatus" <> 'MANUALLY_MATCHED'::"BankTransactionMatchStatus"
+      `;
+      if (Number(taken) === 0) {
+        throw new ConflictException('Este depósito ya se concilió.');
+      }
       let remaining = deposit;
       for (const step of plan) {
         const invoice = await tx.invoice.findFirst({
@@ -340,14 +354,6 @@ export class BankReconciliationMatchingService {
         remaining = Math.round((remaining - amount) * 100) / 100;
         (res.settled ? settled : partial).push(invoice.id);
       }
-      await tx.$executeRaw`
-        UPDATE "BankTransaction"
-        SET "matchStatus" = 'MANUALLY_MATCHED'::"BankTransactionMatchStatus",
-            "matchedInvoiceId" = ${plan[0].invoiceId},
-            "matchedAt" = now(),
-            "matchedBy" = ${userId}
-        WHERE "id" = ${transactionId}
-      `;
     });
 
     const invoiceIds = plan.map((p) => p.invoiceId);
