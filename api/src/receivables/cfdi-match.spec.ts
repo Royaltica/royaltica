@@ -83,7 +83,7 @@ describe('ReceivablesService · carga de CFDI con revisión', () => {
       withOrg: jest.fn((_org: string, fn: (tx: unknown) => unknown) => fn(prisma)),
     };
     const nada = {} as never;
-    service = new ReceivablesService(prisma as unknown as PrismaService, nada, nada, nada, nada, nada);
+    service = new ReceivablesService(prisma as unknown as PrismaService, nada, nada, nada, nada, nada, nada);
   });
 
   it('lee XML sueltos y dentro de ZIP, y clasifica el empate de cada uno', async () => {

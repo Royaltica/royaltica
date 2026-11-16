@@ -310,6 +310,16 @@ export class WhatsappWebhookService {
       });
     }
 
+    // "Ya pagué": pausa 72 h los envíos automáticos a este cliente (guardia
+    // payment-claimed de CollectionSafetyService). Se marca al cliente y no a
+    // una factura porque el mensaje no dice con certeza cuál pagó.
+    if (intent === 'PAYMENT_CLAIMED') {
+      await this.prisma.customer.update({
+        where: { id: customer.id },
+        data: { paymentClaimedAt: new Date() },
+      });
+    }
+
     // Aviso al director (in-app + WhatsApp opt-in). NO se marca la factura como
     // pagada: una afirmación del cliente no es prueba de pago.
     const title =

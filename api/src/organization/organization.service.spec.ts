@@ -89,3 +89,63 @@ describe('OrganizationService — onboarding de datos (Fase 5)', () => {
     });
   });
 });
+
+describe("OrganizationService — interruptor de emergencia de cobranza", () => {
+  const user = { id: "u-1", organizationId: "org-1" } as never;
+  let prisma: { organization: { update: jest.Mock; findUniqueOrThrow: jest.Mock } };
+  let activity: { record: jest.Mock };
+  let service: OrganizationService;
+
+  beforeEach(() => {
+    prisma = {
+      organization: {
+        update: jest.fn().mockResolvedValue({}),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({
+          collectionPausedAt: new Date("2026-11-16T10:00:00Z"),
+          collectionPausedReason: "pago masivo en revisión",
+          collectionPausedByUserId: "u-1",
+        }),
+      },
+    };
+    activity = { record: jest.fn().mockResolvedValue(undefined) };
+    service = new OrganizationService(
+      prisma as unknown as PrismaService,
+      {} as SettingsService,
+      activity as unknown as ActivityLogService,
+      { get: jest.fn() } as unknown as ConfigService<Env, true>,
+    );
+  });
+
+  it("pausar guarda fecha, motivo y quién, y lo deja en la bitácora", async () => {
+    const res = await service.pauseCollection(user, "  pago masivo en revisión ");
+    expect(prisma.organization.update).toHaveBeenCalledWith({
+      where: { id: "org-1" },
+      data: {
+        collectionPausedAt: expect.any(Date),
+        collectionPausedReason: "pago masivo en revisión",
+        collectionPausedByUserId: "u-1",
+      },
+    });
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "COLLECTION_PAUSED", organizationId: "org-1" }),
+    );
+    expect(res.paused).toBe(true);
+  });
+
+  it("reanudar limpia el interruptor y lo deja en la bitácora", async () => {
+    prisma.organization.findUniqueOrThrow.mockResolvedValue({
+      collectionPausedAt: null,
+      collectionPausedReason: null,
+      collectionPausedByUserId: null,
+    });
+    const res = await service.resumeCollection(user);
+    expect(prisma.organization.update).toHaveBeenCalledWith({
+      where: { id: "org-1" },
+      data: { collectionPausedAt: null, collectionPausedReason: null, collectionPausedByUserId: null },
+    });
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "COLLECTION_RESUMED" }),
+    );
+    expect(res.paused).toBe(false);
+  });
+});

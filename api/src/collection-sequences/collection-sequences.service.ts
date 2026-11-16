@@ -21,6 +21,7 @@ import { WhatsappConversationService } from '../whatsapp/whatsapp-conversation.s
 import { COLLECTION_TEMPLATES, findTemplate } from '../whatsapp/collection-templates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { GOOD_PAYER_SCORE_THRESHOLD } from '../customers/scoring/customer-scoring.constants';
+import { CollectionSafetyService } from '../collection-safety/collection-safety.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateSequenceStepDto } from './dto/create-sequence-step.dto';
 import { UpdateSequenceStepDto } from './dto/update-sequence-step.dto';
@@ -199,6 +200,7 @@ export class CollectionSequencesService {
     private readonly notifications: NotificationsService,
     private readonly aiDecision: CollectionSequencesAiDecisionService,
     private readonly conversations: WhatsappConversationService,
+    private readonly safety: CollectionSafetyService,
   ) {}
 
   // ── CRUD de pasos (anidado bajo una CollectionPolicy) ─────
@@ -620,45 +622,57 @@ export class CollectionSequencesService {
       where: {
         isActive: true,
         deletedAt: null,
+        // Interruptor de emergencia: una organización pausada no se evalúa.
+        collectionPausedAt: null,
         collectionPolicies: { some: { isActive: true, deletedAt: null } },
       },
       select: { id: true },
     });
 
     for (const org of orgs) {
-      // Planes por niveles (cobranza temprana): sus pasos tienen días
-      // NEGATIVOS (antes del vencimiento), así que también se evalúan las
-      // facturas que vencen dentro de ese horizonte. Sin pasos negativos el
-      // horizonte es 0 y se comporta exactamente como antes (solo vencidas).
-      const earliest = await this.prisma.collectionSequenceStep.aggregate({
-        where: {
-          deletedAt: null,
-          collectionPolicy: { organizationId: org.id, isActive: true, deletedAt: null },
-        },
-        _min: { daysAfterDue: true },
-      });
-      const horizonDays = Math.max(0, -(earliest._min.daysAfterDue ?? 0));
-      const invoices = await this.prisma.invoice.findMany({
-        where: {
-          organizationId: org.id,
-          direction: 'RECEIVABLE',
-          deletedAt: null,
-          status: InvoiceStatus.PENDING,
-          dueDate: { not: null, lt: new Date(Date.now() + horizonDays * 86_400_000) },
-        },
-        select: { id: true },
-      });
+      // Candado por organización: si otra réplica (o una corrida encimada)
+      // ya está procesando esta organización, no se procesa dos veces.
+      const ran = await this.safety.withOrganizationLock(org.id, async () => {
+        // Planes por niveles (cobranza temprana): sus pasos tienen días
+        // NEGATIVOS (antes del vencimiento), así que también se evalúan las
+        // facturas que vencen dentro de ese horizonte. Sin pasos negativos el
+        // horizonte es 0 y se comporta exactamente como antes (solo vencidas).
+        const earliest = await this.prisma.collectionSequenceStep.aggregate({
+          where: {
+            deletedAt: null,
+            collectionPolicy: { organizationId: org.id, isActive: true, deletedAt: null },
+          },
+          _min: { daysAfterDue: true },
+        });
+        const horizonDays = Math.max(0, -(earliest._min.daysAfterDue ?? 0));
+        const invoices = await this.prisma.invoice.findMany({
+          where: {
+            organizationId: org.id,
+            direction: 'RECEIVABLE',
+            deletedAt: null,
+            status: InvoiceStatus.PENDING,
+            dueDate: { not: null, lt: new Date(Date.now() + horizonDays * 86_400_000) },
+          },
+          select: { id: true },
+        });
 
-      for (const inv of invoices) {
-        evaluated += 1;
-        const result = await this.advanceSequence(inv.id);
-        if (result.outcome === 'sent' || result.outcome === 'manual-required') {
-          sent += 1;
-        } else if (result.outcome === 'escalated') {
-          escalated += 1;
-        } else {
-          skipped += 1;
+        for (const inv of invoices) {
+          evaluated += 1;
+          const result = await this.advanceSequence(inv.id);
+          if (result.outcome === 'sent' || result.outcome === 'manual-required') {
+            sent += 1;
+          } else if (result.outcome === 'escalated') {
+            escalated += 1;
+          } else {
+            skipped += 1;
+          }
         }
+        return true;
+      });
+      if (ran === null) {
+        this.logger.warn(
+          `collection-sequence-engine: organización ${org.id} omitida (candado ocupado o Redis no disponible).`,
+        );
       }
     }
 
@@ -788,7 +802,8 @@ export class CollectionSequencesService {
     }
     // Modo "con aprobación": el paso espera a que una persona lo apruebe y
     // lo envíe desde el expediente del cliente; el motor no manda nada solo.
-    if (policy.autoSend === false) {
+    // (En modo sombra se sigue evaluando para registrar lo que se enviaría.)
+    if (policy.autoSend === false && !policy.shadowMode) {
       return { outcome: 'skipped', reason: 'awaiting-approval', stepOrder: nextStep.stepOrder };
     }
 
@@ -800,6 +815,25 @@ export class CollectionSequencesService {
         reason: 'customer-do-not-contact',
       });
       return { outcome: 'skipped', reason: 'customer-do-not-contact' };
+    }
+
+    // Guardias de pago compartidas (interruptor de emergencia, "ya pagué",
+    // cobro recién revertido, depósito sin revisar, estado de cuenta viejo):
+    // si hay duda de que ya pagó, no se le escribe.
+    const verdict = await this.safety.checkBeforeSend({
+      organizationId: invoice.organizationId,
+      invoiceId,
+      customer: invoice.customer,
+      invoicePaymentClaimedAt: invoice.paymentClaimedAt,
+      paymentDataMaxAgeHours: policy.paymentDataMaxAgeHours,
+      now,
+    });
+    if (!verdict.ok) {
+      await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_STEP_SKIPPED', {
+        reason: verdict.reason,
+        ...(verdict.detail ?? {}),
+      });
+      return { outcome: 'skipped', reason: verdict.reason, stepOrder: nextStep.stepOrder };
     }
 
     // FR-05 (spec "Mejoras V1"): clientes "buenos pagadores" (score de
@@ -852,6 +886,21 @@ export class CollectionSequencesService {
         reason: 'max-contacts-per-week',
       });
       return { outcome: 'skipped', reason: 'max-contacts-per-week' };
+    }
+
+    // ── Modo sombra: se registra lo que se habría enviado y no se envía ──
+    // No avanza la secuencia ni consulta a la IA: mañana se vuelve a evaluar
+    // con los datos de ese día, igual que si estuviera encendido.
+    if (policy.shadowMode) {
+      await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_STEP_SHADOW', {
+        channel: nextStep.channel,
+        tone: nextStep.tone,
+        daysOverdue,
+        escalatesToHuman: nextStep.escalatesToHuman,
+        ...(nextStep.whatsappTemplateName ? { template: nextStep.whatsappTemplateName } : {}),
+        ...(superseded.length ? { wouldSupersede: superseded.map((s) => s.stepOrder) } : {}),
+      });
+      return { outcome: 'skipped', reason: 'shadow-mode', stepOrder: nextStep.stepOrder };
     }
 
     // ── Ejecuta el paso ──

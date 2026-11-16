@@ -15,6 +15,8 @@ import { WebhooksService } from '../webhooks/webhooks.service';
 import { WEBHOOK_EVENTS } from '../webhooks/webhook-events';
 import { CustomerPortalService } from '../customer-portal/customer-portal.service';
 import { SettingsService } from '../settings/settings.service';
+import { CollectionSafetyService } from '../collection-safety/collection-safety.service';
+import { applyPayment, outstandingOf, reverseInvoicePayments } from '../payment-ledger/payment-ledger';
 import { GOOD_PAYER_SCORE_THRESHOLD } from '../customers/scoring/customer-scoring.constants';
 import {
   buildPaginated,
@@ -78,6 +80,7 @@ export class ReceivablesService {
     private readonly webhooks: WebhooksService,
     private readonly customerPortal: CustomerPortalService,
     private readonly settings: SettingsService,
+    private readonly safety: CollectionSafetyService,
   ) {}
 
   async create(user: AuthenticatedUser, dto: CreateReceivableDto) {
@@ -323,19 +326,43 @@ export class ReceivablesService {
         );
       }
 
-      const data: Prisma.InvoiceUpdateInput = { status: target };
+      // Cobro manual: queda en el libro de pagos por el saldo pendiente
+      // (applyPayment escribe su propia línea de bitácora y marca PAID).
       if (target === InvoiceStatus.PAID) {
         const fecha = paidDate ? new Date(paidDate) : new Date();
+        if (Number.isNaN(fecha.getTime())) {
+          throw new BadRequestException('La fecha de pago no es válida.');
+        }
         if (fecha.getTime() > Date.now() + 86_400_000) {
           throw new BadRequestException('La fecha de pago no puede ser futura.');
         }
-        data.paidDate = fecha;
+        const saldo = outstandingOf(invoice);
+        if (saldo > 0) {
+          await applyPayment(tx, {
+            organizationId,
+            invoiceId: id,
+            amount: saldo,
+            paidAt: fecha,
+            source: 'MANUAL',
+            userId: user.id,
+            note: reason?.trim() || null,
+            settle: true,
+          });
+          return tx.invoice.findUniqueOrThrow({ where: { id } });
+        }
+      }
+
+      const data: Prisma.InvoiceUpdateInput = { status: target };
+      if (target === InvoiceStatus.PAID) {
+        data.paidDate = paidDate ? new Date(paidDate) : new Date();
       }
       if (invoice.status === InvoiceStatus.PAID && target === InvoiceStatus.PENDING) {
         if (!reason?.trim()) {
           throw new BadRequestException('Para revertir un cobro escribe el motivo.');
         }
         data.paidDate = null;
+        // Los pagos del libro quedan revertidos (no se borran: auditoría).
+        await reverseInvoicePayments(tx, id, user.id, reason.trim());
       }
 
       const updated = await tx.invoice.update({ where: { id }, data });
@@ -496,9 +523,13 @@ export class ReceivablesService {
           { lastReminderSentAt: null },
           { lastReminderSentAt: { lt: staleBefore } },
         ],
+        // Baja del cliente: aplica a TODOS los canales automáticos.
+        customer: { doNotContact: false },
         organization: {
           isActive: true,
           deletedAt: null,
+          // Interruptor de emergencia de cobranza.
+          collectionPausedAt: null,
           // Las organizaciones con el plan por niveles (pasos con plantilla de
           // Meta, ver CollectionSequencesService) ya cubren T-14 y T-3 con
           // sus propios niveles: este recordatorio de un solo paso las
@@ -515,11 +546,66 @@ export class ReceivablesService {
       include: { customer: true },
     });
 
+    // Política activa por organización (si tiene): modo sombra y guardia de
+    // frescura del estado de cuenta aplican también a este camino.
+    const policyByOrg = new Map<
+      string,
+      { shadowMode: boolean; paymentDataMaxAgeHours: number | null } | null
+    >();
+    const policyFor = async (organizationId: string) => {
+      if (!policyByOrg.has(organizationId)) {
+        const p = await this.prisma.collectionPolicy.findFirst({
+          where: { organizationId, isActive: true, deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+          select: { shadowMode: true, paymentDataMaxAgeHours: true },
+        });
+        policyByOrg.set(organizationId, p);
+      }
+      return policyByOrg.get(organizationId) ?? null;
+    };
+
     let sent = 0;
     for (const inv of invoices) {
       // Sin canal de contacto no hay a quién recordarle: se salta para no
       // "consumir" el recordatorio (marcar lastReminderSentAt) en vano.
       if (!inv.customer || !this.hasContactChannel(inv.customer)) continue;
+
+      const policy = await policyFor(inv.organizationId);
+      // Mismas guardias que el motor por niveles: si hay duda de que ya
+      // pagó, no se le escribe (y no se consume el recordatorio).
+      const verdict = await this.safety.checkBeforeSend({
+        organizationId: inv.organizationId,
+        invoiceId: inv.id,
+        customer: inv.customer,
+        invoicePaymentClaimedAt: inv.paymentClaimedAt,
+        paymentDataMaxAgeHours: policy?.paymentDataMaxAgeHours ?? null,
+        now,
+      });
+      if (!verdict.ok) {
+        await this.prisma.invoiceAuditLog.create({
+          data: {
+            invoiceId: inv.id,
+            action: 'REMINDER_SKIPPED',
+            metadata: {
+              stage,
+              reason: verdict.reason,
+              ...(verdict.detail ?? {}),
+            } as Prisma.InputJsonValue,
+          },
+        });
+        continue;
+      }
+      if (policy?.shadowMode) {
+        await this.prisma.invoiceAuditLog.create({
+          data: {
+            invoiceId: inv.id,
+            action: 'REMINDER_SHADOW',
+            metadata: { stage } as Prisma.InputJsonValue,
+          },
+        });
+        continue;
+      }
+
       const res = await this.dispatchReminder(inv, inv.customer, stage);
       if (res.emailSent || res.whatsappSent) sent += 1;
     }
@@ -555,7 +641,13 @@ export class ReceivablesService {
           { lastServiceMessageAt: null },
           { lastServiceMessageAt: { lt: staleBefore } },
         ],
-        organization: { isActive: true, deletedAt: null },
+        organization: {
+          isActive: true,
+          deletedAt: null,
+          // Interruptor de emergencia y modo sombra: tampoco sale este mensaje.
+          collectionPausedAt: null,
+          collectionPolicies: { none: { isActive: true, deletedAt: null, shadowMode: true } },
+        },
       },
     });
 

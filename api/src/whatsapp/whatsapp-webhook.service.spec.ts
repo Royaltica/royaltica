@@ -47,7 +47,7 @@ const metaPayload = (from: string, body: string) => ({
 
 describe('WhatsappWebhookService', () => {
   let prisma: {
-    customer: { findMany: jest.Mock };
+    customer: { findMany: jest.Mock; update: jest.Mock };
     invoice: { findFirst: jest.Mock };
     invoiceAuditLog: { create: jest.Mock };
   };
@@ -58,7 +58,7 @@ describe('WhatsappWebhookService', () => {
 
   const build = (env: Record<string, string> = {}) => {
     prisma = {
-      customer: { findMany: jest.fn().mockResolvedValue([]) },
+      customer: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
       invoice: { findFirst: jest.fn().mockResolvedValue(null) },
       invoiceAuditLog: { create: jest.fn().mockResolvedValue({}) },
     };
@@ -166,6 +166,11 @@ describe('WhatsappWebhookService', () => {
         expect.objectContaining({ type: 'RECEIVABLE_PAYMENT_CLAIMED' }),
       );
       expect(whatsapp.notifyOrgAdmins).toHaveBeenCalled();
+      // Pausa los envíos automáticos a ese cliente (guardia payment-claimed).
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: 'c-1' },
+        data: { paymentClaimedAt: expect.any(Date) },
+      });
     });
 
     it('ignora mensajes de teléfonos sin cliente asociado', async () => {

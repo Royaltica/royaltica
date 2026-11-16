@@ -406,3 +406,15 @@ describe('JobsService — onboardingDataCompletion (Fase 5)', () => {
     expect(organization.organizationsPendingOnboardingData).not.toHaveBeenCalled();
   });
 });
+
+describe('JobsService — zona horaria de los crons que escriben a deudores', () => {
+  it.each(['receivableReminders', 'customerServiceMessage', 'collectionSequenceEngine'])(
+    '%s corre en hora de la Ciudad de México',
+    (method) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fn = (JobsService.prototype as any)[method];
+      const options = Reflect.getMetadata('SCHEDULE_CRON_OPTIONS', fn);
+      expect(options).toMatchObject({ timeZone: 'America/Mexico_City' });
+    },
+  );
+});

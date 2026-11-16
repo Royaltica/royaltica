@@ -29,7 +29,7 @@ const payload = (from: string, text: string, subject = 'Re: Recordatorio de pago
 
 describe('EmailInboundService', () => {
   let prisma: {
-    customer: { findFirst: jest.Mock };
+    customer: { findFirst: jest.Mock; update: jest.Mock };
     invoice: { findFirst: jest.Mock; update: jest.Mock };
     invoiceAuditLog: { create: jest.Mock };
     user: { findMany: jest.Mock };
@@ -39,7 +39,7 @@ describe('EmailInboundService', () => {
 
   const build = (env: Record<string, string> = {}) => {
     prisma = {
-      customer: { findFirst: jest.fn().mockResolvedValue(CUSTOMER) },
+      customer: { findFirst: jest.fn().mockResolvedValue(CUSTOMER), update: jest.fn().mockResolvedValue({}) },
       invoice: {
         findFirst: jest.fn().mockResolvedValue(INVOICE),
         update: jest.fn().mockResolvedValue({}),
@@ -125,6 +125,11 @@ describe('EmailInboundService', () => {
       // La garantía central: jamás se toca el estado financiero.
       expect(prisma.invoice.update).not.toHaveBeenCalled();
       expect(notifications.createMany).toHaveBeenCalled();
+      // Pausa los envíos automáticos a ese cliente (guardia payment-claimed).
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: CUSTOMER.id },
+        data: { paymentClaimedAt: expect.any(Date) },
+      });
     });
 
     it('clasifica como respuesta normal cuando el cliente niega el pago', async () => {

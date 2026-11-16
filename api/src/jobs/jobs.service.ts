@@ -35,6 +35,15 @@ import {
 export const COLLECTION_ENGINE_JOB_RUN_ACTION = 'JOB_RUN_COLLECTION_ENGINE';
 
 /**
+ * Zona horaria de los crons que le escriben a deudores. Sin ella, `@Cron`
+ * usa la hora del contenedor (normalmente UTC), y "10:00" serían las 04:00 en
+ * la Ciudad de México: el recordatorio saldría de madrugada y el motor por
+ * niveles quedaría fuera de su ventana de contacto. La ventana por política
+ * (CollectionPolicy.timezone) se sigue validando aparte dentro del motor.
+ */
+export const COLLECTION_CRON_TIMEZONE = 'America/Mexico_City';
+
+/**
  * Acción de bitácora para cada snapshot periódico de salud del sistema
  * (latencia de DB/Redis). Antes el panel SUPERADMIN solo medía esto al
  * cargar la página (snapshot único, sin histórico) — esto guarda una
@@ -353,7 +362,10 @@ export class JobsService {
   }
 
   // ── Agente de cobranza: recordatorios de cobro al cliente (CxC) ──
-  @Cron(CronExpression.EVERY_DAY_AT_10AM, { name: 'receivable-reminder' })
+  @Cron(CronExpression.EVERY_DAY_AT_10AM, {
+    name: 'receivable-reminder',
+    timeZone: COLLECTION_CRON_TIMEZONE,
+  })
   async receivableReminders(): Promise<{ sent: number }> {
     if (!this.enabled) return { sent: 0 };
     // T-14 (preventivo) y T-3 (urgente, con liga de pago + datos bancarios)
@@ -370,7 +382,10 @@ export class JobsService {
   // Corre diario (barato: la mayoría de los días no encuentra a nadie que
   // cruce el umbral de 182 días) para no depender de un cron mensual que
   // podría desfasarse del aniversario exacto de cada cliente.
-  @Cron(CronExpression.EVERY_DAY_AT_11AM, { name: 'customer-service-message' })
+  @Cron(CronExpression.EVERY_DAY_AT_11AM, {
+    name: 'customer-service-message',
+    timeZone: COLLECTION_CRON_TIMEZONE,
+  })
   async customerServiceMessage(): Promise<{ sent: number }> {
     if (!this.enabled) return { sent: 0 };
     return this.receivables.runServiceMessageScan();
@@ -381,7 +396,10 @@ export class JobsService {
   // CollectionSequenceRun activa/por iniciar según la CollectionPolicy de
   // cada organización (guard rails de ventana horaria, tope semanal,
   // blackout dates, días de gracia). Ver CollectionSequencesService.
-  @Cron(CronExpression.EVERY_DAY_AT_11AM, { name: 'collection-sequence-engine' })
+  @Cron(CronExpression.EVERY_DAY_AT_11AM, {
+    name: 'collection-sequence-engine',
+    timeZone: COLLECTION_CRON_TIMEZONE,
+  })
   async collectionSequenceEngine(): Promise<{
     evaluated: number;
     sent: number;

@@ -280,6 +280,12 @@ export class CustomerPortalService {
 
     await this.touchLastAccessed(access);
 
+    // "Ya pagué" sobre esta factura: pausa 72 h los envíos automáticos
+    // (guardia payment-claimed). Un reintento renueva la pausa.
+    await this.prisma.withOrg(access.organizationId, (tx) =>
+      tx.invoice.update({ where: { id: invoiceId }, data: { paymentClaimedAt: new Date() } }),
+    );
+
     if (existing) {
       // Ya se había reclamado antes: se audita el reintento (trazabilidad),
       // pero no se vuelve a notificar a los admins para no saturarlos de

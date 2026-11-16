@@ -294,6 +294,69 @@ export class OrganizationService {
     } as const;
   }
 
+  // ── Interruptor de emergencia de cobranza ──
+
+  /** Estado del interruptor: si está pausada, cuándo, por qué y quién. */
+  async getCollectionStatus(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const org = await this.prisma.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: {
+        collectionPausedAt: true,
+        collectionPausedReason: true,
+        collectionPausedByUserId: true,
+      },
+    });
+    return { paused: Boolean(org.collectionPausedAt), ...org };
+  }
+
+  /**
+   * Detiene TODOS los envíos automáticos a deudores de la organización
+   * (motor por niveles, recordatorio de un paso, mensaje de mantenimiento)
+   * hasta que alguien lo reanude. Efecto inmediato en la siguiente corrida.
+   */
+  async pauseCollection(user: AuthenticatedUser, reason?: string) {
+    const organizationId = this.requireOrg(user);
+    const cleanReason = reason?.trim() || null;
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: {
+        collectionPausedAt: new Date(),
+        collectionPausedReason: cleanReason,
+        collectionPausedByUserId: user.id,
+      },
+    });
+    await this.activity.record({
+      organizationId,
+      userId: user.id,
+      action: 'COLLECTION_PAUSED',
+      entityType: 'Organization',
+      entityId: organizationId,
+      metadata: { reason: cleanReason },
+    });
+    return this.getCollectionStatus(user);
+  }
+
+  async resumeCollection(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: {
+        collectionPausedAt: null,
+        collectionPausedReason: null,
+        collectionPausedByUserId: null,
+      },
+    });
+    await this.activity.record({
+      organizationId,
+      userId: user.id,
+      action: 'COLLECTION_RESUMED',
+      entityType: 'Organization',
+      entityId: organizationId,
+    });
+    return this.getCollectionStatus(user);
+  }
+
   /** Columnas propias de Organization que se anexan a la config efectiva. */
   private async orgColumns(organizationId: string) {
     return this.prisma.organization.findUniqueOrThrow({
