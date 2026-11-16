@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { WhatsappService } from './whatsapp.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -45,6 +45,55 @@ const PAYMENT_HINTS = [
 /** Negaciones que invalidan una aparente afirmación de pago. */
 const NEGATIONS = ['no ', 'aun no', 'todavia no', 'no he', 'no puedo', 'cuando'];
 
+/**
+ * Pedidos de baja. Se exige que el mensaje SEA el pedido (o empiece con él y
+ * sea corto) para no confundir "dar de baja la factura" o "bajamos el precio"
+ * con una baja de contacto.
+ */
+const OPT_OUT_PHRASES = [
+  'baja',
+  'stop',
+  'alto',
+  'unsubscribe',
+  'cancelar',
+  'darme de baja',
+  'dame de baja',
+  'denme de baja',
+  'no me escriban',
+  'no me escriba',
+  'no me escriban mas',
+  'no quiero mensajes',
+  'no quiero recibir mensajes',
+  'no quiero recibir mas mensajes',
+];
+
+/** Normaliza para comparar frases: minúsculas, sin acentos ni puntuación. */
+const normalizePhrase = (text: string) =>
+  text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+/** true si el mensaje es un pedido de baja (BAJA, STOP, "no me escriban"…). */
+export function isOptOutRequest(text: string): boolean {
+  const n = normalizePhrase(text);
+  if (!n) return false;
+  return OPT_OUT_PHRASES.some((p) => n === p || (n.startsWith(`${p} `) && n.length <= p.length + 25));
+}
+
+/** Orden de los estados de entrega de Meta (no se retrocede: leído > entregado). */
+const DELIVERY_RANK: Record<string, number> = { sent: 1, delivered: 2, read: 3, failed: 4 };
+
+interface DeliveryStatus {
+  waMessageId: string;
+  status: string;
+  timestamp: Date;
+  error: string | null;
+}
+
 interface IncomingMessage {
   from: string;
   text: string;
@@ -54,6 +103,15 @@ interface IncomingMessage {
   kind: 'TEXT' | 'BUTTON' | 'MEDIA';
   /** Número de Meta que recibió el mensaje (para contestar por el mismo). */
   phoneNumberId: string | null;
+  /** wamid del mensaje NUESTRO al que responde (Meta lo manda al responder o tocar un botón). */
+  contextId: string | null;
+}
+
+interface ResolvedSender {
+  customer: { id: string; name: string; organizationId: string };
+  /** Factura exacta si el mensaje responde a uno nuestro que la tenía. */
+  invoiceId: string | null;
+  how: 'context' | 'phone' | 'recent-outbound';
 }
 
 /**
@@ -135,7 +193,8 @@ export class WhatsappWebhookService {
    * cambia el estado financiero). Nunca lanza: un webhook debe responder 200
    * aunque un mensaje suelto falle, para que Meta no lo reintente en bucle.
    */
-  async handleIncoming(payload: unknown): Promise<{ processed: number }> {
+  async handleIncoming(payload: unknown): Promise<{ processed: number; statuses: number }> {
+    const statuses = await this.applyDeliveryStatuses(this.extractStatuses(payload));
     const messages = this.extractMessages(payload);
     let processed = 0;
     for (const msg of messages) {
@@ -150,7 +209,7 @@ export class WhatsappWebhookService {
         );
       }
     }
-    return { processed };
+    return { processed, statuses };
   }
 
   // ── helpers ───────────────────────────────────────────────
@@ -181,6 +240,7 @@ export class WhatsappWebhookService {
               };
               image?: { caption?: string };
               document?: { caption?: string; filename?: string };
+              context?: { id?: string };
             }[];
           };
         }[];
@@ -219,6 +279,7 @@ export class WhatsappWebhookService {
             profileName,
             kind,
             phoneNumberId,
+            contextId: m.context?.id ?? null,
           });
         }
       }
@@ -240,24 +301,24 @@ export class WhatsappWebhookService {
   }
 
   private async processMessage(msg: IncomingMessage): Promise<void> {
-    const customer = await this.findCustomerByPhone(msg.from);
-    if (!customer) {
-      this.logger.debug(
-        `Mensaje entrante de ${msg.from} sin cliente asociado; se ignora.`,
-      );
-      return;
-    }
+    const resolved = await this.resolveSender(msg);
+    if (!resolved) return; // quedó en la bandeja sin dueño (o se ignoró)
+    const { customer } = resolved;
 
-    // Factura de venta pendiente más vencida (a la que se refiere el cobro).
-    // Si no hay pendiente, se toma la más reciente para dar contexto al aviso.
-    const invoice = await this.prisma.invoice.findFirst({
-      where: {
-        customerId: customer.id,
-        direction: 'RECEIVABLE',
-        deletedAt: null,
-      },
-      orderBy: [{ status: 'asc' }, { dueDate: 'asc' }],
-    });
+    // Si responde a un mensaje nuestro de una factura, es ESA factura. Si no,
+    // la pendiente más vencida (o la más reciente, para dar contexto).
+    const invoice = resolved.invoiceId
+      ? await this.prisma.invoice.findFirst({
+          where: { id: resolved.invoiceId, customerId: customer.id, deletedAt: null },
+        })
+      : await this.prisma.invoice.findFirst({
+          where: {
+            customerId: customer.id,
+            direction: 'RECEIVABLE',
+            deletedAt: null,
+          },
+          orderBy: [{ status: 'asc' }, { dueDate: 'asc' }],
+        });
 
     // Hilo de la conversación: esto es lo que abre la ventana de 24h para
     // contestar con texto libre. Si Meta reintenta el webhook (mismo wamid),
@@ -273,6 +334,41 @@ export class WhatsappWebhookService {
     });
     if (!recorded && msg.waMessageId) {
       this.logger.debug(`Mensaje ${msg.waMessageId} ya registrado (reintento de Meta); se ignora.`);
+      return;
+    }
+
+    // Baja: el cliente pide que no le escriban. Aplica a TODOS los canales
+    // automáticos (doNotContact) hasta que una persona lo reactive.
+    if (msg.kind !== 'MEDIA' && isOptOutRequest(msg.text)) {
+      await this.prisma.customer.update({
+        where: { id: customer.id },
+        data: {
+          doNotContact: true,
+          doNotContactAt: new Date(),
+          doNotContactReason: `Pidió la baja por WhatsApp: "${msg.text.slice(0, 120)}"`,
+        },
+      });
+      if (invoice) {
+        await this.prisma.invoiceAuditLog.create({
+          data: {
+            invoiceId: invoice.id,
+            action: 'CUSTOMER_OPT_OUT',
+            metadata: {
+              channel: 'whatsapp',
+              from: msg.from,
+              waMessageId: msg.waMessageId,
+              text: msg.text.slice(0, 500),
+            } as Prisma.InputJsonValue,
+          },
+        });
+      }
+      await this.notifications.notifyOrgAdmins(customer.organizationId, {
+        type: 'CUSTOMER_OPT_OUT',
+        title: 'Un cliente pidió no recibir más mensajes',
+        body: `${customer.name} pidió la baja por WhatsApp ("${msg.text.slice(0, 120)}"). Ya no se le enviarán recordatorios automáticos por ningún canal; si fue un error, reactívalo en su ficha.`,
+        metadata: { customerId: customer.id, invoiceId: invoice?.id ?? null },
+      });
+      this.logger.log(`Baja de contacto por WhatsApp: ${customer.name}.`);
       return;
     }
 
@@ -314,10 +410,18 @@ export class WhatsappWebhookService {
     // payment-claimed de CollectionSafetyService). Se marca al cliente y no a
     // una factura porque el mensaje no dice con certeza cuál pagó.
     if (intent === 'PAYMENT_CLAIMED') {
-      await this.prisma.customer.update({
-        where: { id: customer.id },
-        data: { paymentClaimedAt: new Date() },
-      });
+      if (resolved.how === 'context' && invoice) {
+        // Respondió al mensaje de una factura concreta: se pausa esa.
+        await this.prisma.invoice.update({
+          where: { id: invoice.id },
+          data: { paymentClaimedAt: new Date() },
+        });
+      } else {
+        await this.prisma.customer.update({
+          where: { id: customer.id },
+          data: { paymentClaimedAt: new Date() },
+        });
+      }
     }
 
     // Aviso al director (in-app + WhatsApp opt-in). NO se marca la factura como
@@ -360,20 +464,116 @@ export class WhatsappWebhookService {
   }
 
   /**
-   * Empata el teléfono entrante (solo dígitos, formato de Meta) con un cliente.
-   * Consulta cruzando organizaciones (el webhook no tiene contexto de org, igual
-   * que el escaneo del agente de cobranza). Compara por los últimos 10 dígitos
-   * (número nacional MX) para tolerar prefijos +52 / 521 / 52.
+   * ¿De qué cliente es este mensaje? En orden, sin adivinar:
+   *  1. Responde a un mensaje nuestro (context.id = wamid saliente): exacto.
+   *  2. Un solo cliente con ese teléfono (últimos 10 dígitos, incluye el de
+   *     Finanzas/Tesorería).
+   *  3. Varios: el último al que le escribimos desde el MISMO número de Meta
+   *     en los últimos 30 días, si es uno solo.
+   *  4. Si sigue sin quedar claro, va a la bandeja sin dueño
+   *     (WhatsappInboundUnmatched) y NO se le atribuye a nadie.
+   * Antes se tomaba el primer cliente que coincidiera, aunque fuera de otra
+   * organización.
    */
-  private async findCustomerByPhone(from: string): Promise<{
-    id: string;
-    name: string;
-    organizationId: string;
-  } | null> {
+  private async resolveSender(msg: IncomingMessage): Promise<ResolvedSender | null> {
+    if (msg.contextId) {
+      const original = await this.prisma.whatsappMessage.findFirst({
+        where: { waMessageId: msg.contextId, direction: 'OUTBOUND' },
+        select: {
+          invoiceId: true,
+          customer: { select: { id: true, name: true, organizationId: true, deletedAt: true } },
+        },
+      });
+      if (original?.customer && !original.customer.deletedAt) {
+        const { id, name, organizationId } = original.customer;
+        return { customer: { id, name, organizationId }, invoiceId: original.invoiceId, how: 'context' };
+      }
+    }
+
+    const candidates = await this.findCustomersByPhone(msg.from);
+    if (candidates.length === 1) {
+      return { customer: candidates[0], invoiceId: null, how: 'phone' };
+    }
+
+    if (candidates.length > 1 && msg.phoneNumberId) {
+      const recent = await this.prisma.whatsappMessage.findMany({
+        where: {
+          direction: 'OUTBOUND',
+          phoneNumberId: msg.phoneNumberId,
+          customerId: { in: candidates.map((c) => c.id) },
+          createdAt: { gte: new Date(Date.now() - 30 * 86_400_000) },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { customerId: true },
+        take: 20,
+      });
+      const recentIds = [...new Set(recent.map((r) => r.customerId))];
+      if (recentIds.length === 1) {
+        const c = candidates.find((x) => x.id === recentIds[0])!;
+        return { customer: c, invoiceId: null, how: 'recent-outbound' };
+      }
+    }
+
+    await this.recordUnmatched(msg, candidates);
+    return null;
+  }
+
+  /** Guarda un mensaje que no se pudo atribuir con certeza (idempotente por wamid). */
+  private async recordUnmatched(
+    msg: IncomingMessage,
+    candidates: { id: string; name: string; organizationId: string }[],
+  ): Promise<void> {
+    const orgs = [...new Set(candidates.map((c) => c.organizationId))];
+    const organizationId = orgs.length === 1 ? orgs[0] : null;
+    try {
+      await this.prisma.whatsappInboundUnmatched.create({
+        data: {
+          organizationId,
+          fromPhone: msg.from,
+          phoneNumberId: msg.phoneNumberId,
+          waMessageId: msg.waMessageId || null,
+          kind: msg.kind,
+          body: msg.text.slice(0, 2000),
+          candidates: candidates.map((c) => ({
+            organizationId: c.organizationId,
+            customerId: c.id,
+            name: c.name,
+          })) as Prisma.InputJsonValue,
+        },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return;
+      throw err;
+    }
+    if (candidates.length === 0) {
+      this.logger.debug(`Mensaje entrante de ${msg.from} sin cliente asociado; queda en la bandeja sin dueño.`);
+      return;
+    }
+    this.logger.warn(
+      `Mensaje entrante de ${msg.from} coincide con ${candidates.length} clientes; queda en la bandeja sin dueño.`,
+    );
+    if (organizationId) {
+      await this.notifications.notifyOrgAdmins(organizationId, {
+        type: 'WHATSAPP_INBOUND_UNMATCHED',
+        title: 'Mensaje de WhatsApp sin cliente claro',
+        body: `Llegó un mensaje de un teléfono que tienen ${candidates.length} clientes (${candidates
+          .map((c) => c.name)
+          .join(', ')}). Revísalo y asígnalo al correcto.`,
+        metadata: { candidates: candidates.map((c) => c.id) },
+      });
+    }
+  }
+
+  /**
+   * Clientes con ese teléfono (últimos 10 dígitos, tolera +52 / 521 / 52).
+   * Consulta cruzando organizaciones: el webhook no tiene contexto de org.
+   * Incluye el teléfono de Finanzas/Tesorería (FR-02).
+   */
+  private async findCustomersByPhone(
+    from: string,
+  ): Promise<{ id: string; name: string; organizationId: string }[]> {
     const target = from.replace(/\D/g, '').slice(-10);
-    if (target.length < 10) return null;
-    // Incluye el teléfono de Finanzas/Tesorería (FR-02): los recordatorios
-    // salen a ese número cuando existe, así que la respuesta llega de ahí.
+    if (target.length < 10) return [];
     const candidates = await this.prisma.customer.findMany({
       where: {
         deletedAt: null,
@@ -388,10 +588,76 @@ export class WhatsappWebhookService {
       },
     });
     const last10 = (p: string | null) => (p ? p.replace(/\D/g, '').slice(-10) : null);
-    const match = candidates.find(
-      (c) => last10(c.financeContactPhone) === target || last10(c.phone) === target,
-    );
-    if (!match) return null;
-    return { id: match.id, name: match.name, organizationId: match.organizationId };
+    return candidates
+      .filter((c) => last10(c.financeContactPhone) === target || last10(c.phone) === target)
+      .map(({ id, name, organizationId }) => ({ id, name, organizationId }));
+  }
+
+  /** Estados de entrega de los mensajes que enviamos (sent/delivered/read/failed). */
+  private extractStatuses(payload: unknown): DeliveryStatus[] {
+    const out: DeliveryStatus[] = [];
+    const root = payload as {
+      entry?: {
+        changes?: {
+          value?: {
+            statuses?: {
+              id?: string;
+              status?: string;
+              timestamp?: string;
+              errors?: { code?: number; title?: string; message?: string }[];
+            }[];
+          };
+        }[];
+      }[];
+    };
+    for (const entry of root?.entry ?? []) {
+      for (const change of entry.changes ?? []) {
+        for (const st of change.value?.statuses ?? []) {
+          if (!st.id || !st.status || !(st.status in DELIVERY_RANK)) continue;
+          const seconds = Number(st.timestamp);
+          const err = st.errors?.[0];
+          out.push({
+            waMessageId: st.id,
+            status: st.status,
+            timestamp: Number.isFinite(seconds) ? new Date(seconds * 1000) : new Date(),
+            error: err ? `${err.code ?? ''} ${err.title ?? err.message ?? ''}`.trim() : null,
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Guarda el estado de entrega sin retroceder (un "delivered" tardío no pisa un "read"). */
+  private async applyDeliveryStatuses(statuses: DeliveryStatus[]): Promise<number> {
+    let applied = 0;
+    for (const st of statuses) {
+      try {
+        const current = await this.prisma.whatsappMessage.findUnique({
+          where: { waMessageId: st.waMessageId },
+          select: { id: true, deliveryStatus: true },
+        });
+        if (!current) continue;
+        const before = DELIVERY_RANK[current.deliveryStatus ?? ''] ?? 0;
+        if (DELIVERY_RANK[st.status] <= before) continue;
+        await this.prisma.whatsappMessage.update({
+          where: { id: current.id },
+          data: {
+            deliveryStatus: st.status,
+            deliveryStatusAt: st.timestamp,
+            deliveryError: st.status === 'failed' ? st.error : null,
+            ...(st.status === 'failed' ? { sent: false } : {}),
+          },
+        });
+        applied += 1;
+      } catch (err) {
+        this.logger.warn(
+          `No se pudo guardar el estado ${st.status} de ${st.waMessageId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+    return applied;
   }
 }

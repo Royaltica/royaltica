@@ -1,6 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { createHmac } from 'node:crypto';
-import { WhatsappWebhookService } from './whatsapp-webhook.service';
+import { WhatsappWebhookService, isOptOutRequest } from './whatsapp-webhook.service';
 import type { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { WhatsappService } from './whatsapp.service';
@@ -48,8 +48,10 @@ const metaPayload = (from: string, body: string) => ({
 describe('WhatsappWebhookService', () => {
   let prisma: {
     customer: { findMany: jest.Mock; update: jest.Mock };
-    invoice: { findFirst: jest.Mock };
+    invoice: { findFirst: jest.Mock; update: jest.Mock };
     invoiceAuditLog: { create: jest.Mock };
+    whatsappMessage: { findFirst: jest.Mock; findMany: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
+    whatsappInboundUnmatched: { create: jest.Mock };
   };
   let whatsapp: { notifyOrgAdmins: jest.Mock };
   let notifications: { notifyOrgAdmins: jest.Mock };
@@ -59,8 +61,15 @@ describe('WhatsappWebhookService', () => {
   const build = (env: Record<string, string> = {}) => {
     prisma = {
       customer: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn().mockResolvedValue({}) },
-      invoice: { findFirst: jest.fn().mockResolvedValue(null) },
+      invoice: { findFirst: jest.fn().mockResolvedValue(null), update: jest.fn().mockResolvedValue({}) },
       invoiceAuditLog: { create: jest.fn().mockResolvedValue({}) },
+      whatsappMessage: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+        findUnique: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      whatsappInboundUnmatched: { create: jest.fn().mockResolvedValue({}) },
     };
     whatsapp = { notifyOrgAdmins: jest.fn().mockResolvedValue({ recipients: 1, sent: 0 }) };
     notifications = { notifyOrgAdmins: jest.fn().mockResolvedValue(1) };
@@ -240,4 +249,183 @@ describe('WhatsappWebhookService', () => {
       );
     });
   });
+
+  describe('empate exacto, bandeja sin dueño, bajas y estados de entrega', () => {
+    const textWithContext = (from: string, body: string, contextId: string, id = 'wamid.R1') => ({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                metadata: { phone_number_id: 'PN-1' },
+                messages: [{ from, id, type: 'text', text: { body }, context: { id: contextId } }],
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    it('si responde a un mensaje nuestro, el cliente y la factura salen de ese mensaje (aunque el teléfono se repita)', async () => {
+      const svc = build();
+      prisma.whatsappMessage.findFirst.mockResolvedValue({
+        invoiceId: 'inv-7',
+        customer: { id: 'c-7', name: 'Cliente Siete', organizationId: 'org-2', deletedAt: null },
+      });
+      prisma.invoice.findFirst.mockResolvedValue({ id: 'inv-7', folio: 'F-7', cfdiUuid: 'u', total: 100 });
+
+      await svc.handleIncoming(textWithContext('5215512345678', 'Ya pagué', 'wamid.OUT-7'));
+
+      expect(prisma.whatsappMessage.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { waMessageId: 'wamid.OUT-7', direction: 'OUTBOUND' } }),
+      );
+      expect(prisma.customer.findMany).not.toHaveBeenCalled();
+      expect(conversations.recordInbound).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: 'c-7', organizationId: 'org-2', invoiceId: 'inv-7' }),
+      );
+      // "Ya pagué" con factura exacta: se pausa ESA factura, no todo el cliente.
+      expect(prisma.invoice.update).toHaveBeenCalledWith({
+        where: { id: 'inv-7' },
+        data: { paymentClaimedAt: expect.any(Date) },
+      });
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+    });
+
+    it('teléfono repetido en dos organizaciones y sin contexto: no adivina, va a la bandeja sin dueño', async () => {
+      const svc = build();
+      prisma.customer.findMany.mockResolvedValue([
+        { id: 'c-1', name: 'ACME', organizationId: 'org-1', phone: '+5215512345678', financeContactPhone: null },
+        { id: 'c-2', name: 'BETA', organizationId: 'org-2', phone: '5512345678', financeContactPhone: null },
+      ]);
+
+      await svc.handleIncoming(metaPayload('5215512345678', 'Ya pagué'));
+
+      expect(prisma.whatsappInboundUnmatched.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          organizationId: null,
+          fromPhone: '5215512345678',
+          candidates: [
+            { organizationId: 'org-1', customerId: 'c-1', name: 'ACME' },
+            { organizationId: 'org-2', customerId: 'c-2', name: 'BETA' },
+          ],
+        }),
+      });
+      expect(conversations.recordInbound).not.toHaveBeenCalled();
+      expect(prisma.customer.update).not.toHaveBeenCalled();
+      // Sin organización clara no se avisa a los administradores de nadie.
+      expect(notifications.notifyOrgAdmins).not.toHaveBeenCalled();
+    });
+
+    it('teléfono repetido: si solo a uno le escribimos desde ese número de Meta, es ese', async () => {
+      const svc = build();
+      prisma.customer.findMany.mockResolvedValue([
+        { id: 'c-1', name: 'ACME', organizationId: 'org-1', phone: '+5215512345678', financeContactPhone: null },
+        { id: 'c-2', name: 'BETA', organizationId: 'org-1', phone: '5512345678', financeContactPhone: null },
+      ]);
+      prisma.whatsappMessage.findMany.mockResolvedValue([{ customerId: 'c-2' }, { customerId: 'c-2' }]);
+
+      await svc.handleIncoming(buttonPayload('5215512345678', 'Todo en orden'));
+
+      expect(conversations.recordInbound).toHaveBeenCalledWith(
+        expect.objectContaining({ customerId: 'c-2' }),
+      );
+      expect(prisma.whatsappInboundUnmatched.create).not.toHaveBeenCalled();
+    });
+
+    it('BAJA apaga todos los canales automáticos del cliente y avisa a los administradores', async () => {
+      const svc = build();
+      prisma.customer.findMany.mockResolvedValue([
+        { id: 'c-1', name: 'ACME', organizationId: 'org-1', phone: '+5215512345678', financeContactPhone: null },
+      ]);
+      prisma.invoice.findFirst.mockResolvedValue({ id: 'inv-1', folio: 'F-1', cfdiUuid: 'u', total: 1 });
+
+      await svc.handleIncoming(metaPayload('5215512345678', 'BAJA'));
+
+      expect(prisma.customer.update).toHaveBeenCalledWith({
+        where: { id: 'c-1' },
+        data: expect.objectContaining({ doNotContact: true, doNotContactAt: expect.any(Date) }),
+      });
+      expect(notifications.notifyOrgAdmins).toHaveBeenCalledWith(
+        'org-1',
+        expect.objectContaining({ type: 'CUSTOMER_OPT_OUT' }),
+      );
+      expect(prisma.invoiceAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ invoiceId: 'inv-1', action: 'CUSTOMER_OPT_OUT' }),
+      });
+    });
+
+    it('isOptOutRequest reconoce bajas y no confunde frases normales', () => {
+      for (const t of ['BAJA', 'Stop', 'baja por favor', 'No me escriban', 'Denme de baja!']) {
+        expect(isOptOutRequest(t)).toBe(true);
+      }
+      for (const t of [
+        '¿Pueden dar de baja la factura F-1 que está duplicada?',
+        'bajamos el precio la próxima vez',
+        'ya pagué',
+        'alto ahí, ¿quién habla?, necesito hablar con la persona encargada de mi cuenta',
+      ]) {
+        expect(isOptOutRequest(t)).toBe(false);
+      }
+    });
+
+    it('guarda el estado de entrega sin retroceder (un "delivered" tardío no pisa un "read")', async () => {
+      const svc = build();
+      const statusPayload = (status: string) => ({
+        entry: [
+          {
+            changes: [
+              { value: { statuses: [{ id: 'wamid.OUT-1', status, timestamp: '1794700000' }] } },
+            ],
+          },
+        ],
+      });
+      prisma.whatsappMessage.findUnique.mockResolvedValue({ id: 'm-1', deliveryStatus: 'delivered' });
+      const r1 = await svc.handleIncoming(statusPayload('read'));
+      expect(r1.statuses).toBe(1);
+      expect(prisma.whatsappMessage.update).toHaveBeenCalledWith({
+        where: { id: 'm-1' },
+        data: expect.objectContaining({ deliveryStatus: 'read' }),
+      });
+
+      prisma.whatsappMessage.update.mockClear();
+      prisma.whatsappMessage.findUnique.mockResolvedValue({ id: 'm-1', deliveryStatus: 'read' });
+      const r2 = await svc.handleIncoming(statusPayload('delivered'));
+      expect(r2.statuses).toBe(0);
+      expect(prisma.whatsappMessage.update).not.toHaveBeenCalled();
+    });
+
+    it('un envío fallido guarda el motivo y queda como no enviado', async () => {
+      const svc = build();
+      prisma.whatsappMessage.findUnique.mockResolvedValue({ id: 'm-2', deliveryStatus: 'sent' });
+      await svc.handleIncoming({
+        entry: [
+          {
+            changes: [
+              {
+                value: {
+                  statuses: [
+                    {
+                      id: 'wamid.OUT-2',
+                      status: 'failed',
+                      timestamp: '1794700000',
+                      errors: [{ code: 131026, title: 'Message undeliverable' }],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      });
+      expect(prisma.whatsappMessage.update).toHaveBeenCalledWith({
+        where: { id: 'm-2' },
+        data: expect.objectContaining({
+          deliveryStatus: 'failed',
+          deliveryError: '131026 Message undeliverable',
+          sent: false,
+        }),
+      });
+    });
+  });
 });
+

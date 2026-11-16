@@ -684,6 +684,69 @@ ${hilo}
     );
   }
 
+  // ── Bandeja de mensajes sin dueño claro ──
+
+  /** Mensajes entrantes que no se pudieron atribuir a un cliente de ESTA organización. */
+  async listUnmatched(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    return this.prisma.withOrg(organizationId, (tx) =>
+      tx.whatsappInboundUnmatched.findMany({
+        where: { organizationId, resolvedAt: null },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+    );
+  }
+
+  /**
+   * Asigna un mensaje sin dueño a un cliente: queda en su hilo (abre la
+   * ventana de 24 h como cualquier respuesta) y sale de la bandeja.
+   */
+  async assignUnmatched(user: AuthenticatedUser, id: string, customerId: string) {
+    const organizationId = this.requireOrg(user);
+    const customer = await this.loadCustomer(user, customerId);
+    return this.prisma.withOrg(organizationId, async (tx) => {
+      const row = await tx.whatsappInboundUnmatched.findFirst({
+        where: { id, organizationId, resolvedAt: null },
+      });
+      if (!row) throw new NotFoundException('Mensaje no encontrado o ya resuelto.');
+      const kind: WhatsappMessageKind =
+        row.kind === 'BUTTON' || row.kind === 'MEDIA' ? row.kind : 'TEXT';
+      await tx.whatsappMessage.create({
+        data: {
+          organizationId,
+          customerId: customer.id,
+          invoiceId: null,
+          direction: 'INBOUND',
+          kind,
+          body: row.body,
+          waMessageId: row.waMessageId,
+          phoneNumberId: row.phoneNumberId,
+          createdAt: row.createdAt,
+        },
+      });
+      return tx.whatsappInboundUnmatched.update({
+        where: { id },
+        data: { resolvedAt: new Date(), resolvedByUserId: user.id, resolvedCustomerId: customer.id },
+      });
+    });
+  }
+
+  /** Descarta un mensaje sin dueño (no era de ningún cliente). */
+  async dismissUnmatched(user: AuthenticatedUser, id: string) {
+    const organizationId = this.requireOrg(user);
+    return this.prisma.withOrg(organizationId, async (tx) => {
+      const row = await tx.whatsappInboundUnmatched.findFirst({
+        where: { id, organizationId, resolvedAt: null },
+      });
+      if (!row) throw new NotFoundException('Mensaje no encontrado o ya resuelto.');
+      return tx.whatsappInboundUnmatched.update({
+        where: { id },
+        data: { resolvedAt: new Date(), resolvedByUserId: user.id },
+      });
+    });
+  }
+
   private async loadCustomer(user: AuthenticatedUser, customerId: string) {
     const organizationId = this.requireOrg(user);
     const customer = await this.prisma.withOrg(organizationId, (tx) =>

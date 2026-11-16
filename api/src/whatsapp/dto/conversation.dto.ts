@@ -22,3 +22,9 @@ export class SendTextDto {
   @IsIn(TEMPLATE_NAMES)
   levelTemplate?: string;
 }
+
+/** Asignar un mensaje de la bandeja sin dueño a un cliente de la organización. */
+export class AssignUnmatchedDto {
+  @IsUUID()
+  customerId!: string;
+}
