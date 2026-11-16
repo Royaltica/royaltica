@@ -368,6 +368,11 @@ export class JobsService {
   })
   async receivableReminders(): Promise<{ sent: number }> {
     if (!this.enabled) return { sent: 0 };
+    // Apagado por defecto: el único camino automático hacia el deudor es el
+    // motor por niveles (collection-sequence-engine). Ver env.validation.ts.
+    if (this.config.get('LEGACY_RECEIVABLE_REMINDER_ENABLED', { infer: true }) !== 'true') {
+      return { sent: 0 };
+    }
     // T-14 (preventivo) y T-3 (urgente, con liga de pago + datos bancarios)
     // corren en el mismo pase diario: sus ventanas de vencimiento no se
     // traslapan, así que nunca compiten por el mismo recordatorio.
