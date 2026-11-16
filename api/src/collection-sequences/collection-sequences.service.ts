@@ -412,6 +412,41 @@ export class CollectionSequencesService {
    * Automático (el motor manda cada mañana) o con aprobación (una persona
    * aprueba y envía desde el expediente). Crea el plan por niveles si no existe.
    */
+  /** Ajustes del plan por niveles (solo cambia los campos que vienen). */
+  async updatePlanSettings(
+    user: AuthenticatedUser,
+    settings: { autoSend?: boolean; shadowMode?: boolean; paymentDataMaxAgeHours?: number | null },
+  ) {
+    const organizationId = this.requireOrg(user);
+    const { policy } = await this.ensureLevelPlan(user);
+    const data: {
+      autoSend?: boolean;
+      shadowMode?: boolean;
+      paymentDataMaxAgeHours?: number | null;
+    } = {};
+    if (settings.autoSend !== undefined) data.autoSend = settings.autoSend;
+    if (settings.shadowMode !== undefined) data.shadowMode = settings.shadowMode;
+    if (settings.paymentDataMaxAgeHours !== undefined) {
+      data.paymentDataMaxAgeHours = settings.paymentDataMaxAgeHours;
+    }
+    const updated = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.collectionPolicy.update({
+        where: { id: policy.id },
+        data,
+        include: { sequenceSteps: { where: { deletedAt: null }, orderBy: { stepOrder: 'asc' } } },
+      }),
+    );
+    await this.activity.record({
+      organizationId,
+      userId: user.id,
+      action: 'COLLECTION_PLAN_SETTINGS_CHANGED',
+      entityType: 'CollectionPolicy',
+      entityId: policy.id,
+      metadata: data,
+    });
+    return { policy: updated };
+  }
+
   async setAutoSend(user: AuthenticatedUser, autoSend: boolean) {
     const organizationId = this.requireOrg(user);
     const { policy } = await this.ensureLevelPlan(user);

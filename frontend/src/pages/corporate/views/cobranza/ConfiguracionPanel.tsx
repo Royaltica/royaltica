@@ -33,6 +33,7 @@ import { useCobranza, type CuentaViva } from './store.tsx';
 import { useAlertas, type Alerta } from './alertas.tsx';
 import { ModoEnvio } from './WhatsappPanel.tsx';
 import { EJEMPLO_VARS, tipoDeudor } from './catalogoDeudores.ts';
+import { api, type CollectionStatus } from '../../../../services/apiClient.ts';
 
 // Configuración de Cobranza IA (solo Administrador). Por ahora es diseño con
 // datos de ejemplo: se guarda en este navegador hasta conectar el backend.
@@ -861,6 +862,7 @@ function Reglas() {
   const cambiar = (c: Partial<typeof r>) => setR((x) => ({ ...x, ...c }));
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+      <SeguridadEnvios />
       <Tarjeta titulo="Cuándo se manda" detalle="Aplica a los recordatorios del plan y a las campañas.">
         <div className="mb-4">
           <ModoEnvio />
@@ -925,6 +927,145 @@ function Reglas() {
       </Tarjeta>
       {nodo}
     </div>
+  );
+}
+
+/**
+ * Seguridad de los envíos (conectado al backend, no se guarda en el
+ * navegador): interruptor de emergencia de la organización, modo sombra del
+ * plan por niveles y guardia de frescura del estado de cuenta.
+ */
+function SeguridadEnvios() {
+  const { avisar, nodo } = useAviso();
+  const { confirmar, nodo: nodoConfirmar } = useConfirmar();
+  const [estado, setEstado] = React.useState<CollectionStatus | null | undefined>(undefined);
+  const [sombra, setSombra] = React.useState<boolean | null>(null);
+  const [frescura, setFrescura] = React.useState<number | null | undefined>(undefined);
+  const [ocupado, setOcupado] = React.useState(false);
+
+  React.useEffect(() => {
+    api.getCollectionStatus().then(setEstado).catch(() => setEstado(null));
+    api
+      .getLevelPlan()
+      .then((r) => {
+        setSombra(r.policy?.shadowMode ?? false);
+        setFrescura(r.policy?.paymentDataMaxAgeHours ?? null);
+      })
+      .catch(() => {
+        setSombra(null);
+        setFrescura(undefined);
+      });
+  }, []);
+
+  const guardarPlan = async (cambio: { shadowMode?: boolean; paymentDataMaxAgeHours?: number | null }) => {
+    setOcupado(true);
+    try {
+      const r = await api.updateLevelPlanSettings(cambio);
+      setSombra(r.policy.shadowMode ?? false);
+      setFrescura(r.policy.paymentDataMaxAgeHours ?? null);
+      avisar('Guardado');
+    } catch (e) {
+      avisar(e instanceof Error ? e.message : 'No se pudo guardar', { error: true });
+    } finally {
+      setOcupado(false);
+    }
+  };
+
+  const pausar = () =>
+    confirmar({
+      titulo: 'Pausar todos los envíos',
+      mensaje: 'Ningún cliente recibirá mensajes automáticos (WhatsApp ni correo) hasta que lo reanudes. Los envíos manuales siguen disponibles.',
+      accion: 'Pausar envíos',
+      peligro: true,
+      campo: { tipo: 'texto', etiqueta: 'Motivo', placeholder: 'Ej. revisando un pago masivo' },
+      alConfirmar: async (motivo) => {
+        try {
+          setEstado(await api.pauseCollection(motivo || undefined));
+          avisar('Envíos pausados');
+        } catch (e) {
+          return e instanceof Error ? e.message : 'No se pudo pausar';
+        }
+      },
+    });
+
+  const reanudar = () =>
+    confirmar({
+      titulo: 'Reanudar los envíos',
+      mensaje: 'Los mensajes automáticos vuelven a salir en la siguiente corrida del día.',
+      accion: 'Reanudar',
+      alConfirmar: async () => {
+        try {
+          setEstado(await api.resumeCollection());
+          avisar('Envíos reanudados');
+        } catch (e) {
+          return e instanceof Error ? e.message : 'No se pudo reanudar';
+        }
+      },
+    });
+
+  const pausada = !!estado?.paused;
+  return (
+    <Tarjeta
+      className="lg:col-span-2"
+      titulo="Seguridad de los envíos"
+      detalle="Antes de cada mensaje automático se revisa que el cliente no haya pagado ya (depósito sin revisar, un “ya pagué” reciente o un cobro recién revertido). Esto se guarda en el servidor."
+    >
+      <Fila
+        icono={<ShieldCheck size={16} />}
+        titulo={pausada ? 'Envíos pausados' : 'Interruptor de emergencia'}
+        detalle={
+          estado === undefined
+            ? 'Cargando…'
+            : estado === null
+              ? 'No se pudo consultar el estado.'
+              : pausada
+                ? `Pausados desde ${new Date(estado.collectionPausedAt!).toLocaleString('es-MX')}${estado.collectionPausedReason ? ` · ${estado.collectionPausedReason}` : ''}`
+                : 'Detiene de inmediato todos los mensajes automáticos a tus clientes.'
+        }
+      >
+        {estado !== undefined && estado !== null && (
+          <button type="button" onClick={pausada ? reanudar : pausar} className={pausada ? BTN_PRI : BTN_SEC}>
+            {pausada ? 'Reanudar envíos' : 'Pausar todos los envíos'}
+          </button>
+        )}
+      </Fila>
+      <Fila
+        icono={<Moon size={16} />}
+        titulo="Modo sombra"
+        detalle="El sistema calcula a quién le escribiría cada día y lo registra, pero no envía nada. Úsalo la primera semana con datos reales."
+      >
+        {sombra === null ? (
+          <span className="text-[12px] text-brand-ink/40">Sin plan por niveles</span>
+        ) : (
+          <Interruptor activo={sombra} onChange={(v) => !ocupado && guardarPlan({ shadowMode: v })} etiqueta="Modo sombra" />
+        )}
+      </Fila>
+      <Fila
+        icono={<Database size={16} />}
+        titulo="Exigir estado de cuenta reciente"
+        detalle="Si el último estado de cuenta subido es más viejo que esto, no se envía y se te avisa. Apagado si no subes estados de cuenta."
+      >
+        {frescura === undefined ? (
+          <span className="text-[12px] text-brand-ink/40">Sin plan por niveles</span>
+        ) : (
+          <select
+            value={frescura === null ? '' : String(frescura)}
+            disabled={ocupado}
+            onChange={(e) => guardarPlan({ paymentDataMaxAgeHours: e.target.value ? Number(e.target.value) : null })}
+            className="glass-campo rounded-full px-3.5 py-2 text-[12.5px] font-semibold outline-none"
+            aria-label="Antigüedad máxima del estado de cuenta"
+          >
+            <option value="">Apagado</option>
+            <option value="24">24 horas</option>
+            <option value="36">36 horas</option>
+            <option value="48">48 horas</option>
+            <option value="72">72 horas</option>
+          </select>
+        )}
+      </Fila>
+      {nodo}
+      {nodoConfirmar}
+    </Tarjeta>
   );
 }
 

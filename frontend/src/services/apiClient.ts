@@ -676,6 +676,26 @@ export interface BankTransactionItem {
   matchedAt: string | null;
   matchedBy: string | null;
   createdAt: string;
+  /** true = cargo (retiro); nunca se concilia contra facturas. */
+  isDebit?: boolean;
+  /** Propuesta del motor cuando no hay coincidencia exacta. */
+  matchProposal?: BankMatchProposal | null;
+}
+
+export interface BankMatchProposal {
+  kind: 'MULTI' | 'MULTI_AMBIGUOUS' | 'RETENTION' | 'PARTIAL' | 'CANDIDATES' | 'SUGGESTED';
+  invoiceIds: string[];
+  customerId?: string;
+  explanation: string;
+  retentionRate?: number;
+}
+
+/** Interruptor de emergencia de cobranza de la organización. */
+export interface CollectionStatus {
+  paused: boolean;
+  collectionPausedAt: string | null;
+  collectionPausedReason: string | null;
+  collectionPausedByUserId: string | null;
 }
 
 export interface BankReviewQueue {
@@ -1898,6 +1918,28 @@ export const api = {
     return request<{ policy: CollectionLevelPlan }>('PATCH', '/collection-sequences/level-plan', { autoSend });
   },
 
+  /** Modo sombra y guardia de frescura del estado de cuenta (solo cambia lo que se manda). */
+  async updateLevelPlanSettings(settings: {
+    autoSend?: boolean;
+    shadowMode?: boolean;
+    paymentDataMaxAgeHours?: number | null;
+  }): Promise<{ policy: CollectionLevelPlan }> {
+    return request<{ policy: CollectionLevelPlan }>('PATCH', '/collection-sequences/level-plan', settings);
+  },
+
+  // ── Interruptor de emergencia de cobranza ──
+  async getCollectionStatus(): Promise<CollectionStatus> {
+    return request<CollectionStatus>('GET', '/organization/collection/status');
+  },
+
+  async pauseCollection(reason?: string): Promise<CollectionStatus> {
+    return request<CollectionStatus>('POST', '/organization/collection/pause', reason ? { reason } : {});
+  },
+
+  async resumeCollection(): Promise<CollectionStatus> {
+    return request<CollectionStatus>('POST', '/organization/collection/resume');
+  },
+
   // ── Análisis periódico de cartera (Cobranza IA → Reportes) ──
 
   async listPortfolioReports(): Promise<PortfolioReportList> {
@@ -1931,6 +1973,10 @@ export const api = {
     importId: string;
     imported: number;
     skipped: number;
+    /** Movimientos que ya estaban importados (mismo archivo subido otra vez). */
+    duplicates?: number;
+    /** Cargos (retiros): se guardan pero no se concilian. */
+    debits?: number;
     errors: string[];
     autoMatched: number;
     ambiguous: number;
@@ -1941,7 +1987,10 @@ export const api = {
     return uploadForm('/bank-reconciliation/imports', form);
   },
 
-  async confirmBankMatch(transactionId: string, invoiceId?: string): Promise<{ ok: true; invoiceId: string }> {
+  async confirmBankMatch(
+    transactionId: string,
+    invoiceId?: string,
+  ): Promise<{ ok: true; invoiceId: string; invoiceIds?: string[]; settled?: string[]; partial?: string[] }> {
     return request('POST', `/bank-reconciliation/transactions/${transactionId}/confirm`, invoiceId ? { invoiceId } : {});
   },
 
@@ -2704,6 +2753,10 @@ export interface CollectionLevelPlan {
   id: string;
   name: string;
   autoSend: boolean;
+  /** Modo sombra: calcula y registra lo que enviaría, sin enviar. */
+  shadowMode?: boolean;
+  /** Guardia de frescura del estado de cuenta, en horas (null = apagada). */
+  paymentDataMaxAgeHours?: number | null;
   sequenceSteps: {
     id: string;
     stepOrder: number;

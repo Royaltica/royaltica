@@ -623,6 +623,30 @@ describe('CollectionSequencesService', () => {
   });
 
   describe('guardias de pago y modo sombra', () => {
+    it('updatePlanSettings solo cambia los campos que vienen y lo deja en la bitácora', async () => {
+      (prisma.collectionPolicy as unknown as { update: jest.Mock }).update = jest
+        .fn()
+        .mockImplementation(({ data }) => ({ id: 'pol-1', ...data }));
+      jest
+        .spyOn(service, 'ensureLevelPlan')
+        .mockResolvedValue({ policy: { id: 'pol-1' } } as never);
+      const user = { id: 'u-1', organizationId: 'org-1' } as never;
+
+      await service.updatePlanSettings(user, { shadowMode: true, paymentDataMaxAgeHours: 36 });
+
+      expect(
+        (prisma.collectionPolicy as unknown as { update: jest.Mock }).update,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'pol-1' },
+          data: { shadowMode: true, paymentDataMaxAgeHours: 36 },
+        }),
+      );
+      expect(activity.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'COLLECTION_PLAN_SETTINGS_CHANGED' }),
+      );
+    });
+
     it('con un pago parcial registrado, el mensaje pide el saldo y no el total', async () => {
       jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
       prisma.invoice.findUnique.mockResolvedValue({ ...baseInvoice, total: 1000, amountPaid: 400 });
