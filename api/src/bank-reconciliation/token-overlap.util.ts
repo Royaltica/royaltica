@@ -21,11 +21,22 @@ const STOPWORDS = new Set([
   'pago',
   'transfer',
   'deposit',
+  // Conceptos bancarios mexicanos que no identifican a nadie.
+  'sapi',
+  'srl',
+  'spei',
+  'recibido',
+  'transferencia',
+  'deposito',
+  'abono',
+  'cliente',
 ]);
 
 /** Tokeniza: minúsculas, quita puntuación, descarta tokens cortos/ruidosos. */
 export function normalizeTokens(text: string): string[] {
   return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // "Pérez" → "Perez" (antes quedaba "p rez")
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
