@@ -7,6 +7,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CollectionSequencesAiDecisionService } from './collection-sequences-ai-decision.service';
 import { WhatsappConversationService } from '../whatsapp/whatsapp-conversation.service';
 import { pickNextStep } from './collection-sequences.service';
+import { CollectionSafetyService } from '../collection-safety/collection-safety.service';
 
 /** Política base: ventana 9-17 UTC, sin gracia, sin tope de contactos. */
 const basePolicy = {
@@ -80,6 +81,7 @@ describe('CollectionSequencesService', () => {
   let notifications: { notifyOrgAdmins: jest.Mock };
   let aiDecision: { decideNextAction: jest.Mock };
   let conversations: { sendCollectionStep: jest.Mock };
+  let safety: { checkBeforeSend: jest.Mock; withOrganizationLock: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -131,6 +133,11 @@ describe('CollectionSequencesService', () => {
       sendCollectionStep: jest.fn().mockResolvedValue({ sent: true, kind: 'TEMPLATE' }),
     };
 
+    safety = {
+      checkBeforeSend: jest.fn().mockResolvedValue({ ok: true }),
+      withOrganizationLock: jest.fn().mockImplementation((_org: string, fn: () => unknown) => fn()),
+    };
+
     service = new CollectionSequencesService(
       prisma as unknown as PrismaService,
       activity as unknown as ActivityLogService,
@@ -139,6 +146,7 @@ describe('CollectionSequencesService', () => {
       notifications as unknown as NotificationsService,
       aiDecision as unknown as CollectionSequencesAiDecisionService,
       conversations as unknown as WhatsappConversationService,
+      safety as unknown as CollectionSafetyService,
     );
   });
 
@@ -613,4 +621,156 @@ describe('CollectionSequencesService', () => {
       expect(result).toEqual({ outcome: 'skipped', reason: 'not-yet-due' });
     });
   });
+
+  describe('guardias de pago y modo sombra', () => {
+    it('updatePlanSettings solo cambia los campos que vienen y lo deja en la bitácora', async () => {
+      (prisma.collectionPolicy as unknown as { update: jest.Mock }).update = jest
+        .fn()
+        .mockImplementation(({ data }) => ({ id: 'pol-1', ...data }));
+      jest
+        .spyOn(service, 'ensureLevelPlan')
+        .mockResolvedValue({ policy: { id: 'pol-1' } } as never);
+      const user = { id: 'u-1', organizationId: 'org-1' } as never;
+
+      await service.updatePlanSettings(user, { shadowMode: true, paymentDataMaxAgeHours: 36 });
+
+      expect(
+        (prisma.collectionPolicy as unknown as { update: jest.Mock }).update,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'pol-1' },
+          data: { shadowMode: true, paymentDataMaxAgeHours: 36 },
+        }),
+      );
+      expect(activity.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'COLLECTION_PLAN_SETTINGS_CHANGED' }),
+      );
+    });
+
+    it('con un pago parcial registrado, el mensaje pide el saldo y no el total', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      prisma.invoice.findUnique.mockResolvedValue({ ...baseInvoice, total: 1000, amountPaid: 400 });
+
+      await service.advanceSequence('inv-1');
+
+      const body = email.sendCollectionSequenceStep.mock.calls[0][2] as string;
+      expect(body).toContain('600.00');
+      expect(body).not.toContain('1,000.00');
+    });
+
+    it('no envía si la guardia de pago lo bloquea y deja el motivo registrado', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      safety.checkBeforeSend.mockResolvedValue({
+        ok: false,
+        reason: 'payment-pending-review',
+        detail: { bankTransactionId: 'tx-1' },
+      });
+
+      const result = await service.advanceSequence('inv-1');
+
+      expect(result).toMatchObject({ outcome: 'skipped', reason: 'payment-pending-review' });
+      expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+      expect(conversations.sendCollectionStep).not.toHaveBeenCalled();
+      expect(prisma.collectionSequenceRun.update).not.toHaveBeenCalled();
+      expect(activity.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'COLLECTION_SEQUENCE_STEP_SKIPPED',
+          metadata: expect.objectContaining({
+            reason: 'payment-pending-review',
+            bankTransactionId: 'tx-1',
+          }),
+        }),
+      );
+    });
+
+    it('pasa a la guardia los datos de "ya pagué" de la factura y la frescura de la política', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      const claimed = new Date('2026-07-31T10:00:00Z');
+      prisma.invoice.findUnique.mockResolvedValue({ ...baseInvoice, paymentClaimedAt: claimed });
+      prisma.collectionPolicy.findFirst.mockResolvedValue({
+        ...basePolicy,
+        paymentDataMaxAgeHours: 36,
+        sequenceSteps: [step1],
+      });
+
+      await service.advanceSequence('inv-1');
+
+      expect(safety.checkBeforeSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId: 'org-1',
+          invoiceId: 'inv-1',
+          invoicePaymentClaimedAt: claimed,
+          paymentDataMaxAgeHours: 36,
+        }),
+      );
+    });
+
+    it('en modo sombra registra lo que enviaría, no envía y no avanza la secuencia', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      prisma.collectionPolicy.findFirst.mockResolvedValue({
+        ...basePolicy,
+        shadowMode: true,
+        sequenceSteps: [step1],
+      });
+
+      const result = await service.advanceSequence('inv-1');
+
+      expect(result).toMatchObject({ outcome: 'skipped', reason: 'shadow-mode', stepOrder: 1 });
+      expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+      expect(prisma.collectionSequenceRun.update).not.toHaveBeenCalled();
+      expect(activity.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'COLLECTION_SEQUENCE_STEP_SHADOW',
+          metadata: expect.objectContaining({ channel: 'EMAIL', stepOrder: 1 }),
+        }),
+      );
+    });
+
+    it('en modo sombra también evalúa políticas "con aprobación" (no se queda en awaiting-approval)', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      prisma.collectionPolicy.findFirst.mockResolvedValue({
+        ...basePolicy,
+        autoSend: false,
+        shadowMode: true,
+        sequenceSteps: [step1],
+      });
+
+      const result = await service.advanceSequence('inv-1');
+
+      expect(result.reason).toBe('shadow-mode');
+      expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+    });
+
+    it('sin modo sombra, una política "con aprobación" sigue esperando a una persona', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      prisma.collectionPolicy.findFirst.mockResolvedValue({
+        ...basePolicy,
+        autoSend: false,
+        sequenceSteps: [step1],
+      });
+
+      const result = await service.advanceSequence('inv-1');
+
+      expect(result.reason).toBe('awaiting-approval');
+      expect(safety.checkBeforeSend).not.toHaveBeenCalled();
+    });
+
+    it('runEngineScan no procesa una organización si no obtiene el candado', async () => {
+      prisma.organization.findMany.mockResolvedValue([{ id: 'org-1' }]);
+      safety.withOrganizationLock.mockResolvedValue(null);
+      const advance = jest.spyOn(service, 'advanceSequence');
+
+      const result = await service.runEngineScan();
+
+      expect(result.evaluated).toBe(0);
+      expect(advance).not.toHaveBeenCalled();
+      // Solo organizaciones sin el interruptor de emergencia encendido.
+      expect(prisma.organization.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ collectionPausedAt: null }),
+        }),
+      );
+    });
+  });
 });
+

@@ -17,7 +17,9 @@ import {
 import {
   api,
   type AiActionItem,
+  type BankMatchProposal,
   type BankReviewQueue,
+  type BankTransactionItem,
   type CollectionCommandCenter,
   type ExternalSyncStatus,
   type OrgReadiness,
@@ -265,6 +267,25 @@ function IntegrationWizardPanel() {
   );
 }
 
+/** Nombre corto de cada tipo de propuesta del motor de conciliación. */
+const PROPOSAL_LABEL: Record<BankMatchProposal['kind'], string> = {
+  MULTI: 'Varias facturas',
+  MULTI_AMBIGUOUS: 'Varias combinaciones',
+  RETENTION: 'Pago neto de retención',
+  PARTIAL: 'Pago parcial',
+  CANDIDATES: 'Varias facturas posibles',
+  SUGGESTED: 'Sugerencia',
+};
+
+/** Se puede confirmar con un clic si hay una sola forma de aplicar el depósito. */
+function canConfirm(tx: BankTransactionItem): boolean {
+  if (tx.matchedInvoiceId) return true;
+  const p = tx.matchProposal;
+  if (!p) return false;
+  if (p.kind === 'MULTI') return true;
+  return (p.kind === 'RETENTION' || p.kind === 'PARTIAL' || p.kind === 'SUGGESTED') && p.invoiceIds.length === 1;
+}
+
 function BankReconciliationPanel() {
   const queryClient = useQueryClient();
   const [file, setFile] = React.useState<File | null>(null);
@@ -284,7 +305,14 @@ function BankReconciliationPanel() {
     setBusy(true); setMessage('');
     try {
       const res = await api.importBankStatement(file, bankName || undefined);
-      setMessage(`Importadas ${res.imported}, auto-match ${res.autoMatched}, ambiguas ${res.ambiguous}.`);
+      setMessage(
+        `Importadas ${res.imported}` +
+          (res.duplicates ? ` (${res.duplicates} ya estaban importadas)` : '') +
+          (res.debits ? `, ${res.debits} cargos (no se concilian)` : '') +
+          `, auto-match ${res.autoMatched}, por revisar ${res.ambiguous}` +
+          (res.skipped ? `, ${res.skipped} con error` : '') +
+          '.',
+      );
       setFile(null);
       await reload();
     } catch (err) {
@@ -318,7 +346,7 @@ function BankReconciliationPanel() {
     <div className="space-y-5">
       <div className="editorial-card flex flex-col lg:flex-row gap-4 lg:items-end">
         <Field label="Banco">
-          <input className={inputCls} value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="RBC / TD / Scotiabank" />
+          <input className={inputCls} value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="BBVA / Banorte / Santander" />
         </Field>
         <Field label="CSV estado de cuenta">
           <input type="file" accept=".csv,text/csv" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-xs" />
@@ -341,11 +369,16 @@ function BankReconciliationPanel() {
           <div key={tx.id} className="editorial-card !p-5 flex flex-col lg:flex-row lg:items-center gap-4">
             <div className="flex-1">
               <p className="text-sm font-bold text-brand-ink">{tx.description}</p>
-              <p className="text-xs text-brand-ink/50">{new Date(tx.transactionDate).toLocaleDateString()} · {tx.matchStatus} · confianza {tx.matchConfidence === null ? '-' : `${Math.round(tx.matchConfidence * 100)}%`}</p>
+              <p className="text-xs text-brand-ink/50">{new Date(tx.transactionDate).toLocaleDateString('es-MX')} · {tx.matchStatus} · confianza {tx.matchConfidence === null ? '-' : `${Math.round(tx.matchConfidence * 100)}%`}</p>
+              {tx.matchProposal && (
+                <p className="text-xs text-brand-ink/70 mt-1">
+                  <span className="font-semibold">{PROPOSAL_LABEL[tx.matchProposal.kind]}:</span> {tx.matchProposal.explanation}
+                </p>
+              )}
             </div>
-            <p className="text-sm font-bold text-brand-ink">{new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(tx.amount)}</p>
+            <p className="text-sm font-bold text-brand-ink">{new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(tx.amount)}</p>
             <div className="flex gap-2">
-              <button disabled={busy || !tx.matchedInvoiceId} onClick={() => confirm(tx.id, tx.matchedInvoiceId)} className={smallBtn}>Confirmar</button>
+              <button disabled={busy || !canConfirm(tx)} onClick={() => confirm(tx.id, tx.matchedInvoiceId)} className={smallBtn}>Confirmar</button>
               <button disabled={busy} onClick={() => reject(tx.id)} className={smallBtn}>Rechazar</button>
             </div>
           </div>

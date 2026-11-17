@@ -5,7 +5,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AREAS } from '../auth/constants/permissions';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { WhatsappConversationService } from './whatsapp-conversation.service';
-import { SendTemplateDto, SendTextDto } from './dto/conversation.dto';
+import { AssignUnmatchedDto, SendTemplateDto, SendTextDto } from './dto/conversation.dto';
 
 /**
  * Conversaciones de WhatsApp con clientes deudores (Cobranza IA). Área CxC:
@@ -33,6 +33,29 @@ export class WhatsappConversationsController {
   @Get('plan-activity')
   planActivity(@CurrentUser() user: AuthenticatedUser) {
     return this.conversations.planActivity(user);
+  }
+
+  /** Bandeja de mensajes sin cliente claro. Antes de ':customerId'. */
+  @Get('unmatched')
+  unmatched(@CurrentUser() user: AuthenticatedUser) {
+    return this.conversations.listUnmatched(user);
+  }
+
+  @Post('unmatched/:id/assign')
+  assignUnmatched(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AssignUnmatchedDto,
+  ) {
+    return this.conversations.assignUnmatched(user, id, dto.customerId);
+  }
+
+  @Post('unmatched/:id/dismiss')
+  dismissUnmatched(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.conversations.dismissUnmatched(user, id);
   }
 
   @Get(':customerId')

@@ -176,6 +176,15 @@ export class EmailInboundService {
       });
     }
 
+    // "Ya pagué": pausa 72 h los envíos automáticos a este cliente (guardia
+    // payment-claimed de CollectionSafetyService) hasta que alguien lo revise.
+    if (intent === 'PAYMENT_CLAIMED') {
+      await this.prisma.customer.update({
+        where: { id: customer.id },
+        data: { paymentClaimedAt: new Date() },
+      });
+    }
+
     await this.notifyResponsibles(customer, {
       intent,
       needsHuman,

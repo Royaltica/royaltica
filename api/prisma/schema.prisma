@@ -203,6 +203,15 @@ model Organization {
   // de cuándo "terminó" esa carga inicial). Null = aún cargando datos.
   onboardingDataCompletedAt DateTime?
 
+  // Interruptor de emergencia de cobranza (por organización). Si
+  // collectionPausedAt no es null, NINGÚN camino automático (motor por
+  // niveles, recordatorio de un paso, mensaje de mantenimiento) le escribe a
+  // los deudores de esta organización. Los envíos manuales no se bloquean:
+  // son decisión de una persona.
+  collectionPausedAt       DateTime?
+  collectionPausedReason   String?
+  collectionPausedByUserId String?
+
   users                     User[]
   suppliers                 Supplier[]
   customers                 Customer[]
@@ -222,6 +231,8 @@ model Organization {
   virtualNumbers            VirtualNumber[]
   whatsappMessages          WhatsappMessage[]
   portfolioReports          PortfolioReport[]
+  invoicePayments           InvoicePayment[]
+  whatsappInboundUnmatched  WhatsappInboundUnmatched[]
 
   @@index([isActive])
 }
@@ -402,6 +413,13 @@ model Customer {
   // deuda) a un cliente con score > GOOD_PAYER_SCORE_THRESHOLD. Null =
   // nunca se le ha mandado. JobsService lo reenvía cada ~6 meses.
   lastServiceMessageAt DateTime?
+  // Último "ya pagué" del cliente por un canal que no identifica la factura
+  // exacta (WhatsApp, correo). Mientras tenga menos de 72 h, los envíos
+  // automáticos a ese cliente se pausan (guardia payment-claimed).
+  paymentClaimedAt     DateTime?
+  // Base legal del contacto (ley de datos): de dónde salió el dato y cuándo.
+  consentSource        String?
+  consentAt            DateTime?
   createdAt            DateTime          @default(now())
   updatedAt            DateTime          @updatedAt
   deletedAt            DateTime?
@@ -527,6 +545,12 @@ model Invoice {
   // Última vez que el agente de cobranza (CxC) envió un recordatorio de esta
   // factura al cliente. Evita reenviar el mismo día. Null = nunca se envió.
   lastReminderSentAt DateTime?
+  // "Ya pagué" del cliente sobre ESTA factura (portal o respuesta a un
+  // mensaje de la factura). Pausa los envíos automáticos 72 h.
+  paymentClaimedAt   DateTime?
+  // Suma de pagos vigentes del libro (InvoicePayment). Caché: la fuente de
+  // verdad es el libro. Permite pagos parciales sin marcar PAID.
+  amountPaid         Decimal          @default(0) @db.Decimal(15, 2)
   // Llave de idempotencia para importar facturas de venta desde el sistema
   // externo de un cliente CxC (Tradespace, etc.): el ID de la factura en ESE
   // sistema. Null = factura nativa de Royáltica (CFDI o captura manual).
@@ -544,6 +568,7 @@ model Invoice {
   collectionSequenceRuns CollectionSequenceRun[]
   bankTransactions       BankTransaction[]
   whatsappMessages       WhatsappMessage[]
+  ledgerPayments         InvoicePayment[]
 
   @@unique([organizationId, externalId])
   @@index([organizationId])
@@ -818,6 +843,17 @@ model CollectionPolicy {
   // expediente del cliente). Default true = sin cambios para lo existente;
   // el plan por niveles nace en false (con aprobación).
   autoSend Boolean @default(true)
+
+  // Modo sombra: el motor evalúa todo (guardias incluidas) y registra qué
+  // habría enviado (COLLECTION_SEQUENCE_STEP_SHADOW), pero NO envía ni avanza
+  // la secuencia. Para probar con carteras reales sin riesgo.
+  shadowMode Boolean @default(false)
+
+  // Guardia de frescura: si no es null y el último estado de cuenta subido
+  // (BankStatementImport) tiene más de N horas, el motor no envía (motivo
+  // stale-payment-data) y avisa a los administradores. Null = guardia
+  // apagada (comportamiento previo, para organizaciones sin conciliación).
+  paymentDataMaxAgeHours Int?
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -1167,12 +1203,23 @@ model BankTransaction {
   matchConfidence       Float?
   matchedAt             DateTime?
   matchedBy             String?
+  // true = cargo/retiro (dinero que SALE de la cuenta). Un cargo nunca se
+  // empata contra una factura por cobrar.
+  isDebit               Boolean                    @default(false)
+  // Huella del movimiento (fecha + monto + referencia + descripción) para no
+  // importar dos veces el mismo estado de cuenta. Único por organización.
+  dedupeKey             String?
+  // Propuesta del motor cuando el pago cubre varias facturas, llega neto de
+  // retenciones o es parcial: { kind, invoiceIds, explanation }.
+  matchProposal         Json?
   createdAt             DateTime                   @default(now())
 
   organization        Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   bankStatementImport BankStatementImport @relation(fields: [bankStatementImportId], references: [id], onDelete: Cascade)
   matchedInvoice      Invoice?            @relation(fields: [matchedInvoiceId], references: [id], onDelete: SetNull)
+  invoicePayments     InvoicePayment[]
 
+  @@unique([organizationId, dedupeKey])
   @@index([organizationId])
   @@index([bankStatementImportId])
   @@index([matchStatus])
@@ -1196,26 +1243,30 @@ enum WhatsappMessageKind {
 // cliente en las últimas 24h — dentro de ella se permite texto libre
 // (redactado con IA y revisado por una persona); fuera, solo plantillas.
 model WhatsappMessage {
-  id             String                   @id @default(uuid())
-  organizationId String
-  customerId     String
-  invoiceId      String?
-  direction      WhatsappMessageDirection
-  kind           WhatsappMessageKind
-  body           String
-  templateName   String?
+  id               String                   @id @default(uuid())
+  organizationId   String
+  customerId       String
+  invoiceId        String?
+  direction        WhatsappMessageDirection
+  kind             WhatsappMessageKind
+  body             String
+  templateName     String?
   // ID del mensaje en Meta (wamid). Único: Meta reintenta webhooks y así
   // un mismo mensaje entrante nunca se registra dos veces.
-  waMessageId    String?                  @unique
+  waMessageId      String?                  @unique
   // phone_number_id de Meta por el que entró/salió el mensaje: las
   // respuestas en texto libre salen por el MISMO número al que escribió el
   // cliente (si no, le llegarían en otro chat).
-  phoneNumberId  String?
+  phoneNumberId    String?
   // OUTBOUND: false si el proveedor no lo aceptó (o modo stub).
-  sent           Boolean                  @default(true)
+  sent             Boolean                  @default(true)
   // OUTBOUND manual (persona que lo mandó). Null = motor automático o INBOUND.
-  sentByUserId   String?
-  createdAt      DateTime                 @default(now())
+  sentByUserId     String?
+  // Estado de entrega que reporta Meta (sent | delivered | read | failed).
+  deliveryStatus   String?
+  deliveryStatusAt DateTime?
+  deliveryError    String?
+  createdAt        DateTime                 @default(now())
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -1249,4 +1300,58 @@ model PortfolioReport {
 
   @@unique([organizationId, frequency, periodFrom])
   @@index([organizationId, periodTo])
+}
+
+// Libro de pagos de facturas por cobrar. Cada fila es un pago (total o
+// parcial) aplicado a UNA factura. Un depósito que liquida varias facturas
+// genera varias filas con el mismo bankTransactionId. La factura pasa a PAID
+// cuando la suma de pagos vigentes (no revertidos) cubre su total.
+model InvoicePayment {
+  id                String    @id @default(uuid())
+  organizationId    String
+  invoiceId         String
+  amount            Decimal   @db.Decimal(15, 2)
+  paidAt            DateTime
+  // BANK | MANUAL | PORTAL | ERP
+  source            String
+  bankTransactionId String?
+  createdByUserId   String?
+  note              String?
+  reversedAt        DateTime?
+  reversedReason    String?
+  reversedByUserId  String?
+  createdAt         DateTime  @default(now())
+
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice         Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  bankTransaction BankTransaction? @relation(fields: [bankTransactionId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([invoiceId])
+  @@index([bankTransactionId])
+}
+
+// Mensajes entrantes de WhatsApp que no se pudieron atribuir con certeza a
+// un cliente (teléfono repetido en varias organizaciones o desconocido). No
+// se adivina: queda aquí para revisión. organizationId null = no se sabe de
+// qué organización es (solo lo ve el superadministrador de la plataforma).
+model WhatsappInboundUnmatched {
+  id                 String    @id @default(uuid())
+  organizationId     String?
+  fromPhone          String
+  phoneNumberId      String?
+  waMessageId        String?   @unique
+  kind               String
+  body               String
+  // Lista de candidatos: [{ organizationId, customerId, name }].
+  candidates         Json      @default("[]")
+  resolvedAt         DateTime?
+  resolvedByUserId   String?
+  resolvedCustomerId String?
+  createdAt          DateTime  @default(now())
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([resolvedAt])
 }

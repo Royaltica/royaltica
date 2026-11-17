@@ -9,6 +9,8 @@ import { PrismaService } from '../common/prisma/prisma.service';
 import { ActivityLogService } from '../activity/activity-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { tokenOverlap } from './token-overlap.util';
+import { applyPayment, outstandingOf } from '../payment-ledger/payment-ledger';
+import { proposeComposite, type MatchProposal } from './composite-match';
 import {
   AUTO_MATCH_CONFIDENCE_THRESHOLD,
   MATCH_SCORE,
@@ -91,9 +93,12 @@ export class BankReconciliationMatchingService {
       }),
     );
 
+    // Se compara contra el SALDO (total menos pagos parciales del libro), no
+    // contra el total: después de un abono parcial, el siguiente depósito
+    // liquida lo que falta.
     const amount = Number(transaction.amount);
     const sameAmount = pending.filter(
-      (inv) => Math.abs(Number(inv.total) - amount) < 0.005,
+      (inv) => Math.abs(outstandingOf(inv) - amount) < 0.005,
     );
     if (sameAmount.length === 0) return [];
 
@@ -137,7 +142,7 @@ export class BankReconciliationMatchingService {
       candidates.push({
         invoiceId: inv.id,
         folio: inv.folio,
-        total: Number(inv.total),
+        total: outstandingOf(inv),
         confidence: Math.min(1, confidence),
         reasons,
       });
@@ -161,6 +166,7 @@ export class BankReconciliationMatchingService {
         WHERE "bankStatementImportId" = ${bankStatementImportId}
           AND "organizationId" = ${organizationId}
           AND "matchStatus" = 'UNMATCHED'::"BankTransactionMatchStatus"
+          AND "isDebit" = false
       `,
     );
 
@@ -191,13 +197,13 @@ export class BankReconciliationMatchingService {
         await this.notifyAdmins(organizationId, row, best);
         autoMatched += 1;
       } else if (outcome === 'AMBIGUOUS') {
-        await this.prisma.withOrg(organizationId, (tx) =>
-          tx.$executeRaw`
-            UPDATE "BankTransaction"
-            SET "matchStatus" = 'AMBIGUOUS'::"BankTransactionMatchStatus"
-            WHERE "id" = ${row.id}
-          `,
-        );
+        // Se guardan los candidatos: la guardia de envío no le cobra a
+        // ninguno de ellos mientras una persona decide.
+        await this.setProposal(organizationId, row.id, 'AMBIGUOUS', {
+          kind: 'CANDIDATES',
+          invoiceIds: candidates.map((c) => c.invoiceId),
+          explanation: 'Varias facturas pendientes tienen ese mismo saldo; elige cuál pagó.',
+        });
         await this.activity.record({
           organizationId,
           action: 'BANK_TX_AMBIGUOUS',
@@ -206,8 +212,30 @@ export class BankReconciliationMatchingService {
           metadata: { candidates },
         });
         ambiguous += 1;
+      } else if (outcome === 'LOW_CONFIDENCE' && best) {
+        // Un solo candidato pero sin evidencia suficiente para auto-empatar:
+        // queda como sugerencia (sigue UNMATCHED) y frena los envíos a esa
+        // factura hasta que alguien lo revise.
+        await this.setProposal(organizationId, row.id, 'UNMATCHED', {
+          kind: 'SUGGESTED',
+          invoiceIds: [best.invoiceId],
+          explanation: best.reasons.join(' '),
+        });
+      } else if (outcome === 'NONE') {
+        // Sin coincidencia exacta: ¿varias facturas, retención o parcial?
+        const proposal = await this.proposeFor(row, organizationId);
+        if (proposal) {
+          await this.setProposal(organizationId, row.id, 'AMBIGUOUS', proposal);
+          await this.activity.record({
+            organizationId,
+            action: 'BANK_TX_PROPOSAL',
+            entityType: 'BankTransaction',
+            entityId: row.id,
+            metadata: { ...proposal },
+          });
+          ambiguous += 1;
+        }
       }
-      // NONE / LOW_CONFIDENCE: se deja UNMATCHED para revisión manual.
     }
 
     await this.refreshImportCounts(bankStatementImportId, organizationId);
@@ -219,63 +247,132 @@ export class BankReconciliationMatchingService {
    * matchedInvoiceId ya elegido a mano vía el endpoint correspondiente). Es
    * la ÚNICA operación de este motor que cambia Invoice.status a PAID.
    */
+  /**
+   * Confirmación humana de un depósito. Es la ÚNICA operación de este motor
+   * que registra pagos y puede pasar facturas a PAID. Todo pasa por el libro
+   * de pagos (InvoicePayment):
+   *  - match propuesto o factura indicada a mano: el depósito se aplica a esa
+   *    factura (si es menor al saldo queda como pago parcial);
+   *  - propuesta MULTI: se liquida el saldo de cada factura de la combinación;
+   *  - propuesta RETENTION: se da por liquidada aunque llegue neta.
+   * Nunca se aplica más que el saldo de una factura ni más que el depósito.
+   */
   async confirmMatch(
     transactionId: string,
     organizationId: string,
     userId: string,
     invoiceIdOverride?: string,
-  ): Promise<{ ok: true; invoiceId: string }> {
+  ): Promise<{
+    ok: true;
+    invoiceId: string;
+    invoiceIds: string[];
+    settled: string[];
+    partial: string[];
+  }> {
     const row = await this.getOwnedTransaction(transactionId, organizationId);
-    const invoiceId = invoiceIdOverride ?? row.matchedInvoiceId;
-    if (!invoiceId) {
+    if (row.isDebit) {
+      throw new BadRequestException(
+        'Un cargo (retiro) no se puede conciliar contra una factura por cobrar.',
+      );
+    }
+    if (row.matchStatus === 'MANUALLY_MATCHED') {
+      throw new ConflictException('Este depósito ya se concilió.');
+    }
+    const proposal = (row.matchProposal ?? null) as MatchProposal | null;
+    const deposit = Number(row.amount);
+
+    // A qué facturas se aplica y cuánto a cada una.
+    let plan: { invoiceId: string; amount: number | 'OUTSTANDING'; settle: boolean }[];
+    if (invoiceIdOverride) {
+      const isRetention =
+        proposal?.kind === 'RETENTION' && proposal.invoiceIds.includes(invoiceIdOverride);
+      plan = [{ invoiceId: invoiceIdOverride, amount: deposit, settle: isRetention }];
+    } else if (row.matchedInvoiceId) {
+      plan = [{ invoiceId: row.matchedInvoiceId, amount: deposit, settle: false }];
+    } else if (proposal?.kind === 'MULTI') {
+      plan = proposal.invoiceIds.map((id) => ({
+        invoiceId: id,
+        amount: 'OUTSTANDING' as const,
+        settle: false,
+      }));
+    } else if (proposal?.kind === 'RETENTION' && proposal.invoiceIds.length === 1) {
+      plan = [{ invoiceId: proposal.invoiceIds[0], amount: deposit, settle: true }];
+    } else if (
+      (proposal?.kind === 'PARTIAL' || proposal?.kind === 'SUGGESTED') &&
+      proposal.invoiceIds.length === 1
+    ) {
+      plan = [{ invoiceId: proposal.invoiceIds[0], amount: deposit, settle: false }];
+    } else {
       throw new BadRequestException(
         'Esta transacción no tiene un match propuesto para confirmar; indica invoiceId.',
       );
     }
 
+    const settled: string[] = [];
+    const partial: string[] = [];
     await this.prisma.withOrg(organizationId, async (tx) => {
-      const invoice = await tx.invoice.findFirst({
-        where: { id: invoiceId, organizationId, direction: 'RECEIVABLE', deletedAt: null },
-      });
-      if (!invoice) throw new NotFoundException('Factura vinculada no encontrada.');
-      if (invoice.status !== 'PENDING') {
-        throw new ConflictException('La factura ya no está pendiente de cobro.');
-      }
-
-      await tx.invoice.update({
-        where: { id: invoice.id },
-        data: { status: 'PAID', paidDate: new Date() },
-      });
-      await tx.invoiceAuditLog.create({
-        data: {
-          invoiceId: invoice.id,
-          userId,
-          action: 'STATUS_CHANGE',
-          previousStatus: 'PENDING',
-          newStatus: 'PAID',
-          metadata: { source: 'bank-reconciliation', bankTransactionId: transactionId },
-        },
-      });
-      await tx.$executeRaw`
+      // Primero se "toma" el depósito: si dos personas confirman a la vez,
+      // solo una lo logra y no se registra el pago dos veces.
+      const taken = await tx.$executeRaw`
         UPDATE "BankTransaction"
         SET "matchStatus" = 'MANUALLY_MATCHED'::"BankTransactionMatchStatus",
-            "matchedInvoiceId" = ${invoiceId},
+            "matchedInvoiceId" = ${plan[0].invoiceId},
             "matchedAt" = now(),
             "matchedBy" = ${userId}
         WHERE "id" = ${transactionId}
+          AND "matchStatus" <> 'MANUALLY_MATCHED'::"BankTransactionMatchStatus"
       `;
+      if (Number(taken) === 0) {
+        throw new ConflictException('Este depósito ya se concilió.');
+      }
+      let remaining = deposit;
+      for (const step of plan) {
+        const invoice = await tx.invoice.findFirst({
+          where: { id: step.invoiceId, organizationId, direction: 'RECEIVABLE', deletedAt: null },
+        });
+        if (!invoice) throw new NotFoundException('Factura vinculada no encontrada.');
+        if (invoice.status !== 'PENDING') {
+          throw new ConflictException('La factura ya no está pendiente de cobro.');
+        }
+        const saldo = outstandingOf(invoice);
+        const wanted = step.amount === 'OUTSTANDING' ? saldo : step.amount;
+        const amount = Math.round(Math.min(wanted, saldo, remaining) * 100) / 100;
+        if (amount <= 0) {
+          throw new BadRequestException('El depósito ya no alcanza para esta factura.');
+        }
+        const res = await applyPayment(tx, {
+          organizationId,
+          invoiceId: invoice.id,
+          amount,
+          paidAt: row.transactionDate,
+          source: 'BANK',
+          bankTransactionId: transactionId,
+          userId,
+          note: proposal && !invoiceIdOverride ? proposal.explanation : null,
+          settle: step.settle,
+        });
+        remaining = Math.round((remaining - amount) * 100) / 100;
+        (res.settled ? settled : partial).push(invoice.id);
+      }
     });
 
+    const invoiceIds = plan.map((p) => p.invoiceId);
     await this.activity.record({
       organizationId,
       userId,
       action: 'BANK_TX_MATCH_CONFIRMED',
       entityType: 'BankTransaction',
       entityId: transactionId,
-      metadata: { invoiceId },
+      metadata: {
+        invoiceId: invoiceIds[0],
+        invoiceIds,
+        settled,
+        partial,
+        kind: proposal?.kind ?? null,
+      },
     });
     await this.refreshImportCounts(row.bankStatementImportId, organizationId);
-    return { ok: true, invoiceId };
+    return { ok: true, invoiceId: invoiceIds[0], invoiceIds, settled, partial };
   }
 
   /** Rechaza el match propuesto/confirmado; vuelve a UNMATCHED para revisión
@@ -295,7 +392,8 @@ export class BankReconciliationMatchingService {
             "matchedInvoiceId" = NULL,
             "matchConfidence" = NULL,
             "matchedAt" = NULL,
-            "matchedBy" = NULL
+            "matchedBy" = NULL,
+            "matchProposal" = NULL
         WHERE "id" = ${transactionId}
       `,
     );
@@ -313,6 +411,52 @@ export class BankReconciliationMatchingService {
   }
 
   // ── helpers ───────────────────────────────────────────────
+
+  /** Propuesta compuesta (varias facturas, retención o parcial) para un depósito. */
+  private async proposeFor(
+    row: BankTransactionRow,
+    organizationId: string,
+  ): Promise<MatchProposal | null> {
+    const pending = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.invoice.findMany({
+        where: { organizationId, direction: 'RECEIVABLE', status: 'PENDING', deletedAt: null },
+        include: { customer: { select: { name: true, rfc: true } } },
+      }),
+    );
+    return proposeComposite(
+      {
+        amount: Number(row.amount),
+        description: row.description,
+        referenceNumber: row.referenceNumber,
+      },
+      pending.map((inv) => ({
+        id: inv.id,
+        folio: inv.folio,
+        total: Number(inv.total),
+        subtotal: Number(inv.subtotal),
+        amountPaid: Number(inv.amountPaid ?? 0),
+        dueDate: inv.dueDate,
+        customerId: inv.customerId,
+        customer: inv.customer,
+      })),
+    );
+  }
+
+  private async setProposal(
+    organizationId: string,
+    transactionId: string,
+    status: 'AMBIGUOUS' | 'UNMATCHED',
+    proposal: MatchProposal,
+  ): Promise<void> {
+    await this.prisma.withOrg(organizationId, (tx) =>
+      tx.$executeRaw`
+        UPDATE "BankTransaction"
+        SET "matchStatus" = ${status}::"BankTransactionMatchStatus",
+            "matchProposal" = ${JSON.stringify(proposal)}::jsonb
+        WHERE "id" = ${transactionId}
+      `,
+    );
+  }
 
   private async getOwnedTransaction(
     transactionId: string,
@@ -364,6 +508,7 @@ export class BankReconciliationMatchingService {
           COUNT(*) FILTER (WHERE "matchStatus" IN ('UNMATCHED','AMBIGUOUS','REJECTED')) AS unmatched
         FROM "BankTransaction"
         WHERE "bankStatementImportId" = ${bankStatementImportId}
+          AND "isDebit" = false
       `;
       const c = counts[0];
       await tx.$executeRaw`

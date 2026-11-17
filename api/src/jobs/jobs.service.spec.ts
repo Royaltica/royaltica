@@ -406,3 +406,58 @@ describe('JobsService — onboardingDataCompletion (Fase 5)', () => {
     expect(organization.organizationsPendingOnboardingData).not.toHaveBeenCalled();
   });
 });
+
+describe('JobsService — zona horaria de los crons que escriben a deudores', () => {
+  it.each(['receivableReminders', 'customerServiceMessage', 'collectionSequenceEngine'])(
+    '%s corre en hora de la Ciudad de México',
+    (method) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const fn = (JobsService.prototype as any)[method];
+      const options = Reflect.getMetadata('SCHEDULE_CRON_OPTIONS', fn);
+      expect(options).toMatchObject({ timeZone: 'America/Mexico_City' });
+    },
+  );
+});
+
+describe('JobsService — recordatorio antiguo de un paso (apagado por defecto)', () => {
+  const build = (legacy: 'true' | 'false') => {
+    const receivables = { runReminderScan: jest.fn().mockResolvedValue({ sent: 1 }) };
+    const config = {
+      get: jest.fn((key: string) =>
+        key === 'LEGACY_RECEIVABLE_REMINDER_ENABLED' ? legacy : 'true',
+      ),
+    };
+    const service = new JobsService(
+      {} as PrismaService,
+      {} as SettingsService,
+      {} as NotificationsService,
+      {} as EmailService,
+      {} as WhatsappService,
+      {} as UsageService,
+      receivables as unknown as ReceivablesService,
+      {} as DashboardService,
+      {} as ReportsService,
+      {} as CollectionSequencesService,
+      {} as CustomerScoringService,
+      {} as CustomerRiskService,
+      {} as OrganizationService,
+      config as unknown as ConfigService<Env, true>,
+      makeActivity(),
+      makeRedis(),
+      {} as PortfolioAnalysisService,
+    );
+    return { service, receivables };
+  };
+
+  it('no envía nada si LEGACY_RECEIVABLE_REMINDER_ENABLED no es "true"', async () => {
+    const { service, receivables } = build('false');
+    await expect(service.receivableReminders()).resolves.toEqual({ sent: 0 });
+    expect(receivables.runReminderScan).not.toHaveBeenCalled();
+  });
+
+  it('se puede volver a encender con la variable', async () => {
+    const { service, receivables } = build('true');
+    await expect(service.receivableReminders()).resolves.toEqual({ sent: 2 });
+    expect(receivables.runReminderScan).toHaveBeenCalledTimes(2);
+  });
+});

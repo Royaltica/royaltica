@@ -7,6 +7,7 @@ import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { CustomerPortalService } from '../customer-portal/customer-portal.service';
 import { SettingsService } from '../settings/settings.service';
+import { CollectionSafetyService } from '../collection-safety/collection-safety.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 
 const user: AuthenticatedUser = {
@@ -33,6 +34,8 @@ describe('ReceivablesService', () => {
       update: jest.Mock;
     };
     invoiceAuditLog: { create: jest.Mock };
+    invoicePayment: { create: jest.Mock; aggregate: jest.Mock; updateMany: jest.Mock };
+    collectionPolicy: { findFirst: jest.Mock };
     withOrg: jest.Mock;
   };
   let email: { sendCollectionReminder: jest.Mock; sendServiceMessage: jest.Mock };
@@ -40,6 +43,7 @@ describe('ReceivablesService', () => {
   let webhooks: { dispatch: jest.Mock };
   let customerPortal: { issuePortalLink: jest.Mock };
   let settings: { get: jest.Mock };
+  let safety: { checkBeforeSend: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -55,6 +59,12 @@ describe('ReceivablesService', () => {
         update: jest.fn(),
       },
       invoiceAuditLog: { create: jest.fn() },
+      invoicePayment: {
+        create: jest.fn().mockResolvedValue({ id: 'pay-1' }),
+        aggregate: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      collectionPolicy: { findFirst: jest.fn().mockResolvedValue(null) },
       withOrg: jest.fn(),
     };
     // withOrg simula la transacción con RLS: en el mock, simplemente corre
@@ -74,6 +84,7 @@ describe('ReceivablesService', () => {
     customerPortal = {
       issuePortalLink: jest.fn().mockResolvedValue('https://app.royaltica.com/portal-cliente/tok123'),
     };
+    safety = { checkBeforeSend: jest.fn().mockResolvedValue({ ok: true }) };
     settings = {
       get: jest.fn().mockResolvedValue({
         receivingBankName: null,
@@ -87,6 +98,7 @@ describe('ReceivablesService', () => {
       webhooks as unknown as WebhooksService,
       customerPortal as unknown as CustomerPortalService,
       settings as unknown as SettingsService,
+      safety as unknown as CollectionSafetyService,
     );
   });
 
@@ -224,6 +236,50 @@ describe('ReceivablesService', () => {
       expect.objectContaining({ data: expect.objectContaining({ status: InvoiceStatus.PENDING, paidDate: null }) }),
     );
     expect(webhooks.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('un cobro manual queda en el libro de pagos por el saldo pendiente', async () => {
+    prisma.invoice.findFirst.mockResolvedValue({
+      id: 'inv-1',
+      organizationId: 'org-1',
+      status: InvoiceStatus.PENDING,
+      total: 1160,
+      amountPaid: 160,
+    });
+    prisma.invoicePayment.aggregate.mockResolvedValue({ _sum: { amount: 1160 } });
+    (prisma.invoice as unknown as { findUniqueOrThrow: jest.Mock }).findUniqueOrThrow = jest
+      .fn()
+      .mockResolvedValue({ id: 'inv-1', status: InvoiceStatus.PAID, subtotal: 1000, iva: 160, total: 1160 });
+
+    await service.updateStatus(user, 'inv-1', InvoiceStatus.PAID, 'Transferencia BBVA', '2026-10-20');
+
+    expect(prisma.invoicePayment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        invoiceId: 'inv-1',
+        source: 'MANUAL',
+        paidAt: new Date('2026-10-20'),
+        note: 'Transferencia BBVA',
+      }),
+    });
+    expect(Number(prisma.invoicePayment.create.mock.calls[0][0].data.amount)).toBe(1000);
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'PAID', paidDate: new Date('2026-10-20') }),
+      }),
+    );
+    expect(webhooks.dispatch).toHaveBeenCalled();
+  });
+
+  it('al revertir un cobro, los pagos del libro quedan revertidos (no se borran)', async () => {
+    prisma.invoice.findFirst.mockResolvedValue({ id: 'inv-1', organizationId: 'org-1', status: InvoiceStatus.PAID });
+    prisma.invoice.update.mockResolvedValue({ id: 'inv-1', status: InvoiceStatus.PENDING, subtotal: 1, iva: 0, total: 1 });
+
+    await service.updateStatus(user, 'inv-1', InvoiceStatus.PENDING, 'Depósito rebotado');
+
+    expect(prisma.invoicePayment.updateMany).toHaveBeenCalledWith({
+      where: { invoiceId: 'inv-1', reversedAt: null },
+      data: expect.objectContaining({ reversedAt: expect.any(Date), reversedReason: 'Depósito rebotado' }),
+    });
   });
 
   it('registra el cobro con la fecha que indica el usuario y rechaza fechas futuras', async () => {
@@ -400,6 +456,84 @@ describe('ReceivablesService', () => {
       {},
     );
     expect(res).toEqual({ sent: 1 });
+  });
+
+  it('runReminderScan excluye bajas y organizaciones con el interruptor de emergencia', async () => {
+    prisma.invoice.findMany = jest.fn().mockResolvedValue([]);
+    await service.runReminderScan('T3');
+    expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          customer: { doNotContact: false },
+          organization: expect.objectContaining({ collectionPausedAt: null }),
+        }),
+      }),
+    );
+  });
+
+  it('runReminderScan no envía si la guardia de pago lo bloquea y lo deja en el historial', async () => {
+    prisma.invoice.findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'inv-9',
+        organizationId: 'org-1',
+        total: 300,
+        folio: 'F-9',
+        cfdiUuid: 'abcd1234-0000-0000-0000-000000000009',
+        date: new Date('2026-07-01'),
+        dueDate: new Date('2026-07-15'),
+        paymentClaimedAt: null,
+        customer: {
+          id: 'c-9',
+          name: 'Cliente 9',
+          email: 'c9@b.mx',
+          phone: null,
+          doNotContact: false,
+          paymentClaimedAt: new Date(),
+        },
+      },
+    ]);
+    safety.checkBeforeSend.mockResolvedValue({ ok: false, reason: 'payment-claimed' });
+
+    const res = await service.runReminderScan('T3');
+
+    expect(res).toEqual({ sent: 0 });
+    expect(email.sendCollectionReminder).not.toHaveBeenCalled();
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+    expect(prisma.invoiceAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        invoiceId: 'inv-9',
+        action: 'REMINDER_SKIPPED',
+        metadata: expect.objectContaining({ reason: 'payment-claimed' }),
+      }),
+    });
+  });
+
+  it('runReminderScan en modo sombra no envía ni marca el recordatorio', async () => {
+    prisma.invoice.findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'inv-10',
+        organizationId: 'org-1',
+        total: 300,
+        folio: 'F-10',
+        cfdiUuid: 'abcd1234-0000-0000-0000-000000000010',
+        date: new Date('2026-07-01'),
+        dueDate: new Date('2026-07-15'),
+        customer: { id: 'c-10', name: 'Cliente 10', email: 'c10@b.mx', phone: null },
+      },
+    ]);
+    prisma.collectionPolicy.findFirst.mockResolvedValue({
+      shadowMode: true,
+      paymentDataMaxAgeHours: null,
+    });
+
+    const res = await service.runReminderScan('T3');
+
+    expect(res).toEqual({ sent: 0 });
+    expect(email.sendCollectionReminder).not.toHaveBeenCalled();
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+    expect(prisma.invoiceAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ invoiceId: 'inv-10', action: 'REMINDER_SHADOW' }),
+    });
   });
 
   it('runServiceMessageScan (FR-06) manda el mensaje de mantenimiento a buenos pagadores sin mencionar deuda', async () => {

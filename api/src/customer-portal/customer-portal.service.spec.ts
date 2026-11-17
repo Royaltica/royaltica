@@ -14,7 +14,7 @@ describe('CustomerPortalService', () => {
   let prisma: {
     customer: { findUnique: jest.Mock; findFirst: jest.Mock };
     organization: { findUnique: jest.Mock };
-    invoice: { findMany: jest.Mock; findFirst: jest.Mock };
+    invoice: { findMany: jest.Mock; findFirst: jest.Mock; update: jest.Mock };
     activityLog: { findFirst: jest.Mock; findMany: jest.Mock };
     withOrg: jest.Mock;
     $queryRaw: jest.Mock;
@@ -38,7 +38,7 @@ describe('CustomerPortalService', () => {
     prisma = {
       customer: { findUnique: jest.fn(), findFirst: jest.fn() },
       organization: { findUnique: jest.fn() },
-      invoice: { findMany: jest.fn(), findFirst: jest.fn() },
+      invoice: { findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn().mockResolvedValue({}) },
       activityLog: { findFirst: jest.fn(), findMany: jest.fn() },
       withOrg: jest.fn(),
       $queryRaw: jest.fn(),
@@ -160,8 +160,13 @@ describe('CustomerPortalService', () => {
         ORG_ID,
         expect.objectContaining({ type: 'CUSTOMER_PAID_CLAIM' }),
       );
-      // El servicio nunca llama invoice.update: el status real no se toca.
-      expect((prisma.invoice as any).update).toBeUndefined();
+      // El status real no se toca: solo se marca el "ya pagué" (pausa de
+      // envíos automáticos 72 h, guardia payment-claimed).
+      expect(prisma.invoice.update).toHaveBeenCalledTimes(1);
+      expect(prisma.invoice.update).toHaveBeenCalledWith({
+        where: { id: 'inv-1' },
+        data: { paymentClaimedAt: expect.any(Date) },
+      });
     });
 
     it('deduplica clicks repetidos: no vuelve a notificar a los admins', async () => {

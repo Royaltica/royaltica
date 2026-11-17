@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
-import { IsBoolean } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, Max, Min, ValidateIf } from 'class-validator';
 import { CollectionSequencesService } from './collection-sequences.service';
 import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermissions } from '../auth/decorators/permissions.decorator';
@@ -7,9 +7,27 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AREAS } from '../auth/constants/permissions';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 
-class AutoSendDto {
+class PlanSettingsDto {
+  /** true = el motor envía solo cada mañana; false = con aprobación de una persona. */
+  @IsOptional()
   @IsBoolean()
-  autoSend!: boolean;
+  autoSend?: boolean;
+
+  /** Modo sombra: calcula y registra lo que enviaría, sin enviar. */
+  @IsOptional()
+  @IsBoolean()
+  shadowMode?: boolean;
+
+  /**
+   * Horas máximas de antigüedad del último estado de cuenta para enviar
+   * (guardia de frescura). null = apagada.
+   */
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsInt()
+  @Min(1)
+  @Max(24 * 14)
+  paymentDataMaxAgeHours?: number | null;
 }
 
 /**
@@ -35,9 +53,12 @@ export class LevelPlanController {
     return this.sequences.ensureLevelPlan(user);
   }
 
-  /** Recordatorios automáticos cada mañana, o con aprobación de una persona. */
+  /**
+   * Ajustes del plan: envío automático o con aprobación, modo sombra y
+   * guardia de frescura del estado de cuenta. Solo cambia lo que viene.
+   */
   @Patch()
-  setAutoSend(@CurrentUser() user: AuthenticatedUser, @Body() dto: AutoSendDto) {
-    return this.sequences.setAutoSend(user, dto.autoSend);
+  updateSettings(@CurrentUser() user: AuthenticatedUser, @Body() dto: PlanSettingsDto) {
+    return this.sequences.updatePlanSettings(user, dto);
   }
 }

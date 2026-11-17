@@ -25,6 +25,7 @@ import { CollectionSequencesModule } from './collection-sequences/collection-seq
 import { AgentModule } from './agent/agent.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { PortfolioAnalysisModule } from './portfolio-analysis/portfolio-analysis.module';
+import { CollectionSafetyModule } from './collection-safety/collection-safety.module';
 import { ReportsModule } from './reports/reports.module';
 import { GeminiModule } from './gemini/gemini.module';
 import { SatModule } from './sat/sat.module';
@@ -121,6 +122,7 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     AgentModule,
     DashboardModule,
     PortfolioAnalysisModule,
+    CollectionSafetyModule,
     ReportsModule,
     InvoicesModule,
     FiscalModule,

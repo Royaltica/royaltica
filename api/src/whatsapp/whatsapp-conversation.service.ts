@@ -23,6 +23,7 @@ import {
 } from './collection-templates';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import type { Env } from '../config/env.validation';
+import { outstandingOf } from '../payment-ledger/payment-ledger';
 
 /** Ventana de servicio de Meta: texto libre solo 24h después del último mensaje del cliente. */
 export const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -45,7 +46,10 @@ type CustomerContact = Pick<
   Customer,
   'id' | 'organizationId' | 'name' | 'contact' | 'phone' | 'financeContactName' | 'financeContactPhone'
 >;
-type InvoiceLite = Pick<Invoice, 'id' | 'folio' | 'cfdiUuid' | 'total' | 'currency' | 'dueDate'>;
+type InvoiceLite = Pick<Invoice, 'id' | 'folio' | 'cfdiUuid' | 'total' | 'currency' | 'dueDate'> & {
+  // Pagos parciales del libro: el monto que se le pide al cliente es el saldo.
+  amountPaid?: Invoice['amountPaid'] | number | null;
+};
 
 /**
  * Conversación de WhatsApp con el cliente deudor (CxC). Es la pieza que une
@@ -281,6 +285,8 @@ export class WhatsappConversationService {
         id: i.id,
         folio: i.folio ?? i.cfdiUuid.slice(0, 8),
         total: Number(i.total),
+        // Saldo por cobrar (total menos pagos parciales registrados).
+        outstanding: outstandingOf(i),
         currency: i.currency,
         dueDate: i.dueDate,
         daysToDue: i.dueDate ? daysBetween(new Date(), i.dueDate) : null,
@@ -374,7 +380,7 @@ export class WhatsappConversationService {
             const d = i.dueDate ? daysBetween(new Date(), i.dueDate) : null;
             const cuando =
               d == null ? 'sin fecha' : d > 0 ? `vence en ${d} día(s)` : d === 0 ? 'vence hoy' : `venció hace ${-d} día(s)`;
-            return `- Factura ${i.folio ?? i.cfdiUuid.slice(0, 8)}: ${formatMoney(Number(i.total), i.currency)}, vencimiento ${formatDate(i.dueDate)} (${cuando})`;
+            return `- Factura ${i.folio ?? i.cfdiUuid.slice(0, 8)}: ${formatMoney(outstandingOf(i), i.currency)}, vencimiento ${formatDate(i.dueDate)} (${cuando})`;
           })
           .join('\n')
       : '- (sin facturas pendientes)';
@@ -639,7 +645,8 @@ ${hilo}
     return {
       contacto: customer.financeContactName ?? customer.contact ?? customer.name,
       folio: invoice.folio ?? invoice.cfdiUuid.slice(0, 8),
-      monto: formatMoney(Number(invoice.total), invoice.currency, locale),
+      // Saldo, no el total: si ya hubo un pago parcial no se pide de más.
+      monto: formatMoney(outstandingOf(invoice), invoice.currency, locale),
       fecha: formatDate(invoice.dueDate, locale),
       liga,
     };
@@ -664,9 +671,80 @@ ${hilo}
           deletedAt: null,
         },
         orderBy: [{ dueDate: 'asc' }],
-        select: { id: true, folio: true, cfdiUuid: true, total: true, currency: true, dueDate: true },
+        select: {
+          id: true,
+          folio: true,
+          cfdiUuid: true,
+          total: true,
+          amountPaid: true,
+          currency: true,
+          dueDate: true,
+        },
       }),
     );
+  }
+
+  // ── Bandeja de mensajes sin dueño claro ──
+
+  /** Mensajes entrantes que no se pudieron atribuir a un cliente de ESTA organización. */
+  async listUnmatched(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    return this.prisma.withOrg(organizationId, (tx) =>
+      tx.whatsappInboundUnmatched.findMany({
+        where: { organizationId, resolvedAt: null },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+    );
+  }
+
+  /**
+   * Asigna un mensaje sin dueño a un cliente: queda en su hilo (abre la
+   * ventana de 24 h como cualquier respuesta) y sale de la bandeja.
+   */
+  async assignUnmatched(user: AuthenticatedUser, id: string, customerId: string) {
+    const organizationId = this.requireOrg(user);
+    const customer = await this.loadCustomer(user, customerId);
+    return this.prisma.withOrg(organizationId, async (tx) => {
+      const row = await tx.whatsappInboundUnmatched.findFirst({
+        where: { id, organizationId, resolvedAt: null },
+      });
+      if (!row) throw new NotFoundException('Mensaje no encontrado o ya resuelto.');
+      const kind: WhatsappMessageKind =
+        row.kind === 'BUTTON' || row.kind === 'MEDIA' ? row.kind : 'TEXT';
+      await tx.whatsappMessage.create({
+        data: {
+          organizationId,
+          customerId: customer.id,
+          invoiceId: null,
+          direction: 'INBOUND',
+          kind,
+          body: row.body,
+          waMessageId: row.waMessageId,
+          phoneNumberId: row.phoneNumberId,
+          createdAt: row.createdAt,
+        },
+      });
+      return tx.whatsappInboundUnmatched.update({
+        where: { id },
+        data: { resolvedAt: new Date(), resolvedByUserId: user.id, resolvedCustomerId: customer.id },
+      });
+    });
+  }
+
+  /** Descarta un mensaje sin dueño (no era de ningún cliente). */
+  async dismissUnmatched(user: AuthenticatedUser, id: string) {
+    const organizationId = this.requireOrg(user);
+    return this.prisma.withOrg(organizationId, async (tx) => {
+      const row = await tx.whatsappInboundUnmatched.findFirst({
+        where: { id, organizationId, resolvedAt: null },
+      });
+      if (!row) throw new NotFoundException('Mensaje no encontrado o ya resuelto.');
+      return tx.whatsappInboundUnmatched.update({
+        where: { id },
+        data: { resolvedAt: new Date(), resolvedByUserId: user.id },
+      });
+    });
   }
 
   private async loadCustomer(user: AuthenticatedUser, customerId: string) {

@@ -138,6 +138,7 @@ export class BankReconciliationService {
       tx.$queryRaw<BankTransactionRow[]>`
         SELECT * FROM "BankTransaction"
         WHERE "organizationId" = ${organizationId}
+          AND "isDebit" = false
           AND "matchStatus" IN (
             'AUTO_MATCHED'::"BankTransactionMatchStatus",
             'AMBIGUOUS'::"BankTransactionMatchStatus",

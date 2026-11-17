@@ -45,6 +45,11 @@ export interface BankTransactionRow {
   matchedAt: Date | null;
   matchedBy: string | null;
   createdAt: Date;
+  /** true = cargo (retiro); nunca se concilia contra facturas por cobrar. */
+  isDebit: boolean;
+  dedupeKey: string | null;
+  /** Propuesta del motor (ver composite-match.ts). */
+  matchProposal: Prisma.JsonValue | null;
 }
 
 /** Candidato de match producido por matchTransaction: una Invoice pendiente

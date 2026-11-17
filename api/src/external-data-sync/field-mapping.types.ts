@@ -58,6 +58,10 @@ export const IDENTITY_MAPPING: Record<ExternalSyncEntityType, FieldMapping> = {
     amount: 'amount',
     description: 'description',
     referenceNumber: 'referenceNumber',
+    // Estados de cuenta mexicanos: columnas separadas de Cargo y Abono.
+    // Opcionales; si se mapean, sustituyen a `amount`.
+    creditAmount: 'creditAmount',
+    debitAmount: 'debitAmount',
   },
 };
 
@@ -72,7 +76,10 @@ export const REQUIRED_FIELDS: Record<ExternalSyncEntityType, string[]> = {
   // referenceNumber es opcional a propósito: muchos exports bancarios no
   // traen columna de referencia, la conciliación igual funciona solo con
   // monto + fecha + descripción (ver bank-reconciliation-matching.service.ts).
-  BANK_STATEMENT: ['transactionDate', 'amount', 'description'],
+  // El monto puede venir en una columna (`amount`, con signo) o en dos
+  // (`creditAmount`/`debitAmount`, típico de bancos mexicanos): se valida
+  // aparte en validateMappedRow.
+  BANK_STATEMENT: ['transactionDate', 'description'],
 };
 
 /**
@@ -102,6 +109,12 @@ export function validateMappedRow(
     !CUSTOMER_CONTACT_FIELDS.some((f) => row[f] && row[f]!.trim().length > 0)
   ) {
     errors.push('El cliente necesita al menos un medio de contacto (email, phone o el teléfono/correo de finanzas).');
+  }
+  if (
+    entityType === 'BANK_STATEMENT' &&
+    !['amount', 'creditAmount', 'debitAmount'].some((f) => row[f] && row[f]!.trim().length > 0)
+  ) {
+    errors.push('Falta el monto: "amount" o "creditAmount"/"debitAmount" (abono/cargo).');
   }
   return errors;
 }

@@ -275,4 +275,59 @@ describe('WhatsappConversationService', () => {
       expect(por.nivel_3.metaStatus).toBe('MISSING'); // existe, pero no en es_MX
     });
   });
+
+  describe('bandeja de mensajes sin dueño', () => {
+    const row = {
+      id: 'u-1',
+      organizationId: 'org-1',
+      fromPhone: '5215512345678',
+      phoneNumberId: 'PN-1',
+      waMessageId: 'wamid.U1',
+      kind: 'TEXT',
+      body: 'Ya pagué',
+      createdAt: hoursAgo(2),
+      resolvedAt: null,
+    };
+
+    beforeEach(() => {
+      (prisma as Record<string, unknown>).whatsappInboundUnmatched = {
+        findMany: jest.fn().mockResolvedValue([row]),
+        findFirst: jest.fn().mockResolvedValue(row),
+        update: jest.fn().mockImplementation(({ data }) => ({ ...row, ...data })),
+      };
+    });
+
+    it('asignar lo pasa al hilo del cliente (abre la ventana) y lo saca de la bandeja', async () => {
+      const unmatched = (prisma as unknown as { whatsappInboundUnmatched: Record<string, jest.Mock> })
+        .whatsappInboundUnmatched;
+      const r = await service.assignUnmatched(user, 'u-1', customer.id);
+
+      expect(prisma.whatsappMessage.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          customerId: customer.id,
+          direction: 'INBOUND',
+          body: 'Ya pagué',
+          waMessageId: 'wamid.U1',
+        }),
+      });
+      expect(unmatched.update).toHaveBeenCalledWith({
+        where: { id: 'u-1' },
+        data: expect.objectContaining({ resolvedCustomerId: customer.id, resolvedAt: expect.any(Date) }),
+      });
+      expect(r.resolvedCustomerId).toBe(customer.id);
+    });
+
+    it('descartar lo saca de la bandeja sin crear mensajes', async () => {
+      await service.dismissUnmatched(user, 'u-1');
+      expect(prisma.whatsappMessage.create).not.toHaveBeenCalled();
+    });
+
+    it('un mensaje ya resuelto o de otra organización da 404', async () => {
+      const unmatched = (prisma as unknown as { whatsappInboundUnmatched: Record<string, jest.Mock> })
+        .whatsappInboundUnmatched;
+      unmatched.findFirst.mockResolvedValue(null);
+      await expect(service.dismissUnmatched(user, 'u-1')).rejects.toThrow('no encontrado');
+    });
+  });
 });
+

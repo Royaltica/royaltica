@@ -31,6 +31,12 @@ export const envSchema = z.object({
   // para cualquier usuario existente solo con su email.
   ALLOW_DEV_LOGIN: z.enum(['true', 'false']).optional().default('false'),
 
+  // Recordatorio antiguo de un solo paso (cron "receivable-reminder", 10:00).
+  // Apagado por decisión del 15 nov 2026: a los deudores solo les escribe el
+  // motor por niveles (un solo camino, con guardias y modo sombra). Se deja
+  // el interruptor para volver a encenderlo sin desplegar código.
+  LEGACY_RECEIVABLE_REMINDER_ENABLED: z.enum(['true', 'false']).optional().default('false'),
+
   // Infraestructura — obligatorias
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
