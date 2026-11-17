@@ -33,7 +33,7 @@ import { useCobranza, type CuentaViva } from './store.tsx';
 import { useAlertas, type Alerta } from './alertas.tsx';
 import { ModoEnvio } from './WhatsappPanel.tsx';
 import { EJEMPLO_VARS, tipoDeudor } from './catalogoDeudores.ts';
-import { api, type CollectionStatus } from '../../../../services/apiClient.ts';
+import { api, type CollectionStatus, type ShadowReport } from '../../../../services/apiClient.ts';
 
 // Configuración de Cobranza IA (solo Administrador). Por ahora es diseño con
 // datos de ejemplo: se guarda en este navegador hasta conectar el backend.
@@ -867,12 +867,8 @@ function Reglas() {
         <div className="mb-4">
           <ModoEnvio />
         </div>
-        <Fila titulo="Hora de envío" detalle="Cuando salen los mensajes automáticos del día.">
-          <select value={r.hora} onChange={(e) => cambiar({ hora: e.target.value })} className="glass-campo rounded-full px-3.5 py-2 text-[12.5px] font-semibold outline-none">
-            {['09:00', '10:00', '11:00', '12:00', '13:00', '16:00'].map((h) => (
-              <option key={h}>{h}</option>
-            ))}
-          </select>
+        <Fila titulo="Hora de envío" detalle="Cuando salen los mensajes automáticos del día (hora del centro de México). Se guarda en el servidor.">
+          <HoraMotor />
         </Fila>
         <Fila titulo="Días con mensajes">
           <div className="flex gap-1">
@@ -926,6 +922,72 @@ function Reglas() {
         </button>
       </Tarjeta>
       {nodo}
+    </div>
+  );
+}
+
+/** Hora del motor de cobranza (conectada al backend: collectionEngineHour). */
+function HoraMotor() {
+  const { avisar, nodo } = useAviso();
+  const [hora, setHora] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    api
+      .getSettings()
+      .then((s) => setHora(s.collectionEngineHour ?? 11))
+      .catch(() => setHora(null));
+  }, []);
+  const guardar = async (h: number) => {
+    const antes = hora;
+    setHora(h);
+    try {
+      await api.updateSettings({ collectionEngineHour: h });
+      avisar('Hora de envío guardada');
+    } catch (e) {
+      setHora(antes);
+      avisar(e instanceof Error ? e.message : 'No se pudo guardar', { error: true });
+    }
+  };
+  if (hora === null) return <span className="text-[12px] text-brand-ink/40">—</span>;
+  return (
+    <>
+      <select
+        value={hora}
+        onChange={(e) => guardar(Number(e.target.value))}
+        className="glass-campo rounded-full px-3.5 py-2 text-[12.5px] font-semibold outline-none"
+        aria-label="Hora de envío"
+      >
+        {[9, 10, 11, 12, 13, 14, 16].map((h) => (
+          <option key={h} value={h}>{`${String(h).padStart(2, '0')}:00`}</option>
+        ))}
+      </select>
+      {nodo}
+    </>
+  );
+}
+
+/** Lo que el modo sombra habría enviado en las últimas 24 h. */
+function ReporteSombra() {
+  const [rep, setRep] = React.useState<ShadowReport | null | undefined>(undefined);
+  React.useEffect(() => {
+    api.getShadowReport().then(setRep).catch(() => setRep(null));
+  }, []);
+  if (rep === undefined) return null;
+  if (rep === null) return <p className="text-[12px] text-brand-ink/45 mt-2">No se pudo cargar lo que se habría enviado.</p>;
+  if (rep.total === 0) return <p className="text-[12px] text-brand-ink/45 mt-2">En las últimas 24 horas no se habría enviado nada.</p>;
+  return (
+    <div className="mt-3 rounded-2xl bg-brand-ink/[0.03] p-3">
+      <div className="text-[12.5px] font-semibold text-brand-ink mb-2">
+        En las últimas 24 horas se habrían enviado {rep.total} mensaje(s):
+      </div>
+      <ul className="space-y-1 max-h-48 overflow-auto">
+        {rep.items.slice(0, 50).map((it, i) => (
+          <li key={i} className="text-[12px] text-brand-ink/65">
+            {it.customerName ?? 'Cliente'} · factura {it.folio ?? '—'} · {it.channel ?? '—'}
+            {it.template ? ` (${it.template})` : ''}
+            {typeof it.daysOverdue === 'number' ? ` · ${it.daysOverdue} día(s) respecto al vencimiento` : ''}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -1040,6 +1102,7 @@ function SeguridadEnvios() {
           <Interruptor activo={sombra} onChange={(v) => !ocupado && guardarPlan({ shadowMode: v })} etiqueta="Modo sombra" />
         )}
       </Fila>
+      {sombra && <ReporteSombra />}
       <Fila
         icono={<Database size={16} />}
         titulo="Exigir estado de cuenta reciente"

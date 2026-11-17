@@ -12,6 +12,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { localHour, isBlackoutDate } from '../common/timezone.util';
+import { SettingsService } from '../settings/settings.service';
 import { renderMessageTemplate } from '../common/message-template.util';
 import { assertLegalTemplateCompliant } from '../common/legal-template-guard';
 import { ActivityLogService } from '../activity/activity-log.service';
@@ -168,6 +169,29 @@ const LEVEL_PLAN_STEPS = [
   },
 ];
 
+/** Motivos de omisión que son guardias de pago (cuentan en el resumen del modo sombra). */
+const SAFETY_REASONS = new Set([
+  'collection-paused',
+  'payment-pending-review',
+  'payment-claimed',
+  'recently-reverted',
+  'stale-payment-data',
+]);
+
+/** Fecha local (YYYY-MM-DD) en la zona horaria dada; UTC si la zona no es válida. */
+export function localDay(date: Date, timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
 /** Resultado de una corrida de `advanceSequence` sobre una factura. */
 export type AdvanceOutcome =
   | 'sent'
@@ -202,6 +226,7 @@ export class CollectionSequencesService {
     private readonly aiDecision: CollectionSequencesAiDecisionService,
     private readonly conversations: WhatsappConversationService,
     private readonly safety: CollectionSafetyService,
+    private readonly settings: SettingsService,
   ) {}
 
   // ── CRUD de pasos (anidado bajo una CollectionPolicy) ─────
@@ -639,11 +664,19 @@ export class CollectionSequencesService {
   // ── Motor de escalamiento (uso interno, disparado por JobsService) ──
 
   /**
-   * Recorre las organizaciones con una CollectionPolicy activa y avanza la
-   * secuencia de cada factura CxC vencida. Idempotente: cada corrida evalúa
-   * el estado real (run.currentStepOrder, guard rails) antes de actuar.
+   * Corre el motor para las organizaciones a las que ya les toca hoy. Se
+   * dispara cada hora (JobsService); cada organización se procesa UNA vez
+   * por día local, a partir de su hora configurada (`collectionEngineHour`,
+   * 11:00 por defecto) y dentro de su ventana de contacto. Así cada cliente
+   * tiene la mañana para subir su estado de cuenta antes de que salga nada.
+   * `force` ignora la hora y la marca diaria (pruebas o corrida manual).
+   * Idempotente: cada corrida evalúa el estado real (run.currentStepOrder,
+   * guard rails) antes de actuar.
    */
-  async runEngineScan(): Promise<{
+  async runEngineScan(
+    now: Date = new Date(),
+    opts: { force?: boolean } = {},
+  ): Promise<{
     evaluated: number;
     sent: number;
     escalated: number;
@@ -669,41 +702,72 @@ export class CollectionSequencesService {
       // Candado por organización: si otra réplica (o una corrida encimada)
       // ya está procesando esta organización, no se procesa dos veces.
       const ran = await this.safety.withOrganizationLock(org.id, async () => {
-        // Planes por niveles (cobranza temprana): sus pasos tienen días
-        // NEGATIVOS (antes del vencimiento), así que también se evalúan las
-        // facturas que vencen dentro de ese horizonte. Sin pasos negativos el
-        // horizonte es 0 y se comporta exactamente como antes (solo vencidas).
-        const earliest = await this.prisma.collectionSequenceStep.aggregate({
-          where: {
-            deletedAt: null,
-            collectionPolicy: { organizationId: org.id, isActive: true, deletedAt: null },
-          },
-          _min: { daysAfterDue: true },
+        const policy = await this.prisma.collectionPolicy.findFirst({
+          where: { organizationId: org.id, isActive: true, deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+          select: { timezone: true, shadowMode: true, allowedContactEndHour: true },
         });
-        const horizonDays = Math.max(0, -(earliest._min.daysAfterDue ?? 0));
-        const invoices = await this.prisma.invoice.findMany({
-          where: {
-            organizationId: org.id,
-            direction: 'RECEIVABLE',
-            deletedAt: null,
-            status: InvoiceStatus.PENDING,
-            dueDate: { not: null, lt: new Date(Date.now() + horizonDays * 86_400_000) },
-          },
-          select: { id: true },
-        });
-
-        for (const inv of invoices) {
-          evaluated += 1;
-          const result = await this.advanceSequence(inv.id);
-          if (result.outcome === 'sent' || result.outcome === 'manual-required') {
-            sent += 1;
-          } else if (result.outcome === 'escalated') {
-            escalated += 1;
-          } else {
-            skipped += 1;
-          }
+        const timezone = policy?.timezone || 'America/Mexico_City';
+        let dayKey: string | null = null;
+        if (!opts.force) {
+          const settings = await this.settings.get(org.id);
+          const hour = localHour(now, timezone);
+          if (hour < settings.collectionEngineHour) return 'not-yet' as const;
+          if (policy && hour >= policy.allowedContactEndHour) return 'window-closed' as const;
+          dayKey = localDay(now, timezone);
+          if (!(await this.safety.claimDailyRun(org.id, dayKey))) return 'already-ran' as const;
         }
-        return true;
+
+        const tally = { shadow: 0, blocked: 0, sent: 0 };
+        try {
+          // Planes por niveles (cobranza temprana): sus pasos tienen días
+          // NEGATIVOS (antes del vencimiento), así que también se evalúan las
+          // facturas que vencen dentro de ese horizonte. Sin pasos negativos el
+          // horizonte es 0 y se comporta exactamente como antes (solo vencidas).
+          const earliest = await this.prisma.collectionSequenceStep.aggregate({
+            where: {
+              deletedAt: null,
+              collectionPolicy: { organizationId: org.id, isActive: true, deletedAt: null },
+            },
+            _min: { daysAfterDue: true },
+          });
+          const horizonDays = Math.max(0, -(earliest._min.daysAfterDue ?? 0));
+          const invoices = await this.prisma.invoice.findMany({
+            where: {
+              organizationId: org.id,
+              direction: 'RECEIVABLE',
+              deletedAt: null,
+              status: InvoiceStatus.PENDING,
+              dueDate: { not: null, lt: new Date(now.getTime() + horizonDays * 86_400_000) },
+            },
+            select: { id: true },
+          });
+
+          for (const inv of invoices) {
+            evaluated += 1;
+            const result = await this.advanceSequence(inv.id);
+            if (result.outcome === 'sent' || result.outcome === 'manual-required') {
+              sent += 1;
+              tally.sent += 1;
+            } else if (result.outcome === 'escalated') {
+              escalated += 1;
+            } else {
+              skipped += 1;
+              if (result.reason === 'shadow-mode') tally.shadow += 1;
+              else if (result.reason && SAFETY_REASONS.has(result.reason)) tally.blocked += 1;
+            }
+          }
+        } catch (err) {
+          // Falló a medias: se libera la marca del día para reintentar en la
+          // siguiente hora (lo ya enviado no se repite: el motor es idempotente).
+          if (dayKey) await this.safety.releaseDailyRun(org.id, dayKey);
+          throw err;
+        }
+
+        if (policy?.shadowMode) {
+          await this.notifyShadowSummary(org.id, tally);
+        }
+        return 'ran' as const;
       });
       if (ran === null) {
         this.logger.warn(
@@ -712,10 +776,88 @@ export class CollectionSequencesService {
       }
     }
 
-    this.logger.log(
-      `collection-sequence-engine: ${evaluated} evaluada(s), ${sent} enviada(s), ${escalated} escalada(s), ${skipped} omitida(s).`,
-    );
+    if (evaluated > 0) {
+      this.logger.log(
+        `collection-sequence-engine: ${evaluated} evaluada(s), ${sent} enviada(s), ${escalated} escalada(s), ${skipped} omitida(s).`,
+      );
+    }
     return { evaluated, sent, escalated, skipped };
+  }
+
+  /**
+   * Resumen diario del modo sombra para los administradores: cuántos
+   * mensajes habría enviado hoy y cuántos frenaron las guardias de pago.
+   */
+  private async notifyShadowSummary(
+    organizationId: string,
+    tally: { shadow: number; blocked: number },
+  ): Promise<void> {
+    try {
+      await this.notifications.notifyOrgAdmins(organizationId, {
+        type: 'COLLECTION_SHADOW_SUMMARY',
+        title: 'Modo sombra: resumen de hoy',
+        body:
+          tally.shadow === 0 && tally.blocked === 0
+            ? 'Hoy no se habría enviado ningún mensaje.'
+            : `Hoy se habrían enviado ${tally.shadow} mensaje(s); ${tally.blocked} se frenaron por posible pago (depósito sin revisar, "ya pagué" o cobro revertido). No se envió nada: el modo sombra está encendido.`,
+        metadata: { shadow: tally.shadow, blocked: tally.blocked },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `No se pudo enviar el resumen del modo sombra (${organizationId}): ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /** Lo que el modo sombra habría enviado desde `since` (para la pantalla). */
+  async shadowReport(user: AuthenticatedUser, since?: Date) {
+    const organizationId = this.requireOrg(user);
+    const from = since ?? new Date(Date.now() - 24 * 3600 * 1000);
+    const logs = await this.prisma.withOrg(organizationId, (tx) =>
+      tx.activityLog.findMany({
+        where: {
+          organizationId,
+          action: 'COLLECTION_SEQUENCE_STEP_SHADOW',
+          createdAt: { gte: from },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+      }),
+    );
+    const invoiceIds = [
+      ...new Set(
+        logs
+          .map((l) => (l.metadata as { invoiceId?: string } | null)?.invoiceId)
+          .filter((x): x is string => typeof x === 'string'),
+      ),
+    ];
+    const invoices = invoiceIds.length
+      ? await this.prisma.withOrg(organizationId, (tx) =>
+          tx.invoice.findMany({
+            where: { id: { in: invoiceIds }, organizationId },
+            select: { id: true, folio: true, cfdiUuid: true, customer: { select: { name: true } } },
+          }),
+        )
+      : [];
+    const byId = new Map(invoices.map((i) => [i.id, i]));
+    return {
+      since: from.toISOString(),
+      total: logs.length,
+      items: logs.map((l) => {
+        const m = (l.metadata ?? {}) as Record<string, unknown>;
+        const inv = byId.get(String(m.invoiceId ?? ''));
+        return {
+          at: l.createdAt,
+          invoiceId: m.invoiceId ?? null,
+          folio: inv ? this.folioOf(inv) : null,
+          customerName: inv?.customer?.name ?? null,
+          channel: m.channel ?? null,
+          template: m.template ?? null,
+          daysOverdue: m.daysOverdue ?? null,
+          stepOrder: m.stepOrder ?? null,
+        };
+      }),
+    };
   }
 
   /**
