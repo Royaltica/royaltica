@@ -732,6 +732,68 @@ ${hilo}
     });
   }
 
+  // ── Bandeja de la plataforma (superadministrador) ──
+  // Mensajes cuyo teléfono no es de ningún cliente o coincide con clientes
+  // de VARIAS organizaciones (organizationId null). Consultas de sistema,
+  // sin withOrg, solo expuestas a SUPERADMIN.
+
+  async listUnmatchedPlatform() {
+    return this.prisma.whatsappInboundUnmatched.findMany({
+      where: { organizationId: null, resolvedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+  }
+
+  async assignUnmatchedPlatform(adminUserId: string, id: string, customerId: string) {
+    const row = await this.prisma.whatsappInboundUnmatched.findFirst({
+      where: { id, organizationId: null, resolvedAt: null },
+    });
+    if (!row) throw new NotFoundException('Mensaje no encontrado o ya resuelto.');
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: { id: true, organizationId: true },
+    });
+    if (!customer) throw new NotFoundException('Cliente no encontrado.');
+    const kind: WhatsappMessageKind =
+      row.kind === 'BUTTON' || row.kind === 'MEDIA' ? row.kind : 'TEXT';
+    return this.prisma.$transaction(async (tx) => {
+      await tx.whatsappMessage.create({
+        data: {
+          organizationId: customer.organizationId,
+          customerId: customer.id,
+          invoiceId: null,
+          direction: 'INBOUND',
+          kind,
+          body: row.body,
+          waMessageId: row.waMessageId,
+          phoneNumberId: row.phoneNumberId,
+          createdAt: row.createdAt,
+        },
+      });
+      return tx.whatsappInboundUnmatched.update({
+        where: { id },
+        data: {
+          organizationId: customer.organizationId,
+          resolvedAt: new Date(),
+          resolvedByUserId: adminUserId,
+          resolvedCustomerId: customer.id,
+        },
+      });
+    });
+  }
+
+  async dismissUnmatchedPlatform(adminUserId: string, id: string) {
+    const row = await this.prisma.whatsappInboundUnmatched.findFirst({
+      where: { id, organizationId: null, resolvedAt: null },
+    });
+    if (!row) throw new NotFoundException('Mensaje no encontrado o ya resuelto.');
+    return this.prisma.whatsappInboundUnmatched.update({
+      where: { id },
+      data: { resolvedAt: new Date(), resolvedByUserId: adminUserId },
+    });
+  }
+
   /** Descarta un mensaje sin dueño (no era de ningún cliente). */
   async dismissUnmatched(user: AuthenticatedUser, id: string) {
     const organizationId = this.requireOrg(user);

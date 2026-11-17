@@ -101,6 +101,12 @@ export interface OrgSettings {
    * empeoró, datos a corregir). Ver portfolio-analysis/.
    */
   portfolioReportFrequency: ReportFrequency;
+  /**
+   * Hora local (0-23, zona de la política de cobranza) a la que corre el
+   * motor de cobranza para esta organización. Por defecto 11:00: deja la
+   * mañana para subir el estado de cuenta (9:00) y revisar pagos (9:30).
+   */
+  collectionEngineHour: number;
 }
 
 export const DEFAULT_SETTINGS: OrgSettings = {
@@ -126,7 +132,12 @@ export const DEFAULT_SETTINGS: OrgSettings = {
   recoveryFeeMinInvoiceMxn: 50000,
   subscriptionFeeMxn: 0,
   portfolioReportFrequency: DEFAULT_REPORT_FREQUENCY,
+  collectionEngineHour: 11,
 };
+
+/** Rango permitido para la hora del motor de cobranza (hora local). */
+export const COLLECTION_ENGINE_HOUR_MIN = 6;
+export const COLLECTION_ENGINE_HOUR_MAX = 20;
 
 /** Modelos de tarificación soportados (spec "Mejoras V1", sección 5). */
 export const BILLING_MODELS = [
@@ -270,6 +281,13 @@ export class SettingsService {
       portfolioReportFrequency: isReportFrequency(s.portfolioReportFrequency)
         ? s.portfolioReportFrequency
         : DEFAULT_SETTINGS.portfolioReportFrequency,
+      collectionEngineHour:
+        typeof s.collectionEngineHour === 'number' &&
+        Number.isInteger(s.collectionEngineHour) &&
+        s.collectionEngineHour >= COLLECTION_ENGINE_HOUR_MIN &&
+        s.collectionEngineHour <= COLLECTION_ENGINE_HOUR_MAX
+          ? s.collectionEngineHour
+          : DEFAULT_SETTINGS.collectionEngineHour,
     };
   }
 
@@ -346,6 +364,15 @@ export class SettingsService {
       out.subscriptionFeeMxn = Math.max(0, Number(patch.subscriptionFeeMxn));
     if (patch.portfolioReportFrequency !== undefined && isReportFrequency(patch.portfolioReportFrequency))
       out.portfolioReportFrequency = patch.portfolioReportFrequency;
+    if (patch.collectionEngineHour !== undefined) {
+      const h = Math.round(Number(patch.collectionEngineHour));
+      if (Number.isFinite(h)) {
+        out.collectionEngineHour = Math.min(
+          COLLECTION_ENGINE_HOUR_MAX,
+          Math.max(COLLECTION_ENGINE_HOUR_MIN, h),
+        );
+      }
+    }
     return out;
   }
 

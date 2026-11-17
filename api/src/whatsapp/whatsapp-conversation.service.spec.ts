@@ -329,5 +329,37 @@ describe('WhatsappConversationService', () => {
       await expect(service.dismissUnmatched(user, 'u-1')).rejects.toThrow('no encontrado');
     });
   });
+
+  describe('bandeja de la plataforma (superadministrador)', () => {
+    const row = {
+      id: 'u-9',
+      organizationId: null,
+      fromPhone: '5215512345678',
+      phoneNumberId: 'PN-1',
+      waMessageId: 'wamid.U9',
+      kind: 'BUTTON',
+      body: 'Todo en orden',
+      createdAt: hoursAgo(1),
+      resolvedAt: null,
+    };
+
+    it('asigna a un cliente de cualquier organización y la fila queda con esa organización', async () => {
+      const unmatched = {
+        findFirst: jest.fn().mockResolvedValue(row),
+        update: jest.fn().mockImplementation(({ data }) => ({ ...row, ...data })),
+      };
+      const p = prisma as unknown as Record<string, unknown>;
+      p.whatsappInboundUnmatched = unmatched;
+      p.customer = { ...(p.customer as object), findFirst: jest.fn().mockResolvedValue({ id: 'c-9', organizationId: 'org-9' }) };
+      p.$transaction = jest.fn().mockImplementation((fn: (tx: unknown) => unknown) => fn(prisma));
+
+      const r = await service.assignUnmatchedPlatform('admin-1', 'u-9', 'c-9');
+
+      expect(prisma.whatsappMessage.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ organizationId: 'org-9', customerId: 'c-9', kind: 'BUTTON' }),
+      });
+      expect(r).toMatchObject({ organizationId: 'org-9', resolvedCustomerId: 'c-9', resolvedByUserId: 'admin-1' });
+    });
+  });
 });
 

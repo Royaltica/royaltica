@@ -8,6 +8,8 @@ import { CollectionSequencesAiDecisionService } from './collection-sequences-ai-
 import { WhatsappConversationService } from '../whatsapp/whatsapp-conversation.service';
 import { pickNextStep } from './collection-sequences.service';
 import { CollectionSafetyService } from '../collection-safety/collection-safety.service';
+import { SettingsService } from '../settings/settings.service';
+import { localDay } from './collection-sequences.service';
 
 /** Política base: ventana 9-17 UTC, sin gracia, sin tope de contactos. */
 const basePolicy = {
@@ -81,7 +83,13 @@ describe('CollectionSequencesService', () => {
   let notifications: { notifyOrgAdmins: jest.Mock };
   let aiDecision: { decideNextAction: jest.Mock };
   let conversations: { sendCollectionStep: jest.Mock };
-  let safety: { checkBeforeSend: jest.Mock; withOrganizationLock: jest.Mock };
+  let safety: {
+    checkBeforeSend: jest.Mock;
+    withOrganizationLock: jest.Mock;
+    claimDailyRun: jest.Mock;
+    releaseDailyRun: jest.Mock;
+  };
+  let settings: { get: jest.Mock };
 
   beforeEach(() => {
     prisma = {
@@ -136,7 +144,10 @@ describe('CollectionSequencesService', () => {
     safety = {
       checkBeforeSend: jest.fn().mockResolvedValue({ ok: true }),
       withOrganizationLock: jest.fn().mockImplementation((_org: string, fn: () => unknown) => fn()),
+      claimDailyRun: jest.fn().mockResolvedValue(true),
+      releaseDailyRun: jest.fn().mockResolvedValue(undefined),
     };
+    settings = { get: jest.fn().mockResolvedValue({ collectionEngineHour: 11 }) };
 
     service = new CollectionSequencesService(
       prisma as unknown as PrismaService,
@@ -147,6 +158,7 @@ describe('CollectionSequencesService', () => {
       aiDecision as unknown as CollectionSequencesAiDecisionService,
       conversations as unknown as WhatsappConversationService,
       safety as unknown as CollectionSafetyService,
+      settings as unknown as SettingsService,
     );
   });
 
@@ -770,6 +782,104 @@ describe('CollectionSequencesService', () => {
           where: expect.objectContaining({ collectionPausedAt: null }),
         }),
       );
+    });
+  });
+
+  describe('motor por hora con hora de arranque por organización', () => {
+    beforeEach(() => {
+      prisma.organization.findMany.mockResolvedValue([{ id: 'org-1' }]);
+      (prisma as unknown as { collectionSequenceStep: Record<string, jest.Mock> }).collectionSequenceStep.aggregate =
+        jest.fn().mockResolvedValue({ _min: { daysAfterDue: 0 } });
+      (prisma.invoice as unknown as Record<string, jest.Mock>).findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 'inv-1' }]);
+      prisma.collectionPolicy.findFirst.mockResolvedValue({
+        ...basePolicy,
+        timezone: 'America/Mexico_City',
+        allowedContactEndHour: 21,
+        sequenceSteps: [step1],
+      });
+    });
+
+    it('antes de la hora de la organización no procesa ni marca el día', async () => {
+      // 16:00 UTC = 10:00 en CDMX; la organización arranca a las 11:00.
+      const advance = jest.spyOn(service, 'advanceSequence');
+      const r = await service.runEngineScan(new Date('2026-11-18T16:00:00Z'));
+      expect(r.evaluated).toBe(0);
+      expect(advance).not.toHaveBeenCalled();
+      expect(safety.claimDailyRun).not.toHaveBeenCalled();
+    });
+
+    it('a partir de su hora procesa una vez y marca el día local', async () => {
+      // 17:30 UTC = 11:30 en CDMX.
+      const advance = jest
+        .spyOn(service, 'advanceSequence')
+        .mockResolvedValue({ outcome: 'sent', stepOrder: 1 });
+      const r = await service.runEngineScan(new Date('2026-11-18T17:30:00Z'));
+      expect(r.evaluated).toBe(1);
+      expect(advance).toHaveBeenCalledWith('inv-1');
+      expect(safety.claimDailyRun).toHaveBeenCalledWith('org-1', '2026-11-18');
+    });
+
+    it('si ya corrió hoy no vuelve a procesar', async () => {
+      safety.claimDailyRun.mockResolvedValue(false);
+      const advance = jest.spyOn(service, 'advanceSequence');
+      const r = await service.runEngineScan(new Date('2026-11-18T19:00:00Z'));
+      expect(r.evaluated).toBe(0);
+      expect(advance).not.toHaveBeenCalled();
+    });
+
+    it('respeta la hora configurada por la organización', async () => {
+      settings.get.mockResolvedValue({ collectionEngineHour: 13 });
+      const advance = jest.spyOn(service, 'advanceSequence');
+      // 18:30 UTC = 12:30 en CDMX: todavía no.
+      await service.runEngineScan(new Date('2026-11-18T18:30:00Z'));
+      expect(advance).not.toHaveBeenCalled();
+    });
+
+    it('si la corrida falla a medias libera la marca para reintentar la siguiente hora', async () => {
+      jest.spyOn(service, 'advanceSequence').mockRejectedValue(new Error('db down'));
+      await expect(service.runEngineScan(new Date('2026-11-18T17:30:00Z'))).rejects.toThrow('db down');
+      expect(safety.releaseDailyRun).toHaveBeenCalledWith('org-1', '2026-11-18');
+    });
+
+    it('en modo sombra avisa a los administradores con el resumen del día', async () => {
+      prisma.collectionPolicy.findFirst.mockResolvedValue({
+        ...basePolicy,
+        timezone: 'America/Mexico_City',
+        allowedContactEndHour: 21,
+        shadowMode: true,
+        sequenceSteps: [step1],
+      });
+      (prisma.invoice as unknown as Record<string, jest.Mock>).findMany = jest
+        .fn()
+        .mockResolvedValue([{ id: 'inv-1' }, { id: 'inv-2' }]);
+      jest
+        .spyOn(service, 'advanceSequence')
+        .mockResolvedValueOnce({ outcome: 'skipped', reason: 'shadow-mode' })
+        .mockResolvedValueOnce({ outcome: 'skipped', reason: 'payment-pending-review' });
+
+      await service.runEngineScan(new Date('2026-11-18T17:30:00Z'));
+
+      expect(notifications.notifyOrgAdmins).toHaveBeenCalledWith(
+        'org-1',
+        expect.objectContaining({
+          type: 'COLLECTION_SHADOW_SUMMARY',
+          metadata: { shadow: 1, blocked: 1 },
+        }),
+      );
+    });
+
+    it('force ignora la hora y la marca diaria', async () => {
+      const advance = jest.spyOn(service, 'advanceSequence').mockResolvedValue({ outcome: 'completed' });
+      await service.runEngineScan(new Date('2026-11-18T08:00:00Z'), { force: true });
+      expect(advance).toHaveBeenCalled();
+      expect(safety.claimDailyRun).not.toHaveBeenCalled();
+    });
+
+    it('localDay usa el día de la zona horaria (no el de UTC)', () => {
+      // 02:00 UTC del 19 = 20:00 del 18 en CDMX.
+      expect(localDay(new Date('2026-11-19T02:00:00Z'), 'America/Mexico_City')).toBe('2026-11-18');
     });
   });
 });

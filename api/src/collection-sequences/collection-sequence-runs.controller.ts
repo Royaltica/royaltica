@@ -39,6 +39,12 @@ export class CollectionSequenceRunsController {
     return this.sequences.aiActionsInbox(user);
   }
 
+  /** Lo que el modo sombra habría enviado en las últimas 24 h. Antes de ':id'. */
+  @Get('shadow-report')
+  shadowReport(@CurrentUser() user: AuthenticatedUser) {
+    return this.sequences.shadowReport(user);
+  }
+
   @Get(':id')
   findOne(
     @CurrentUser() user: AuthenticatedUser,

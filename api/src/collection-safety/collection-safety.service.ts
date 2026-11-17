@@ -190,4 +190,36 @@ export class CollectionSafetyService {
       }
     }
   }
+
+  /**
+   * Marca que el motor ya corrió hoy para esta organización (día local
+   * `dayKey`, p. ej. "2026-11-18"). Devuelve false si ya estaba marcado o si
+   * Redis no responde (falla cerrada: mejor no correr que correr dos veces).
+   */
+  async claimDailyRun(organizationId: string, dayKey: string): Promise<boolean> {
+    try {
+      const res = await this.redis.set(
+        `collection:engine:ran:${organizationId}:${dayKey}`,
+        new Date().toISOString(),
+        'EX',
+        48 * 3600,
+        'NX',
+      );
+      return res === 'OK';
+    } catch (err) {
+      this.logger.error(
+        `No se pudo registrar la corrida diaria de ${organizationId}: ${(err as Error).message}`,
+      );
+      return false;
+    }
+  }
+
+  /** Libera la marca del día (la corrida falló y debe reintentarse en la siguiente hora). */
+  async releaseDailyRun(organizationId: string, dayKey: string): Promise<void> {
+    try {
+      await this.redis.del(`collection:engine:ran:${organizationId}:${dayKey}`);
+    } catch {
+      /* expira sola */
+    }
+  }
 }

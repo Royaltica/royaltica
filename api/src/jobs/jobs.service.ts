@@ -401,7 +401,9 @@ export class JobsService {
   // CollectionSequenceRun activa/por iniciar según la CollectionPolicy de
   // cada organización (guard rails de ventana horaria, tope semanal,
   // blackout dates, días de gracia). Ver CollectionSequencesService.
-  @Cron(CronExpression.EVERY_DAY_AT_11AM, {
+  // Cada hora: cada organización se procesa una vez al día a partir de SU
+  // hora (`collectionEngineHour`, 11:00 por defecto). Ver runEngineScan.
+  @Cron(CronExpression.EVERY_HOUR, {
     name: 'collection-sequence-engine',
     timeZone: COLLECTION_CRON_TIMEZONE,
   })

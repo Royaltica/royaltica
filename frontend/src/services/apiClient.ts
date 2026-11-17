@@ -1428,6 +1428,7 @@ export const api = {
     externalSyncProvider: string | null;
     externalSyncRestBaseUrl: string | null;
     externalSyncRestAuthHeader: string | null;
+    collectionEngineHour: number;
   }>): Promise<OrgSettings> {
     return request<OrgSettings>('PATCH', '/organization/settings', patch);
   },
@@ -1927,6 +1928,10 @@ export const api = {
     return request<{ policy: CollectionLevelPlan }>('PATCH', '/collection-sequences/level-plan', settings);
   },
 
+  async getShadowReport(): Promise<ShadowReport> {
+    return request<ShadowReport>('GET', '/collection-sequences/runs/shadow-report');
+  },
+
   // ── Interruptor de emergencia de cobranza ──
   async getCollectionStatus(): Promise<CollectionStatus> {
     return request<CollectionStatus>('GET', '/organization/collection/status');
@@ -2221,6 +2226,24 @@ export interface OrgSettings {
   externalSyncProvider?: string | null;
   externalSyncRestBaseUrl?: string | null;
   externalSyncRestAuthHeader?: string | null;
+  /** Hora local (6-20) a la que corre el motor de cobranza. */
+  collectionEngineHour?: number;
+}
+
+/** Lo que el modo sombra habría enviado (GET /collection-sequences/runs/shadow-report). */
+export interface ShadowReport {
+  since: string;
+  total: number;
+  items: {
+    at: string;
+    invoiceId: string | null;
+    folio: string | null;
+    customerName: string | null;
+    channel: string | null;
+    template: string | null;
+    daysOverdue: number | null;
+    stepOrder: number | null;
+  }[];
 }
 
 /** Resultado de POST /invoices/:id/audit (ver InvoiceAuditService backend). */

@@ -146,4 +146,11 @@ export class UpdateSettingsDto {
   @IsOptional()
   @Matches(HEX_COLOR_REGEX, { message: 'brandAccentColor debe ser un hex #RRGGBB.' })
   brandAccentColor?: string;
+
+  /** Hora local (6-20) a la que corre el motor de cobranza para esta organización. */
+  @IsOptional()
+  @IsInt()
+  @Min(6)
+  @Max(20)
+  collectionEngineHour?: number;
 }

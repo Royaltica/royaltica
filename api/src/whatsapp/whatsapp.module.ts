@@ -4,6 +4,7 @@ import { WhatsappWebhookService } from './whatsapp-webhook.service';
 import { WhatsappWebhookController } from './whatsapp-webhook.controller';
 import { WhatsappConversationService } from './whatsapp-conversation.service';
 import { WhatsappConversationsController } from './whatsapp-conversations.controller';
+import { AdminWhatsappController } from './admin-whatsapp.controller';
 import { CustomerPortalModule } from '../customer-portal/customer-portal.module';
 
 /**
@@ -18,7 +19,7 @@ import { CustomerPortalModule } from '../customer-portal/customer-portal.module'
 @Global()
 @Module({
   imports: [CustomerPortalModule],
-  controllers: [WhatsappWebhookController, WhatsappConversationsController],
+  controllers: [WhatsappWebhookController, WhatsappConversationsController, AdminWhatsappController],
   providers: [WhatsappService, WhatsappWebhookService, WhatsappConversationService],
   exports: [WhatsappService, WhatsappConversationService],
 })
