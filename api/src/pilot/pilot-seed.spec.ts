@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import type { PrismaService } from '../common/prisma/prisma.service';
 import { LEVEL_PLAN_STEPS } from '../collection-sequences/collection-sequences.service';
 import { PILOT_NAME, PILOT_ORGANIZATION_ID, PILOT_RFC, resetPilot, seedPilot } from './pilot-seed';
@@ -77,11 +78,18 @@ function database() {
 }
 
 describe('Semilla del piloto', () => {
-  const originalEnv = process.env.NODE_ENV;
-  beforeEach(() => { process.env.NODE_ENV = 'test'; });
+  const envKeys = ['NODE_ENV', 'DATABASE_URL', 'PILOT_SEED_ALLOW_HOST'] as const;
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+  beforeEach(() => {
+    process.env.NODE_ENV = 'test';
+    process.env.DATABASE_URL = 'postgresql://localhost/piloto';
+    delete process.env.PILOT_SEED_ALLOW_HOST;
+  });
   afterEach(() => {
-    if (originalEnv === undefined) delete process.env.NODE_ENV;
-    else process.env.NODE_ENV = originalEnv;
+    for (const key of envKeys) {
+      if (originalEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnv[key];
+    }
   });
 
   it('crea cartera, equipo, niveles y estado de cuenta sin duplicarlos al repetir', async () => {
@@ -213,5 +221,72 @@ describe('Semilla del piloto', () => {
     process.env.NODE_ENV = 'production';
     await expect(operation(db.prisma)).rejects.toThrow('producción');
     expect(db.withOrg).not.toHaveBeenCalled();
+  });
+
+  describe.each([
+    ['semilla', seedPilot],
+    ['reinicio', resetPilot],
+  ] as const)('Protección del destino: %s', (_name, operation) => {
+    it.each(['localhost', '127.0.0.1', '[::1]'])('permite el host local %s', async (host) => {
+      const db = database();
+      process.env.DATABASE_URL = `postgresql://${host}:5432/piloto`;
+      await operation(db.prisma);
+      expect(db.withOrg).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([undefined, 'development', 'test'])('bloquea hosts remotos incluso con NODE_ENV=%s, sin exponer credenciales', async (nodeEnv) => {
+      const db = database();
+      if (nodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = nodeEnv;
+      const databaseUrl = new URL('postgresql://db.staging.invalid:5432/piloto');
+      databaseUrl.username = randomUUID();
+      databaseUrl.password = randomUUID();
+      process.env.DATABASE_URL = databaseUrl.href;
+      let message = '';
+      try {
+        await operation(db.prisma);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toContain('Host bloqueado para el piloto: db.staging.invalid.');
+      expect(message).not.toContain(databaseUrl.href);
+      expect(message).not.toContain(databaseUrl.username);
+      expect(message).not.toContain(databaseUrl.password);
+      expect(db.withOrg).not.toHaveBeenCalled();
+    });
+
+    it('permite el host remoto cuando PILOT_SEED_ALLOW_HOST coincide exactamente', async () => {
+      const db = database();
+      process.env.DATABASE_URL = 'postgresql://db.staging.invalid/piloto';
+      process.env.PILOT_SEED_ALLOW_HOST = 'db.staging.invalid';
+      await operation(db.prisma);
+      expect(db.withOrg).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['*', 'staging.invalid', 'otra.staging.invalid', 'DB.STAGING.INVALID', ' db.staging.invalid', 'db.staging.invalid ', 'db.staging.invalid:5432', 'postgresql://db.staging.invalid/piloto', 'db.staging.invalid,otra.staging.invalid'])('rechaza permisos que no coinciden exactamente: %s', async (allowedHost) => {
+      const db = database();
+      process.env.DATABASE_URL = 'postgresql://db.staging.invalid/piloto';
+      process.env.PILOT_SEED_ALLOW_HOST = allowedHost;
+      await expect(operation(db.prisma)).rejects.toThrow('Host bloqueado para el piloto: db.staging.invalid.');
+      expect(db.withOrg).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, '', 'no-es-url', 'postgresql://', 'https://localhost/piloto', 'postgresql://localhost/piloto?host=db.staging.invalid'])('bloquea una URL inválida o un destino ambiguo (%s) sin imprimirla', async (databaseUrl) => {
+      const db = database();
+      if (databaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = databaseUrl;
+      process.env.PILOT_SEED_ALLOW_HOST = 'db.staging.invalid';
+      await expect(operation(db.prisma)).rejects.toThrow('DATABASE_URL no es una URL válida de PostgreSQL con un host explícito. No se ejecutó la operación.');
+      expect(db.withOrg).not.toHaveBeenCalled();
+    });
+
+    it('mantiene el bloqueo de producción aunque el host remoto esté autorizado', async () => {
+      const db = database();
+      process.env.NODE_ENV = 'production';
+      process.env.DATABASE_URL = 'postgresql://db.staging.invalid/piloto';
+      process.env.PILOT_SEED_ALLOW_HOST = 'db.staging.invalid';
+      await expect(operation(db.prisma)).rejects.toThrow('producción');
+      expect(db.withOrg).not.toHaveBeenCalled();
+    });
   });
 });

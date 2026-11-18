@@ -1,20 +1,17 @@
 import 'dotenv/config';
 import { PrismaService } from '../src/common/prisma/prisma.service';
 import { resetPilot, seedPilot } from '../src/pilot/pilot-seed';
+import { assertPilotEnvironment, PilotEnvironmentError } from '../src/pilot/pilot-environment';
 
 async function main() {
-  if (process.env.NODE_ENV === 'production') {
-    console.error('La semilla del piloto no está permitida en producción.');
-    process.exitCode = 1;
-    return;
-  }
+  const databaseUrl = assertPilotEnvironment();
   const args = process.argv.slice(2);
   if (args.length > 1 || (args.length === 1 && args[0] !== '--reset')) {
     console.error('Uso: npm run seed:piloto o npm run reset:piloto.');
     process.exitCode = 1;
     return;
   }
-  const prisma = new PrismaService({ transactionOptions: { timeout: 60_000 } });
+  const prisma = new PrismaService({ datasourceUrl: databaseUrl, transactionOptions: { timeout: 60_000 } });
   try {
     if (args[0] === '--reset') {
       const deleted = await resetPilot(prisma);
@@ -28,8 +25,8 @@ async function main() {
   }
 }
 
-main().catch(() => {
+main().catch((error: unknown) => {
   // Los errores de conexión de Prisma pueden incluir credenciales de la URL.
-  console.error('No se pudo completar la operación del piloto. Revisa el entorno, la conexión y que no haya datos en conflicto.');
+  console.error(error instanceof PilotEnvironmentError ? error.message : 'No se pudo completar la operación del piloto. Revisa el entorno, la conexión y que no haya datos en conflicto.');
   process.exitCode = 1;
 });

@@ -39,6 +39,8 @@ export const envSchema = z.object({
 
   // Infraestructura — obligatorias
   DATABASE_URL: z.string().url(),
+  // Solo seed:piloto/reset:piloto: permite un host remoto exacto de staging.
+  PILOT_SEED_ALLOW_HOST: z.string().optional(),
   REDIS_URL: z.string().url(),
   JWT_SECRET: z.string().min(16, 'JWT_SECRET debe tener al menos 16 caracteres'),
   JWT_EXPIRES_IN: z.string().default('8h'),

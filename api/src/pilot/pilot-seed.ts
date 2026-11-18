@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../common/prisma/prisma.service';
 import { LEVEL_PLAN_STEPS } from '../collection-sequences/collection-sequences.service';
+import { assertPilotEnvironment } from './pilot-environment';
 
 export const PILOT_RFC = 'PILOTO000000';
 export const PILOT_NAME = 'Piloto Demo';
@@ -14,15 +15,9 @@ function pilotId(key: string): string {
 
 export const PILOT_ORGANIZATION_ID = pilotId('organization');
 
-function assertDevelopment() {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('La semilla del piloto no está permitida en producción.');
-  }
-}
-
 /** Conserva lo probado; para volver al estado inicial se debe reiniciar primero. */
 export async function seedPilot(prisma: PrismaService, now = new Date()) {
-  assertDevelopment();
+  assertPilotEnvironment();
   const organizationId = PILOT_ORGANIZATION_ID;
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const dateAt = (offset: number) => new Date(today + offset * DAY);
@@ -191,7 +186,7 @@ export async function seedPilot(prisma: PrismaService, now = new Date()) {
 }
 
 export async function resetPilot(prisma: PrismaService): Promise<boolean> {
-  assertDevelopment();
+  assertPilotEnvironment();
   return prisma.withOrg(PILOT_ORGANIZATION_ID, async (tx) => {
     const org = await tx.organization.findUnique({ where: { rfc: PILOT_RFC } });
     if (!org) return false;
