@@ -1,6 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
+import {
+  collectionRulesSchema,
+  collectionSecuritySchema,
+  DEFAULT_COLLECTION_RULES,
+  DEFAULT_COLLECTION_SECURITY,
+  type CollectionRulesSettings,
+  type CollectionSecuritySettings,
+} from './collection-settings';
 import {
   DEFAULT_REPORT_FREQUENCY,
   isReportFrequency,
@@ -107,6 +115,8 @@ export interface OrgSettings {
    * mañana para subir el estado de cuenta (9:00) y revisar pagos (9:30).
    */
   collectionEngineHour: number;
+  collectionSecurity: CollectionSecuritySettings;
+  collectionRules: CollectionRulesSettings;
 }
 
 export const DEFAULT_SETTINGS: OrgSettings = {
@@ -133,6 +143,8 @@ export const DEFAULT_SETTINGS: OrgSettings = {
   subscriptionFeeMxn: 0,
   portfolioReportFrequency: DEFAULT_REPORT_FREQUENCY,
   collectionEngineHour: 11,
+  collectionSecurity: DEFAULT_COLLECTION_SECURITY,
+  collectionRules: DEFAULT_COLLECTION_RULES,
 };
 
 /** Rango permitido para la hora del motor de cobranza (hora local). */
@@ -165,9 +177,11 @@ export const SUPPORTED_EXTERNAL_SYNC_PROVIDERS = [
  * parciales (cargo/email opcionales); `parseAuthorizers` las normaliza.
  */
 export type SettingsPatch = Partial<
-  Omit<OrgSettings, 'authorizers' | 'requiredSignatures'>
+  Omit<OrgSettings, 'authorizers' | 'requiredSignatures' | 'collectionSecurity' | 'collectionRules'>
 > & {
   authorizers?: Array<{ name?: string; cargo?: string; email?: string }>;
+  collectionSecurity?: Partial<CollectionSecuritySettings>;
+  collectionRules?: Partial<CollectionRulesSettings>;
 };
 
 type ExternalSyncProvider = (typeof SUPPORTED_EXTERNAL_SYNC_PROVIDERS)[number];
@@ -178,10 +192,10 @@ export class SettingsService {
 
   /** Lee la configuración efectiva (stored ∪ defaults) de una organización. */
   async get(organizationId: string): Promise<OrgSettings> {
-    const org = await this.prisma.organization.findUnique({
+    const org = await this.prisma.withOrg(organizationId, (tx) => tx.organization.findUnique({
       where: { id: organizationId },
       select: { settings: true },
-    });
+    }));
     if (!org) throw new NotFoundException('Organización no encontrada.');
     return this.merge(org.settings);
   }
@@ -194,26 +208,36 @@ export class SettingsService {
     organizationId: string,
     patch: SettingsPatch,
   ): Promise<OrgSettings> {
-    const current = await this.get(organizationId);
-    const next: OrgSettings = { ...current, ...this.sanitize(patch) };
-    // requiredSignatures es DERIVADO: se recalcula del conteo de autorizadores.
-    next.requiredSignatures = Math.min(
-      MAX_REQUIRED_SIGNATURES,
-      next.authorizers.length,
-    );
+    return this.prisma.withOrg(organizationId, async (tx) => {
+      // Serializa los parches: guardar una sección no debe pisar otra ni borrar producto/licencias.
+      const rows = await tx.$queryRaw<{ settings: Prisma.JsonValue }[]>`
+        SELECT "settings" FROM "Organization" WHERE "id" = ${organizationId} FOR UPDATE
+      `;
+      if (!rows[0]) throw new NotFoundException('Organización no encontrada.');
+      const stored = this.settingsObject(rows[0].settings);
+      const current = this.merge(stored);
+      const next: OrgSettings = { ...current, ...this.sanitize(patch, current) };
+      // requiredSignatures es DERIVADO: se recalcula del conteo de autorizadores.
+      next.requiredSignatures = Math.min(
+        MAX_REQUIRED_SIGNATURES,
+        next.authorizers.length,
+      );
 
-    await this.prisma.organization.update({
-      where: { id: organizationId },
-      data: { settings: next as unknown as Prisma.JsonObject },
+      await tx.organization.update({
+        where: { id: organizationId },
+        data: { settings: { ...stored, ...next } as unknown as Prisma.JsonObject },
+      });
+      return next;
     });
-    return next;
   }
 
   // ── helpers ───────────────────────────────────────────────
 
   private merge(stored: Prisma.JsonValue | null): OrgSettings {
-    const s = (stored ?? {}) as Record<string, unknown>;
+    const s = this.settingsObject(stored);
     const authorizers = this.parseAuthorizers(s.authorizers);
+    const security = collectionSecuritySchema.partial().safeParse(s.collectionSecurity);
+    const rules = collectionRulesSchema.partial().safeParse(s.collectionRules);
     return {
       multiUserEnabled:
         typeof s.multiUserEnabled === 'boolean'
@@ -288,11 +312,13 @@ export class SettingsService {
         s.collectionEngineHour <= COLLECTION_ENGINE_HOUR_MAX
           ? s.collectionEngineHour
           : DEFAULT_SETTINGS.collectionEngineHour,
+      collectionSecurity: { ...DEFAULT_COLLECTION_SECURITY, ...(security.success ? security.data : {}) },
+      collectionRules: { ...DEFAULT_COLLECTION_RULES, ...(rules.success ? rules.data : {}) },
     };
   }
 
   /** Descarta claves desconocidas; solo deja pasar campos válidos. */
-  private sanitize(patch: SettingsPatch): Partial<OrgSettings> {
+  private sanitize(patch: SettingsPatch, current: OrgSettings): Partial<OrgSettings> {
     const out: Partial<OrgSettings> = {};
     if (patch.multiUserEnabled !== undefined)
       out.multiUserEnabled = Boolean(patch.multiUserEnabled);
@@ -373,7 +399,21 @@ export class SettingsService {
         );
       }
     }
+    if (patch.collectionSecurity !== undefined) {
+      const parsed = collectionSecuritySchema.partial().safeParse(patch.collectionSecurity);
+      if (!parsed.success) throw new BadRequestException('Revisa las preferencias de seguridad.');
+      out.collectionSecurity = { ...current.collectionSecurity, ...parsed.data };
+    }
+    if (patch.collectionRules !== undefined) {
+      const parsed = collectionRulesSchema.partial().safeParse(patch.collectionRules);
+      if (!parsed.success) throw new BadRequestException('Revisa las reglas de cobranza.');
+      out.collectionRules = { ...current.collectionRules, ...parsed.data };
+    }
     return out;
+  }
+
+  private settingsObject(value: Prisma.JsonValue | null): Prisma.JsonObject {
+    return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
   }
 
   private numOr(value: unknown, fallback: number): number {

@@ -5,21 +5,18 @@ import {
   Bell,
   Building2,
   Check,
-  CreditCard,
   Crown,
   Database,
   Lock,
   Mail,
   MessageCircle,
   Moon,
-  Pencil,
   Phone,
   Plus,
   RefreshCw,
   Send,
   ShieldCheck,
   Smartphone,
-  Sparkles,
   Trash2,
   UserPlus,
   Users,
@@ -29,14 +26,15 @@ import {
 import { SPRING, SPRING_SUAVE, Stepper } from './campanasUi.tsx';
 import { PanelSub, Subpestanas, useConfirmar } from './vidrio.tsx';
 import { BTN_PRI, BTN_SEC, CONTROL, ETIQUETA, Ventana, useAviso } from './clientes.tsx';
-import { useCobranza, type CuentaViva } from './store.tsx';
+import { useCobranza } from './store.tsx';
 import { useAlertas, type Alerta } from './alertas.tsx';
 import { ModoEnvio } from './WhatsappPanel.tsx';
 import { EJEMPLO_VARS, tipoDeudor } from './catalogoDeudores.ts';
-import { api, type CollectionStatus, type ShadowReport } from '../../../../services/apiClient.ts';
+import { api, type CollectionStatus, type ShadowReport, type CollectionRulesSettings, type CollectionSecuritySettings, type CollectionLevelPlan } from '../../../../services/apiClient.ts';
+import { actualizarEquipo, perfilDeRol, quitarUsuario, useEquipo, type PersonaEquipo, type RolEquipo } from './equipo.ts';
+import { diasDePolitica, fechasDePolitica, VIGENCIA_DIAS } from './dias-politica.ts';
 
-// Configuración de Cobranza IA (solo Administrador). Por ahora es diseño con
-// datos de ejemplo: se guarda en este navegador hasta conectar el backend.
+// Equipo y reglas usan el backend. Las demás secciones se migran en C2b.
 
 // ── Estado guardado en el navegador ───────────────────────────────────
 
@@ -60,30 +58,9 @@ function useGuardado<T>(clave: string, inicial: T): [T, React.Dispatch<React.Set
   return [v, setV];
 }
 
-// ── Plan (ejemplo: 1 administrador + 2 supervisores, y agentes aparte) ──
-
-const PLAN = { nombre: 'Plan Esencial', supervisores: 2, agentes: 5, mensajes: 3000 };
-
-type Rol = 'admin' | 'supervisor' | 'agente';
-type Persona = { id: string; nombre: string; correo: string; rol: Rol; estado: 'activo' | 'invitado'; ultimo?: string };
-
+type Rol = RolEquipo;
+type Persona = PersonaEquipo;
 const NOMBRE_ROL: Record<Rol, string> = { admin: 'Administrador', supervisor: 'Supervisor', agente: 'Agente' };
-const COLOR_ROL: Record<Rol, string> = {
-  admin: 'bg-brand-ink text-white',
-  supervisor: 'bg-violet-500/12 text-violet-700',
-  agente: 'bg-cyan-500/12 text-cyan-800',
-};
-
-function equipoInicial(cartera: CuentaViva[]): Persona[] {
-  const agentes = [...new Set(cartera.map((c) => c.agente as string))].filter((a) => a && a !== 'Sin asignar');
-  const correo = (n: string) => `${n.split(' ')[0].toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')}@tuempresa.mx`;
-  return [
-    { id: 'yo', nombre: 'Tú', correo: 'admin@tuempresa.mx', rol: 'admin', estado: 'activo', ultimo: 'Ahora' },
-    { id: 'sup-1', nombre: 'Laura Méndez', correo: 'laura@tuempresa.mx', rol: 'supervisor', estado: 'activo', ultimo: 'Hoy 9:12' },
-    { id: 'sup-2', nombre: 'Jorge Castañeda', correo: 'jorge@tuempresa.mx', rol: 'supervisor', estado: 'invitado' },
-    ...agentes.map((n, i) => ({ id: `ag-${i}`, nombre: n, correo: correo(n), rol: 'agente' as const, estado: 'activo' as const, ultimo: ['Hoy 10:40', 'Ayer', 'Hoy 8:05'][i % 3] })),
-  ];
-}
 
 // ── Panel ─────────────────────────────────────────────────────────────
 
@@ -164,25 +141,6 @@ function Fila({ icono, titulo, detalle, children }: { icono?: React.ReactNode; t
   );
 }
 
-function Medidor({ usados, total, etiqueta, detalle }: { usados: number; total: number; etiqueta: string; detalle?: string }) {
-  const pct = Math.min(100, Math.round((usados / Math.max(1, total)) * 100));
-  const lleno = usados >= total;
-  return (
-    <div className="rounded-[22px] bg-white/60 ring-1 ring-brand-ink/[0.06] px-4 py-3.5">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[12.5px] font-semibold text-brand-ink">{etiqueta}</span>
-        <span className={`text-[13px] font-semibold tabular-nums ${lleno ? 'text-amber-700' : 'text-brand-ink'}`}>
-          {usados} de {total}
-        </span>
-      </div>
-      <div className="mt-2 h-1.5 rounded-full bg-brand-ink/[0.07] overflow-hidden">
-        <motion.div className={`h-full rounded-full ${lleno ? 'bg-amber-500' : 'bg-gradient-to-r from-brand-gold to-cyan-300'}`} initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={SPRING_SUAVE} />
-      </div>
-      {detalle && <div className="text-[11px] text-brand-ink/45 mt-1.5">{detalle}</div>}
-    </div>
-  );
-}
-
 const iniciales = (n: string) =>
   n
     .split(/\s+/)
@@ -193,335 +151,160 @@ const iniciales = (n: string) =>
 
 // ══ 1 · Equipo y accesos ══════════════════════════════════════════════
 
-function Equipo() {
-  const reduce = useReducedMotion();
-  const { cartera, reasignar } = useCobranza();
-  const [equipo, setEquipo] = useGuardado<Persona[]>('equipo', equipoInicial(cartera));
-  const [invitar, setInvitar] = React.useState<Rol | null>(null);
+export function Equipo() {
+  const { equipo, error } = useEquipo();
+  const { recargarCartera } = useCobranza();
+  const { avisar, nodo } = useAviso();
+  const [invitar, setInvitar] = React.useState(false);
   const [quitar, setQuitar] = React.useState<Persona | null>(null);
-  const [rolEditando, setRolEditando] = React.useState<string | null>(null);
-  const { confirmar, nodo } = useConfirmar();
-  const { avisar, nodo: nodoAviso } = useAviso();
-  const [seguridad, setSeguridad] = useGuardado('seguridad', { dosPasos: true, inactividad: true });
+  const [ocupado, setOcupado] = React.useState(false);
+  const [seguridad, setSeguridad] = React.useState<CollectionSecuritySettings | null>(null);
+  const [errorSeguridad, setErrorSeguridad] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let vigente = true;
+    api.getSettings().then((s) => { if (vigente) setSeguridad(s.collectionSecurity); })
+      .catch(() => { if (vigente) setErrorSeguridad('No se pudo cargar la seguridad. Vuelve a abrir esta pestaña para reintentar.'); });
+    return () => { vigente = false; };
+  }, []);
 
-  const sups = equipo.filter((p) => p.rol === 'supervisor').length;
-  const ags = equipo.filter((p) => p.rol === 'agente').length;
-  const hayLugar = (r: Rol) => (r === 'supervisor' ? sups < PLAN.supervisores : r === 'agente' ? ags < PLAN.agentes : false);
-  const clientesDe = (p: Persona) => cartera.filter((c) => c.agente === p.nombre).length;
-
-  const cambiarRol = (p: Persona, r: Rol) => {
-    setRolEditando(null);
-    if (r === p.rol) return;
-    if (!hayLugar(r)) return avisar(`Ya no hay lugar para otro ${NOMBRE_ROL[r].toLowerCase()} en tu plan.`, { error: true });
-    confirmar({
-      titulo: `¿Hacer ${NOMBRE_ROL[r].toLowerCase()} a ${p.nombre}?`,
-      mensaje: r === 'supervisor' ? 'Podrá ver toda la cartera y el desempeño del equipo, pero no invitar ni quitar usuarios.' : 'Solo verá sus cuentas asignadas.',
-      accion: 'Cambiar rol',
-      alConfirmar: () => {
-        setEquipo((e) => e.map((x) => (x.id === p.id ? { ...x, rol: r } : x)));
-        avisar(`${p.nombre} ahora es ${NOMBRE_ROL[r].toLowerCase()}`);
-      },
-    });
+  const ejecutar = async (operacion: () => Promise<unknown>, mensaje: string) => {
+    setOcupado(true);
+    try {
+      await operacion();
+      actualizarEquipo();
+      avisar(mensaje);
+    } catch (e) {
+      avisar(e instanceof Error ? e.message : 'No se pudo guardar el cambio.', { error: true });
+    } finally { setOcupado(false); }
   };
-
-  const grupos: { rol: Rol; titulo: string; lugar?: string }[] = [
-    { rol: 'admin', titulo: 'Administrador' },
-    { rol: 'supervisor', titulo: 'Supervisores', lugar: `${sups} de ${PLAN.supervisores}` },
-    { rol: 'agente', titulo: 'Agentes', lugar: `${ags} de ${PLAN.agentes}` },
-  ];
-
   return (
     <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
-      <Tarjeta
-        titulo="Tu equipo"
-        detalle="Solo tú, como administrador, puedes invitar, cambiar el rol o quitar el acceso a alguien."
-        accion={
-          <button type="button" onClick={() => setInvitar(hayLugar('agente') ? 'agente' : 'supervisor')} className={BTN_PRI}>
-            <UserPlus size={14} /> Invitar
-          </button>
-        }
-      >
-        <div className="space-y-6">
-          {grupos.map((g) => {
-            const gente = equipo.filter((p) => p.rol === g.rol);
-            return (
-              <div key={g.rol}>
-                <div className="flex items-center gap-2 mb-2 px-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-ink/40">{g.titulo}</span>
-                  {g.lugar && <span className="text-[11px] tabular-nums text-brand-ink/35">· {g.lugar}</span>}
-                  {g.rol !== 'admin' && hayLugar(g.rol) && (
-                    <button type="button" onClick={() => setInvitar(g.rol)} className="ml-auto inline-flex items-center gap-1 text-[11.5px] font-semibold text-cyan-700 hover:text-cyan-900">
-                      <Plus size={12} /> Agregar {NOMBRE_ROL[g.rol].toLowerCase()}
-                    </button>
-                  )}
-                  {g.rol !== 'admin' && !hayLugar(g.rol) && (
-                    <span className="ml-auto text-[11.5px] font-semibold text-amber-700">Sin lugares en tu plan</span>
-                  )}
-                </div>
-                <ul className="rounded-[22px] bg-white/45 ring-1 ring-brand-ink/[0.05] divide-y divide-brand-ink/[0.05] overflow-hidden">
-                  <AnimatePresence initial={false}>
-                    {gente.map((p) => (
-                      <motion.li
-                        key={p.id}
-                        layout={!reduce}
-                        initial={reduce ? false : { opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="flex flex-wrap items-center gap-3 px-4 py-3"
-                      >
-                        <span className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-[12.5px] font-bold ${p.estado === 'invitado' ? 'bg-white ring-1 ring-dashed ring-brand-ink/20 text-brand-ink/40' : 'bg-gradient-to-br from-[rgb(var(--acento)/0.25)] to-[rgb(var(--acento)/0.08)] text-brand-ink/75'}`}>
-                          {p.id === 'yo' ? <Crown size={15} /> : iniciales(p.nombre)}
-                        </span>
-                        <div className="min-w-[10rem] flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[13.5px] font-semibold text-brand-ink">{p.nombre}</span>
-                            {p.estado === 'invitado' && <span className="rounded-full bg-amber-500/12 text-amber-800 px-2 py-0.5 text-[10.5px] font-semibold">Invitación pendiente</span>}
-                          </div>
-                          <div className="text-[12px] text-brand-ink/45 truncate">
-                            {p.correo}
-                            {p.ultimo && ` · último acceso ${p.ultimo}`}
-                            {p.rol === 'agente' && ` · ${clientesDe(p)} clientes`}
-                          </div>
-                        </div>
-                        {p.rol === 'admin' ? (
-                          <span className={`rounded-full px-3 py-1 text-[11.5px] font-semibold ${COLOR_ROL.admin}`}>Administrador</span>
-                        ) : (
-                          <div className="flex items-center gap-1.5">
-                            {rolEditando === p.id ? (
-                              <select
-                                autoFocus
-                                value={p.rol}
-                                onBlur={() => setRolEditando(null)}
-                                onChange={(e) => cambiarRol(p, e.target.value as Rol)}
-                                className="glass-campo rounded-full px-3 py-1.5 text-[12px] font-semibold outline-none"
-                              >
-                                <option value="supervisor">Supervisor</option>
-                                <option value="agente">Agente</option>
-                              </select>
-                            ) : (
-                              <button type="button" onClick={() => setRolEditando(p.id)} title="Cambiar rol" className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11.5px] font-semibold ${COLOR_ROL[p.rol]}`}>
-                                {NOMBRE_ROL[p.rol]} <Pencil size={10} className="opacity-60" />
-                              </button>
-                            )}
-                            {p.estado === 'invitado' && (
-                              <button type="button" onClick={() => avisar(`Invitación reenviada a ${p.correo}`)} title="Reenviar invitación" className="w-8 h-8 rounded-full flex items-center justify-center text-brand-ink/45 hover:bg-white hover:text-brand-ink">
-                                <RefreshCw size={14} />
-                              </button>
-                            )}
-                            <button type="button" onClick={() => setQuitar(p)} title="Quitar acceso" className="w-8 h-8 rounded-full flex items-center justify-center text-brand-ink/40 hover:bg-rose-500/10 hover:text-rose-600">
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        )}
-                      </motion.li>
-                    ))}
-                  </AnimatePresence>
-                  {!gente.length && <li className="px-4 py-4 text-[12.5px] text-brand-ink/45">Nadie con este rol todavía.</li>}
-                </ul>
+      <Tarjeta titulo="Tu equipo" detalle="Los accesos y perfiles se guardan en tu organización. Los límites de licencias se validan al invitar."
+        accion={<button type="button" disabled={ocupado || !equipo} onClick={() => setInvitar(true)} className={BTN_PRI}><UserPlus size={14} /> Invitar</button>}>
+        {error && <p role="alert" className="text-[13px] text-rose-700">{error}</p>}
+        {!equipo && !error && <p role="status">Cargando equipo…</p>}
+        {equipo?.length === 0 && <p className="text-[13px] text-brand-ink/55">Sin datos. Todavía no hay usuarios en el equipo.</p>}
+        <fieldset disabled={ocupado} className="space-y-3">
+          {equipo?.map((p) => (
+            <div key={p.id} className="flex flex-wrap items-center gap-3 rounded-[22px] bg-white/60 ring-1 ring-brand-ink/[0.06] px-4 py-3">
+              <span className="w-10 h-10 rounded-full bg-brand-gold/20 flex items-center justify-center text-[12px] font-bold">{iniciales(p.nombre)}</span>
+              <div className="flex-1 min-w-40">
+                <div className="font-semibold text-[13.5px]">{p.nombre}</div>
+                <div className="text-[12px] text-brand-ink/55">{p.correo}</div>
+                <div className="text-[11px] text-brand-ink/45">{p.estado === 'invitado' ? 'Invitación pendiente' : p.estado === 'inactivo' ? 'Acceso desactivado' : 'Acceso activo'} · {p.ultimo ? `Último acceso ${p.ultimo}` : 'Sin accesos registrados'}</div>
               </div>
-            );
-          })}
-        </div>
-      </Tarjeta>
-
-      <div className="space-y-5">
-        <Tarjeta titulo="Lugares de tu plan" detalle={PLAN.nombre}>
-          <div className="space-y-2.5">
-            <Medidor usados={1 + sups} total={1 + PLAN.supervisores} etiqueta="Usuarios" detalle="1 administrador y 2 supervisores" />
-            <Medidor usados={ags} total={PLAN.agentes} etiqueta="Agentes" />
-          </div>
-          {(!hayLugar('supervisor') || !hayLugar('agente')) && (
-            <button type="button" onClick={() => avisar('Te contactaremos para ampliar tu plan.')} className={BTN_SEC + ' mt-4 w-full justify-center !py-2.5'}>
-              <Sparkles size={13} /> Necesito más lugares
-            </button>
-          )}
-        </Tarjeta>
-
-        <Tarjeta titulo="Qué puede hacer cada rol">
-          <MatrizRoles />
-        </Tarjeta>
-
-        <Tarjeta titulo="Seguridad">
-          <Fila icono={<ShieldCheck size={16} />} titulo="Verificación en dos pasos" detalle="Obligatoria para todo el equipo.">
-            <Interruptor activo={seguridad.dosPasos} onChange={(v) => setSeguridad((s) => ({ ...s, dosPasos: v }))} etiqueta="Verificación en dos pasos" />
-          </Fila>
-          <Fila icono={<Lock size={16} />} titulo="Cerrar sesión tras 20 min" detalle="Si nadie usa la plataforma.">
-            <Interruptor activo={seguridad.inactividad} onChange={(v) => setSeguridad((s) => ({ ...s, inactividad: v }))} etiqueta="Cerrar sesión por inactividad" />
-          </Fila>
-        </Tarjeta>
-      </div>
-
-      {invitar && (
-        <InvitarVentana
-          inicial={invitar}
-          hayLugar={hayLugar}
-          onCerrar={() => setInvitar(null)}
-          onInvitar={(p) => {
-            setEquipo((e) => [...e, p]);
-            setInvitar(null);
-            avisar(`Invitación enviada a ${p.correo}`);
-          }}
-        />
-      )}
-      {quitar && (
-        <QuitarVentana
-          persona={quitar}
-          clientes={cartera.filter((c) => c.agente === quitar.nombre)}
-          otros={equipo.filter((p) => p.rol === 'agente' && p.id !== quitar.id && p.estado === 'activo')}
-          onCerrar={() => setQuitar(null)}
-          onQuitar={(destino) => {
-            if (destino) cartera.filter((c) => c.agente === quitar.nombre).forEach((c) => reasignar(c.id, destino as CuentaViva['agente']));
-            setEquipo((e) => e.filter((x) => x.id !== quitar.id));
-            avisar(`${quitar.nombre} ya no tiene acceso${destino ? `; sus clientes pasaron a ${destino}` : ''}`);
-            setQuitar(null);
-          }}
-        />
-      )}
-      {nodo}
-      {nodoAviso}
-    </div>
-  );
-}
-
-function MatrizRoles() {
-  const filas: [string, boolean, boolean, boolean][] = [
-    ['Ver toda la cartera', true, true, false],
-    ['Mandar y aprobar mensajes', true, true, true],
-    ['Lanzar campañas', true, true, false],
-    ['Reasignar clientes', true, true, false],
-    ['Cambiar reglas y plantillas', true, false, false],
-    ['Invitar o quitar usuarios', true, false, false],
-  ];
-  return (
-    <div className="text-[12px]">
-      <div className="grid grid-cols-[1fr_repeat(3,44px)] gap-1 pb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-brand-ink/40 text-center">
-        <span />
-        <span>Adm</span>
-        <span>Sup</span>
-        <span>Ag</span>
-      </div>
-      {filas.map(([t, ...v]) => (
-        <div key={t} className="grid grid-cols-[1fr_repeat(3,44px)] gap-1 items-center py-1.5 border-t border-brand-ink/[0.05]">
-          <span className="text-brand-ink/65">{t}</span>
-          {v.map((ok, i) => (
-            <span key={i} className="flex justify-center">
-              {ok ? <Check size={14} className="text-emerald-600" strokeWidth={3} /> : <span className="w-3 h-[2px] rounded-full bg-brand-ink/15" />}
-            </span>
+              {p.rol === 'admin' ? <span className="text-[12px] font-semibold">Administrador</span> : (
+                <>
+                  <select aria-label={`Perfil de ${p.nombre}`} value={p.rol} className={CONTROL + ' !w-auto !py-2'}
+                    onChange={(e) => void ejecutar(() => api.updateUser(p.id, perfilDeRol(e.target.value as Rol)), 'Perfil guardado')}>
+                    {p.rol === 'sinPerfil' && <option value="sinPerfil" disabled>Sin perfil</option>}
+                    <option value="supervisor">Supervisor</option><option value="agente">Agente</option>
+                  </select>
+                  <button type="button" className={BTN_SEC} onClick={() => void ejecutar(() => api.setUserStatus(p.id, p.estado === 'inactivo'), 'Estado del acceso guardado')}>
+                    {p.estado === 'inactivo' ? 'Activar acceso' : 'Desactivar acceso'}
+                  </button>
+                  <button type="button" aria-label={`Quitar acceso a ${p.nombre}`} onClick={() => setQuitar(p)} className="w-9 h-9 rounded-full flex items-center justify-center text-rose-600 hover:bg-rose-500/10"><Trash2 size={14} /></button>
+                </>
+              )}
+            </div>
           ))}
-        </div>
-      ))}
+        </fieldset>
+      </Tarjeta>
+      <div className="space-y-5">
+        <Tarjeta titulo="Equipo registrado">
+          <p className="text-[13px] text-brand-ink/60">{equipo ? `${equipo.filter((p) => p.rol === 'admin').length} administradores · ${equipo.filter((p) => p.rol === 'supervisor').length} supervisores · ${equipo.filter((p) => p.rol === 'agente').length} agentes` : 'Sin datos'}</p>
+        </Tarjeta>
+        <Tarjeta titulo="Preferencias de seguridad" detalle="Se guardan para tu organización. No activan por sí solas la verificación en dos pasos ni el cierre automático de sesiones.">
+          {errorSeguridad && <p role="alert" className="text-[12px] text-rose-700">{errorSeguridad}</p>}
+          {!seguridad && !errorSeguridad && <p role="status">Cargando seguridad…</p>}
+          {seguridad && <fieldset disabled={ocupado}>
+            <Fila icono={<ShieldCheck size={16} />} titulo="Solicitar verificación en dos pasos" detalle="Cada usuario la activa desde su perfil.">
+              <Interruptor activo={seguridad.dosPasos} onChange={(v) => setSeguridad({ ...seguridad, dosPasos: v })} etiqueta="Verificación en dos pasos" />
+            </Fila>
+            <Fila icono={<Lock size={16} />} titulo="Solicitar cierre tras 20 min" detalle="Preferencia del equipo; su aplicación automática está pendiente.">
+              <Interruptor activo={seguridad.inactividad} onChange={(v) => setSeguridad({ ...seguridad, inactividad: v })} etiqueta="Cerrar sesión por inactividad" />
+            </Fila>
+            <button type="button" className={BTN_PRI + ' mt-4'} onClick={() => void ejecutar(async () => {
+              const saved = await api.updateSettings({ collectionSecurity: seguridad });
+              setSeguridad(saved.collectionSecurity);
+            }, 'Preferencias de seguridad guardadas')}><Check size={13} /> Guardar seguridad</button>
+          </fieldset>}
+        </Tarjeta>
+      </div>
+      {invitar && <InvitarVentana onCerrar={() => setInvitar(false)} onInvitar={async (datos) => {
+        const result = await api.inviteUser({ name: datos.nombre, email: datos.correo, ...perfilDeRol(datos.rol) });
+        actualizarEquipo();
+        setInvitar(false);
+        avisar(result.emailSent ? 'Invitación creada y correo enviado.' : 'Acceso creado. No se pudo enviar el correo de invitación.', { error: !result.emailSent });
+      }} />}
+      {quitar && <QuitarVentana persona={quitar} otros={(equipo ?? []).filter((p) => p.rol === 'agente' && p.estado === 'activo' && p.id !== quitar.id)}
+        onCerrar={() => setQuitar(null)} onQuitar={async (destino) => {
+          await quitarUsuario(quitar.id, destino);
+          await recargarCartera();
+          setQuitar(null);
+          avisar('Acceso eliminado y cartera actualizada.');
+        }} />}
+      {nodo}
     </div>
   );
 }
 
-function InvitarVentana({ inicial, hayLugar, onCerrar, onInvitar }: { inicial: Rol; hayLugar: (r: Rol) => boolean; onCerrar: () => void; onInvitar: (p: Persona) => void }) {
-  const [rol, setRol] = React.useState<Rol>(inicial);
+function InvitarVentana({ onCerrar, onInvitar }: { onCerrar: () => void; onInvitar: (p: { nombre: string; correo: string; rol: Rol }) => Promise<void> }) {
+  const [rol, setRol] = React.useState<Rol>('agente');
   const [nombre, setNombre] = React.useState('');
   const [correo, setCorreo] = React.useState('');
-  const valido = nombre.trim().length > 1 && /\S+@\S+\.\S+/.test(correo) && hayLugar(rol);
-  return (
-    <Ventana titulo="Invitar a tu equipo" subtitulo="Le llega un correo para crear su acceso." onCerrar={onCerrar} ancho="max-w-md">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (valido) onInvitar({ id: `p-${Date.now()}`, nombre: nombre.trim(), correo: correo.trim(), rol, estado: 'invitado' });
-        }}
-        className="space-y-4"
-      >
-        <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Rol">
-          {(['agente', 'supervisor'] as Rol[]).map((r) => {
-            const lleno = !hayLugar(r);
-            const on = rol === r;
-            return (
-              <button
-                key={r}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                disabled={lleno}
-                onClick={() => setRol(r)}
-                className={`rounded-[18px] px-3.5 py-3 text-left ring-1 transition-colors disabled:opacity-45 disabled:cursor-not-allowed ${on ? 'bg-brand-ink text-white ring-brand-ink' : 'bg-white/60 ring-brand-ink/10 hover:bg-white'}`}
-              >
-                <div className="text-[13px] font-semibold">{NOMBRE_ROL[r]}</div>
-                <div className={`text-[11px] mt-0.5 ${on ? 'text-white/60' : 'text-brand-ink/45'}`}>
-                  {lleno ? 'Sin lugares en tu plan' : r === 'agente' ? 'Ve solo sus cuentas' : 'Ve toda la cartera'}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-        <label className="block">
-          <span className={ETIQUETA}>Nombre</span>
-          <input autoFocus className={CONTROL + ' mt-1.5'} value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej. Sofía Ramírez" />
-        </label>
-        <label className="block">
-          <span className={ETIQUETA}>Correo</span>
-          <input type="email" className={CONTROL + ' mt-1.5'} value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="sofia@tuempresa.mx" />
-        </label>
-        <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onCerrar} className={BTN_SEC + ' !py-2.5 !px-4 !text-[12.5px]'}>
-            Cancelar
-          </button>
-          <button type="submit" disabled={!valido} className={BTN_PRI}>
-            <Send size={13} /> Mandar invitación
-          </button>
-        </div>
-      </form>
-    </Ventana>
-  );
+  const [ocupado, setOcupado] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const valido = nombre.trim().length > 1 && /\S+@\S+\.\S+/.test(correo);
+  const enviar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!valido || ocupado) return;
+    setOcupado(true); setError(null);
+    try { await onInvitar({ nombre: nombre.trim(), correo: correo.trim(), rol }); }
+    catch (e) { setError(e instanceof Error ? e.message : 'No se pudo crear la invitación.'); }
+    finally { setOcupado(false); }
+  };
+  return <Ventana titulo="Invitar a tu equipo" subtitulo="El acceso se registra al confirmar el servidor." onCerrar={onCerrar} ancho="max-w-md">
+    <form onSubmit={enviar} className="space-y-4">
+      <fieldset disabled={ocupado} className="space-y-4">
+        <label className="block"><span className={ETIQUETA}>Perfil</span><select value={rol} onChange={(e) => setRol(e.target.value as Rol)} className={CONTROL}>{(['admin', 'supervisor', 'agente'] as Rol[]).map((r) => <option key={r} value={r}>{NOMBRE_ROL[r]}</option>)}</select></label>
+        <label className="block"><span className={ETIQUETA}>Nombre</span><input autoFocus className={CONTROL} value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Nombre completo" maxLength={120} /></label>
+        <label className="block"><span className={ETIQUETA}>Correo</span><input type="email" className={CONTROL} value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="Correo del usuario" /></label>
+        {error && <p role="alert" className="text-[13px] text-rose-700">{error}</p>}
+        <div className="flex justify-end gap-2"><button type="button" onClick={onCerrar} className={BTN_SEC}>Cancelar</button><button type="submit" disabled={!valido} className={BTN_PRI}><Send size={13} /> {ocupado ? 'Creando…' : 'Mandar invitación'}</button></div>
+      </fieldset>
+    </form>
+  </Ventana>;
 }
 
-function QuitarVentana({
-  persona,
-  clientes,
-  otros,
-  onCerrar,
-  onQuitar,
-}: {
-  persona: Persona;
-  clientes: CuentaViva[];
-  otros: Persona[];
-  onCerrar: () => void;
-  onQuitar: (destino: string | null) => void;
-}) {
-  const [destino, setDestino] = React.useState(otros[0]?.nombre ?? '');
-  const necesita = clientes.length > 0;
-  return (
-    <Ventana titulo={`¿Quitar el acceso a ${persona.nombre}?`} subtitulo="Deja de poder entrar en cuanto confirmes." onCerrar={onCerrar} ancho="max-w-md">
-      <div className="space-y-4">
-        {necesita ? (
-          <>
-            <p className="text-[13px] text-brand-ink/65 leading-relaxed">
-              Lleva <span className="font-semibold text-brand-ink">{clientes.length} clientes</span>. Para que ninguno se quede sin seguimiento, elige quién los toma.
-            </p>
-            <label className="block">
-              <span className={ETIQUETA}>Pasar sus clientes a</span>
-              <select className={CONTROL + ' mt-1.5'} value={destino} onChange={(e) => setDestino(e.target.value)}>
-                {otros.map((o) => (
-                  <option key={o.id}>{o.nombre}</option>
-                ))}
-              </select>
-            </label>
-          </>
-        ) : (
-          <p className="text-[13px] text-brand-ink/65">No tiene clientes asignados.</p>
-        )}
-        <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onCerrar} className={BTN_SEC + ' !py-2.5 !px-4 !text-[12.5px]'}>
-            Volver
-          </button>
-          <button
-            type="button"
-            disabled={necesita && !destino}
-            onClick={() => onQuitar(necesita ? destino : null)}
-            className={BTN_PRI + ' !bg-rose-600 hover:!bg-rose-700 !shadow-[0_10px_30px_-12px_rgba(225,29,72,0.6)]'}
-          >
-            <Trash2 size={13} /> Quitar acceso
-          </button>
-        </div>
-      </div>
-    </Ventana>
-  );
+function QuitarVentana({ persona, otros, onCerrar, onQuitar }: { persona: Persona; otros: Persona[]; onCerrar: () => void; onQuitar: (destino: string | null) => Promise<void> }) {
+  const [clientes, setClientes] = React.useState<number | null>(null);
+  const [destino, setDestino] = React.useState(otros[0]?.id ?? '');
+  const [ocupado, setOcupado] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let vigente = true;
+    api.getPortfolio().then((rows) => { if (vigente) setClientes(rows.filter((c) => c.agent?.id === persona.id).length); })
+      .catch(() => { if (vigente) setError('No se pudieron revisar los clientes asignados. Vuelve a abrir esta ventana.'); });
+    return () => { vigente = false; };
+  }, [persona.id]);
+  const quitar = async () => {
+    setOcupado(true); setError(null);
+    try { await onQuitar(destino || null); }
+    catch (e) { setError(e instanceof Error ? e.message : 'No se pudo quitar el acceso.'); }
+    finally { setOcupado(false); }
+  };
+  return <Ventana titulo={`¿Quitar el acceso a ${persona.nombre}?`} subtitulo="Se elimina el acceso cuando el servidor confirma el cambio." onCerrar={onCerrar} ancho="max-w-md">
+    <fieldset disabled={ocupado} className="space-y-4">
+      <p className="text-[13px]">{clientes === null ? 'Revisando clientes…' : `${clientes} clientes asignados.`}</p>
+      {!!clientes && <label className="block"><span className={ETIQUETA}>Pasar sus clientes a</span><select value={destino} onChange={(e) => setDestino(e.target.value)} className={CONTROL}>
+        <option value="">Elige un agente activo</option>{otros.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+      </select></label>}
+      {error && <p role="alert" className="text-[13px] text-rose-700">{error}</p>}
+      <p className="text-[12px] text-brand-ink/55">Primero se reasignan sus clientes. Si falla una reasignación no se elimina el acceso; puedes reintentar.</p>
+      <div className="flex justify-end gap-2"><button type="button" onClick={onCerrar} className={BTN_SEC}>Volver</button><button type="button" disabled={clientes === null || (!!clientes && !destino)} onClick={() => void quitar()} className={BTN_PRI + ' !bg-rose-600'}><Trash2 size={13} /> {ocupado ? 'Guardando…' : 'Quitar acceso'}</button></div>
+    </fieldset>
+  </Ventana>;
 }
 
 // ══ 2 · Alertas al celular ════════════════════════════════════════════
@@ -847,35 +630,77 @@ function AgregarNumero({ onCerrar, onListo }: { onCerrar: () => void; onListo: (
 
 const DIAS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
 
-function Reglas() {
+export function Reglas() {
   const { avisar, nodo } = useAviso();
-  const [r, setR] = useGuardado('reglas', {
-    hora: '11:00',
-    dias: [true, true, true, true, true, false, false],
-    festivos: true,
-    maxSemana: 3,
-    descuentoMax: 10,
-    parcialidades: true,
-    prorroga: true,
-    aprueba: 'supervisor' as 'admin' | 'supervisor',
-  });
-  const cambiar = (c: Partial<typeof r>) => setR((x) => ({ ...x, ...c }));
+  const [r, setR] = React.useState<(CollectionRulesSettings & { dias: boolean[]; maxSemana: number }) | null>(null);
+  const [politica, setPolitica] = React.useState<Pick<CollectionLevelPlan, 'id' | 'maxContactsPerWeek' | 'blackoutDates' | 'timezone'> | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [ocupado, setOcupado] = React.useState(false);
+  const [carga, setCarga] = React.useState(0);
+  const [referencia, setReferencia] = React.useState(() => new Date());
+  React.useEffect(() => {
+    let vigente = true;
+    Promise.all([api.getSettings(), api.getLevelPlan()]).then(([settings, plan]) => {
+      if (!vigente) return;
+      const hoy = new Date();
+      const policy = plan.policy;
+      const dias = policy ? diasDePolitica(policy.blackoutDates, policy.timezone, hoy) : Array(7).fill(true) as boolean[];
+      setReferencia(hoy);
+      setPolitica(policy);
+      setR({ ...settings.collectionRules, dias, maxSemana: policy?.maxContactsPerWeek ?? 0 });
+      setError(null);
+    }).catch(() => { if (vigente) setError('No se pudieron cargar las reglas. No se guardará ningún cambio hasta recuperarlas.'); });
+    return () => { vigente = false; };
+  }, [carga]);
+  if (!r) return <Tarjeta titulo="Reglas de cobranza">{error ? <><p role="alert">{error}</p><button type="button" onClick={() => setCarga((n) => n + 1)} className={BTN_SEC}>Reintentar</button></> : <p role="status">Cargando reglas…</p>}</Tarjeta>;
+  const cambiar = (c: Partial<NonNullable<typeof r>>) => setR((x) => x ? { ...x, ...c } : x);
+  const guardarReglas = async () => {
+    setOcupado(true);
+    try {
+      const { dias: _dias, maxSemana: _max, ...collectionRules } = r;
+      const saved = await api.updateSettings({ collectionRules });
+      setR((x) => x ? { ...x, ...saved.collectionRules } : x);
+      avisar('Reglas guardadas');
+    } catch (e) { avisar(e instanceof Error ? e.message : 'No se pudieron guardar las reglas.', { error: true }); }
+    finally { setOcupado(false); }
+  };
+  const guardarPolitica = async () => {
+    if (!politica) return;
+    setOcupado(true);
+    try {
+      const blackoutDates = fechasDePolitica(politica.blackoutDates, r.dias, politica.timezone, referencia);
+      const saved = await api.updateCollectionPolicy(politica.id, { maxContactsPerWeek: r.maxSemana, blackoutDates });
+      setPolitica(saved);
+      setR((x) => x ? { ...x, maxSemana: saved.maxContactsPerWeek, dias: diasDePolitica(saved.blackoutDates, saved.timezone, referencia) } : x);
+      avisar('Calendario y límite de mensajes guardados');
+    } catch (e) { avisar(e instanceof Error ? e.message : 'No se pudo guardar la política.', { error: true }); }
+    finally { setOcupado(false); }
+  };
+  const crearPlan = async () => {
+    setOcupado(true);
+    try { await api.ensureLevelPlan(); setCarga((n) => n + 1); }
+    catch (e) { avisar(e instanceof Error ? e.message : 'No se pudo crear el plan.', { error: true }); }
+    finally { setOcupado(false); }
+  };
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+    <fieldset disabled={ocupado} className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
       <SeguridadEnvios />
-      <Tarjeta titulo="Cuándo se manda" detalle="Aplica a los recordatorios del plan y a las campañas.">
+      <Tarjeta titulo="Cuándo se manda" detalle="Calendario y límite de contactos del plan de cobranza.">
         <div className="mb-4">
           <ModoEnvio />
         </div>
         <Fila titulo="Hora de envío" detalle="Cuando salen los mensajes automáticos del día (hora del centro de México). Se guarda en el servidor.">
           <HoraMotor />
         </Fila>
-        <Fila titulo="Días con mensajes">
+        {!politica && <div className="mb-4"><p className="text-[13px]">Sin plan de cobranza. Crea uno con aprobación manual para configurar su calendario.</p><button type="button" onClick={() => void crearPlan()} className={BTN_SEC + ' mt-2'}>Crear plan con aprobación</button></div>}
+        <fieldset disabled={!politica}>
+        <Fila titulo="Días con mensajes" detalle={`Al guardar, se registran fechas excluidas para los próximos ${VIGENCIA_DIAS} días. Hay que renovar el calendario antes de que venza. Al habilitar un día antes bloqueado se quitan sus exclusiones dentro del periodo.`}>
           <div className="flex gap-1">
             {DIAS.map((d, i) => (
               <button
                 key={i}
                 type="button"
+                aria-label={`Mensajes en ${['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'][i]}`}
                 aria-pressed={r.dias[i]}
                 onClick={() => cambiar({ dias: r.dias.map((x, j) => (j === i ? !x : x)) })}
                 className={`w-8 h-8 rounded-full text-[12px] font-semibold transition-colors ${r.dias[i] ? 'bg-brand-ink text-white' : 'bg-brand-ink/[0.05] text-brand-ink/40 hover:text-brand-ink'}`}
@@ -885,15 +710,17 @@ function Reglas() {
             ))}
           </div>
         </Fila>
-        <Fila titulo="Respetar días festivos" detalle="No se manda nada en días de descanso oficial.">
-          <Interruptor activo={r.festivos} onChange={(v) => cambiar({ festivos: v })} etiqueta="Respetar días festivos" />
+        <Fila titulo="Máximo de mensajes por semana" detalle="Tope de contactos de cada secuencia del plan de cobranza.">
+          <Stepper valor={r.maxSemana} min={0} max={100} sufijo="por semana" onChange={(v) => cambiar({ maxSemana: v })} />
         </Fila>
-        <Fila titulo="Máximo de mensajes por semana" detalle="A un mismo cliente, sumando plan y campañas.">
-          <Stepper valor={r.maxSemana} min={1} max={7} sufijo="por semana" onChange={(v) => cambiar({ maxSemana: v })} />
-        </Fila>
+        <button type="button" onClick={() => void guardarPolitica()} className={BTN_PRI + ' mt-4'}><Check size={13} /> Guardar calendario y límite</button>
+        </fieldset>
       </Tarjeta>
 
-      <Tarjeta titulo="Lo que se puede ofrecer" detalle="Límites para las respuestas de la IA y las campañas. Nada se ofrece fuera de esto.">
+      <Tarjeta titulo="Lo que se puede ofrecer" detalle="Preferencias para propuestas de cobranza. Los acuerdos requieren revisión humana.">
+        <Fila titulo="Respetar días festivos" detalle="Preferencia de la organización. No agrega fechas automáticamente; las exclusiones concretas se guardan en la política.">
+          <Interruptor activo={r.festivos} onChange={(v) => cambiar({ festivos: v })} etiqueta="Respetar días festivos" />
+        </Fila>
         <Fila titulo="Descuento máximo">
           <Stepper valor={r.descuentoMax} min={0} max={30} paso={5} sufijo="% como máximo" onChange={(v) => cambiar({ descuentoMax: v })} />
         </Fila>
@@ -917,12 +744,12 @@ function Reglas() {
             ))}
           </div>
         </Fila>
-        <button type="button" onClick={() => avisar('Reglas guardadas')} className={BTN_PRI + ' mt-4'}>
+        <button type="button" onClick={() => void guardarReglas()} className={BTN_PRI + ' mt-4'}>
           <Check size={13} /> Guardar reglas
         </button>
       </Tarjeta>
       {nodo}
-    </div>
+    </fieldset>
   );
 }
 
@@ -1251,53 +1078,21 @@ function Canales() {
 // ══ 6 · Plan y uso ════════════════════════════════════════════════════
 
 function PlanUso({ irA }: { irA: (p: Parte) => void }) {
-  const { avisar, nodo } = useAviso();
-  const { cartera, tiposDeudor } = useCobranza();
-  const [equipo] = useGuardado<Persona[]>('equipo', equipoInicial(cartera));
-  const sups = equipo.filter((p) => p.rol === 'supervisor').length;
-  const ags = equipo.filter((p) => p.rol === 'agente').length;
+  const { equipo, error } = useEquipo();
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-5 items-start">
-      <section className="glass relative overflow-hidden rounded-[28px] p-6">
-        <div aria-hidden className="pointer-events-none absolute -top-24 -right-16 w-72 h-72 rounded-full bg-brand-gold/20 blur-[80px]" />
-        <div className="relative flex flex-wrap items-start gap-4">
-          <span className="w-14 h-14 rounded-[20px] bg-brand-ink text-brand-gold flex items-center justify-center">
-            <Crown size={24} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-ink/45">Tu plan</div>
-            <h3 className="text-[26px] text-brand-ink leading-tight">{PLAN.nombre}</h3>
-            <p className="text-[13px] text-brand-ink/55 mt-1">1 administrador, {PLAN.supervisores} supervisores y hasta {PLAN.agentes} agentes.</p>
-          </div>
-          <button type="button" onClick={() => avisar('Te contactaremos para mejorar tu plan')} className={BTN_PRI}>
-            <Sparkles size={13} /> Mejorar plan
-          </button>
-        </div>
-        <div className="relative grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6">
-          <Medidor usados={1 + sups} total={1 + PLAN.supervisores} etiqueta="Usuarios" />
-          <Medidor usados={ags} total={PLAN.agentes} etiqueta="Agentes" />
-          <Medidor usados={1240} total={PLAN.mensajes} etiqueta="Mensajes del mes" detalle="Se reinicia el 1 de diciembre" />
-        </div>
-      </section>
-      <div className="glass rounded-[28px] p-5 space-y-3">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-ink/40">Atajos</div>
-        <button type="button" onClick={() => irA('equipo')} className="w-full flex items-center gap-3 rounded-[18px] bg-white/60 ring-1 ring-brand-ink/[0.06] px-4 py-3 text-left hover:bg-white">
-          <UserPlus size={16} className="text-brand-ink/50" />
-          <span className="text-[13px] font-semibold text-brand-ink">Invitar a alguien</span>
-        </button>
-        <button type="button" onClick={() => irA('alertas')} className="w-full flex items-center gap-3 rounded-[18px] bg-white/60 ring-1 ring-brand-ink/[0.06] px-4 py-3 text-left hover:bg-white">
-          <Smartphone size={16} className="text-brand-ink/50" />
-          <span className="text-[13px] font-semibold text-brand-ink">Alertas al celular</span>
-        </button>
-        <div className="flex items-center gap-3 rounded-[18px] px-4 py-3">
-          <CreditCard size={16} className="text-brand-ink/40" />
-          <span className="text-[12.5px] text-brand-ink/55">
-            {cartera.length} clientes · {tiposDeudor?.activos.length ?? 0} tipos de deudor activos
-          </span>
-        </div>
-      </div>
-      {nodo}
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <Tarjeta titulo="Equipo registrado" detalle="Conteo de usuarios reales de tu organización.">
+        {error && <p role="alert" className="text-[13px] text-rose-700">{error}</p>}
+        {equipo ? <ul className="space-y-2 text-[13px]">
+          <li>Administradores: {equipo.filter((p) => p.rol === 'admin').length}</li>
+          <li>Supervisores: {equipo.filter((p) => p.rol === 'supervisor').length}</li>
+          <li>Agentes: {equipo.filter((p) => p.rol === 'agente').length}</li>
+        </ul> : <p>{error ? 'Sin datos' : 'Cargando equipo…'}</p>}
+        <button type="button" onClick={() => irA('equipo')} className={BTN_SEC + ' mt-4'}><UserPlus size={14} /> Ver equipo</button>
+      </Tarjeta>
+      <Tarjeta titulo="Plan y consumo">
+        <p className="text-[13px] text-brand-ink/55">Sin datos de licencias o consumo de mensajes en esta vista.</p>
+      </Tarjeta>
     </div>
   );
 }
-

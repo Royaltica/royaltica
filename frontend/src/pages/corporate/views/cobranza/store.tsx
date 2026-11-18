@@ -30,6 +30,7 @@ import {
 import { construirPlan, PASO_DE_PLANTILLA } from './plan.tsx';
 import { api, type WaPlanActivity, type PortfolioCustomer, type CustomerPayload } from '../../../../services/apiClient.ts';
 import { cuentaDesdeApi } from './carteraReal.ts';
+import { EQUIPO_ACTUALIZADO } from './equipo.ts';
 
 /**
  * Estado compartido de Cobranza IA. Lo que hace un perfil se ve en los
@@ -227,16 +228,20 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
 
   const [agentesReales, setAgentesReales] = React.useState<AgenteReal[] | null>(null);
   React.useEffect(() => {
-    api
-      .getUsers()
-      .then((us) =>
-        setAgentesReales(
-          us
-            .filter((u) => u.role === 'CORPORATE_USER' || u.role === 'CORPORATE_ADMIN' || u.operationalProfile === 'AGENTE_EJECUTIVO')
-            .map((u) => ({ id: u.id, nombre: u.name, activo: u.status !== 'INACTIVE' && u.status !== 'DISABLED' })),
-        ),
-      )
-      .catch(() => setAgentesReales(null));
+    let vigente = true;
+    let solicitud = 0;
+    const cargar = () => {
+      const numero = ++solicitud;
+      api.getUsers().then((us) => {
+        if (vigente && numero === solicitud) setAgentesReales(
+          us.filter((u) => u.operationalProfile === 'AGENTE_EJECUTIVO')
+            .map((u) => ({ id: u.id, nombre: u.name, activo: u.isActive && u.status === 'ACTIVE' })),
+        );
+      }).catch(() => { if (vigente && numero === solicitud) setAgentesReales(null); });
+    };
+    cargar();
+    window.addEventListener(EQUIPO_ACTUALIZADO, cargar);
+    return () => { vigente = false; window.removeEventListener(EQUIPO_ACTUALIZADO, cargar); };
   }, []);
 
   // Lo que pasó por WhatsApp (real). undefined = aún cargando; null = sin conexión.
