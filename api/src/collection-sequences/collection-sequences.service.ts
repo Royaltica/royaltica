@@ -91,7 +91,7 @@ const tpl = (name: string) => COLLECTION_TEMPLATES.find((t) => t.name === name)!
  * `messageTemplate` es la versión en texto libre que se usa si el cliente
  * ya tiene la ventana de 24h abierta.
  */
-const LEVEL_PLAN_STEPS = [
+export const LEVEL_PLAN_STEPS = [
   {
     daysAfterDue: tpl('royaltica_nivel_0').defaultDaysAfterDue,
     channel: 'WHATSAPP' as const,
