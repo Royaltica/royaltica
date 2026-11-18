@@ -35,6 +35,7 @@ describe('CallGuardrailsService', () => {
   let activity: { record: jest.Mock };
 
   beforeEach(() => {
+    jest.useFakeTimers({ now: new Date('2026-11-18T18:00:00Z') });
     prisma = {
       customer: { findFirst: jest.fn(), update: jest.fn() },
       collectionPolicy: { findFirst: jest.fn() },
@@ -47,6 +48,8 @@ describe('CallGuardrailsService', () => {
       activity as unknown as never,
     );
   });
+
+  afterEach(() => jest.useRealTimers());
 
   describe('evaluateCallAttempt', () => {
     it('bloquea si el cliente no existe', async () => {
