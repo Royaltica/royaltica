@@ -29,8 +29,17 @@ type Pestana = 'cuentas' | 'recordatorios';
 type Sub = 'plan' | 'whatsapp';
 
 export function AgenteVista({ renderPlan }: { renderPlan: (c: CuentaViva) => React.ReactNode }) {
-  const { cartera, resultadosHoy } = useCobranza();
-  const [agente, setAgente] = React.useState<Agente>('Ana Robles');
+  const { cartera, resultadosHoy, fuente, agentesReales } = useCobranza();
+  // Con cartera real se elige entre las personas reales que llevan cuentas;
+  // las agentes ficticias son solo del recorrido de ejemplo.
+  const opciones: string[] =
+    fuente === 'real'
+      ? [...new Set([...(agentesReales ?? []).filter((a) => a.activo).map((a) => a.nombre), ...cartera.map((c) => c.agente as string)])]
+          .filter((n) => n && n !== 'Sin asignar')
+          .sort((a, b) => a.localeCompare(b, 'es'))
+      : [...AGENTES];
+  const [elegido, setAgente] = React.useState<string>('Ana Robles');
+  const agente = (opciones.includes(elegido) ? elegido : (opciones[0] ?? elegido)) as Agente;
   const [pestana, setPestana] = React.useState<Pestana>('cuentas');
   // Cliente y subpestaña abiertos en "Clientes" (desde "Hoy" se salta directo).
   const [sel, setSel] = React.useState<string | undefined>(undefined);
@@ -58,11 +67,11 @@ export function AgenteVista({ renderPlan }: { renderPlan: (c: CuentaViva) => Rea
                 Hola,{' '}
                 <select
                   value={agente}
-                  onChange={(e) => setAgente(e.target.value as Agente)}
+                  onChange={(e) => setAgente(e.target.value)}
                   className="bg-transparent font-semibold text-brand-ink outline-none cursor-pointer"
                   aria-label="Ver como agente"
                 >
-                  {AGENTES.map((a) => (
+                  {opciones.map((a) => (
                     <option key={a} value={a}>
                       {a.split(' ')[0]}
                     </option>
@@ -201,6 +210,7 @@ function TarjetaCuenta({
   const tarea = tareas[c.id];
   const [generando, setGenerando] = React.useState(false);
   const [mensaje, setMensaje] = React.useState<string | null>(null);
+  const [copiado, setCopiado] = React.useState(false);
 
   const { actual, proxima } = planCuenta(c);
   const envio = envios[c.id];
@@ -407,7 +417,9 @@ function TarjetaCuenta({
                         {mensaje}
                       </p>
                       <p className="text-[11px] text-brand-ink/40 mt-1.5">
-                        Plantilla aprobada. Solo se llenaron los datos del cliente; el texto no se puede editar.
+                        {c.dbId
+                          ? 'Texto sugerido con los datos del cliente. Cópialo, mándalo desde tu correo y registra abajo qué pasó: la plataforma no lo envía.'
+                          : 'Plantilla aprobada. Solo se llenaron los datos del cliente; el texto no se puede editar.'}
                       </p>
                     </motion.div>
                   )}
@@ -417,7 +429,10 @@ function TarjetaCuenta({
                       {esLlamada ? (
                         <a
                           href={contacto ? `tel:${contacto.telefono.replace(/\s/g, '')}` : undefined}
-                          onClick={() => enviar(c.id, toca.id, 'Llamada', 'Llamada del agente')}
+                          onClick={() => {
+                            // Cliente real: la llamada no se da por hecha; el agente registra el resultado.
+                            if (!c.dbId) enviar(c.id, toca.id, 'Llamada', 'Llamada del agente');
+                          }}
                           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold ${
                             !c.contactable || !contacto ? 'opacity-40 pointer-events-none' : 'hover:bg-brand-ink/85'
                           }`}
@@ -426,12 +441,23 @@ function TarjetaCuenta({
                         </a>
                       ) : (
                         <button
-                          onClick={() => enviar(c.id, toca.id, toca.canal, 'Enviado por el agente')}
+                          onClick={() => {
+                            // Cliente real: este botón no envía nada por su cuenta. Se copia
+                            // el texto para mandarlo desde el correo de la empresa.
+                            if (c.dbId) {
+                              void navigator.clipboard?.writeText(mensaje ?? '').then(
+                                () => setCopiado(true),
+                                () => setCopiado(false),
+                              );
+                              return;
+                            }
+                            enviar(c.id, toca.id, toca.canal, 'Enviado por el agente');
+                          }}
                           disabled={!c.contactable || !contacto}
                           title={!c.contactable ? c.motivo : undefined}
                           className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold hover:bg-brand-ink/85 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          <Send size={13} /> Enviar por {toca.canal}
+                          <Send size={13} /> {c.dbId ? (copiado ? 'Copiado' : 'Copiar mensaje') : `Enviar por ${toca.canal}`}
                         </button>
                       )}
                     </div>

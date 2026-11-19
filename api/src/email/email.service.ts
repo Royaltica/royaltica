@@ -44,6 +44,25 @@ const MIME_TYPE_RE = /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i
  * El SDK `resend` se carga con import dinámico para no penalizar el arranque
  * cuando no se usa.
  */
+/**
+ * Pie de todo correo de cobranza: cómo dejar de recibirlos. La palabra BAJA
+ * en la respuesta la detecta el correo entrante (EmailInboundService) y pone
+ * al cliente en la lista de no contactar.
+ */
+export const COLLECTION_FOOTER_TEXT =
+  'Recibe este aviso por una factura pendiente con su proveedor. Si ya no desea recibirlos, responda a este correo con la palabra BAJA.';
+
+/** Pie con el nombre de la empresa que cobra (quien envía es Royáltica, de su parte). */
+export function collectionFooter(senderName?: string | null): string {
+  const quien = senderName?.trim();
+  return quien
+    ? `Este aviso se envía de parte de ${quien} por una factura pendiente. Si ya no desea recibirlos, responda a este correo con la palabra BAJA.`
+    : COLLECTION_FOOTER_TEXT;
+}
+const footerHtml = (senderName?: string | null) =>
+  `<p style="color:#98A2B3;font-size:12px;margin-top:24px;">${escapeHtml(collectionFooter(senderName))}</p>`;
+const escapeHtml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 @Injectable()
 export class EmailService implements OnModuleInit {
   private readonly logger = new Logger(EmailService.name);
@@ -210,6 +229,8 @@ export class EmailService implements OnModuleInit {
     // organización (T-3, ver ReceivablesService.buildReminderText). Ambos
     // opcionales: si no vienen, el correo se manda igual que antes.
     paymentInfo?: { paymentLink?: string; bankName?: string; clabe?: string },
+    // Empresa que cobra, para el pie ("de parte de ...").
+    senderName?: string | null,
   ): Promise<{ sent: boolean; id?: string }> {
     // Reply-To dedicado a cobranza: si el cliente responde este correo, la
     // respuesta debe llegar al webhook de correo entrante (ver
@@ -246,9 +267,10 @@ export class EmailService implements OnModuleInit {
          ${paymentHtml}${bankHtml}
          <p>Si ya realizaste el pago, ignora este mensaje. Si necesitas apoyo o
          un comprobante, responde a este correo y con gusto te ayudamos.</p>
-         <p style="color:#667085;font-size:13px;">Gracias por tu preferencia.</p>`,
+         <p style="color:#667085;font-size:13px;">Gracias por tu preferencia.</p>
+         ${footerHtml(senderName)}`,
       ),
-      text: `Hola ${customerName}, tu factura ${folio} por $${total} ${currency} vence el ${dueDate}.${paymentText}${bankText} Si ya pagaste, ignora este mensaje. Gracias.`,
+      text: `Hola ${customerName}, tu factura ${folio} por $${total} ${currency} vence el ${dueDate}.${paymentText}${bankText} Si ya pagaste, ignora este mensaje. Gracias.\n\n${collectionFooter(senderName)}`,
     });
   }
 
@@ -264,10 +286,14 @@ export class EmailService implements OnModuleInit {
     body: string,
     organizationId?: string,
     tone?: string,
+    senderName?: string | null,
   ): Promise<{ sent: boolean; id?: string }> {
     return this.send({
       to,
       organizationId,
+      // Igual que el recordatorio: la respuesta del cliente (incluida una
+      // baja) debe llegar al webhook de correo entrante, no a no-reply@.
+      replyTo: this.config.get('COLLECTIONS_REPLY_TO', { infer: true }),
       usageTag: 'collection_reminder',
       subject:
         tone === 'URGENT' || tone === 'FIRM'
@@ -275,9 +301,10 @@ export class EmailService implements OnModuleInit {
           : 'Royáltica · Recordatorio de pago',
       html: this.wrap(
         `<h2>Hola, ${customerName}</h2>
-         <p style="white-space:pre-line;">${body}</p>`,
+         <p style="white-space:pre-line;">${body}</p>
+         ${footerHtml(senderName)}`,
       ),
-      text: body,
+      text: `${body}\n\n${collectionFooter(senderName)}`,
     });
   }
 

@@ -82,3 +82,21 @@ export function describeMetaError(status: number, body: string): MetaSendError {
     detail,
   };
 }
+
+/**
+ * Igual que describeMetaError pero para los fallos que llegan DESPUÉS, por el
+ * webhook de estados (`statuses[].errors[]`): ahí solo viene el código y un
+ * texto corto, no la respuesta HTTP.
+ */
+export function describeMetaCode(code: number | null, detail: string | null): MetaSendError {
+  const corto = detail ? detail.slice(0, 240) : null;
+  if (code !== null && POR_CODIGO[code]) return { code, message: POR_CODIGO[code], detail: corto };
+  return {
+    code,
+    message: `WhatsApp no pudo entregar el mensaje${code ? ` (código ${code})` : ''}.`,
+    detail: corto,
+  };
+}
+
+/** Códigos que significan "ese número no sirve" (no tiene WhatsApp o es inválido). */
+export const UNDELIVERABLE_NUMBER_CODES = new Set([131026, 131021, 131009]);

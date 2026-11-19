@@ -92,6 +92,22 @@ describe('AgentService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('updateAccountStatus: un supervisor registra la gestión de una cuenta que no es suya', async () => {
+    const record = jest.fn().mockResolvedValue(undefined);
+    const prisma = {
+      withOrg: (_org: string, fn: (tx: unknown) => unknown) => fn({
+        customer: {
+          findFirst: jest.fn().mockResolvedValue({ id: 'cust-2', name: 'Otra empresa', assignedAgentId: 'otro-agente' }),
+        },
+      }),
+    } as unknown as PrismaService;
+    const service = new AgentService(prisma, { record } as unknown as ActivityLogService);
+    await expect(
+      service.updateAccountStatus({ ...baseUser, id: 'sup-1', operationalProfile: 'SUPERVISOR_GERENTE' }, 'cust-2', { status: 'PROMISE_TO_PAY' }),
+    ).resolves.toEqual({ recorded: true });
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ action: 'AGENT_ACCOUNT_STATUS_UPDATED', userId: 'sup-1' }));
+  });
+
   it('updateAccountStatus registra la gestión cuando la cuenta sí es del agente', async () => {
     const record = jest.fn().mockResolvedValue(undefined);
     const prisma = {

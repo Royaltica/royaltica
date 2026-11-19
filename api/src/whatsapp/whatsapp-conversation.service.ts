@@ -642,7 +642,12 @@ ${hilo}
     } catch {
       liga = this.config.get('FRONTEND_URL', { infer: true }).replace(/\/$/, '');
     }
+    const org = await this.prisma.organization.findUnique({
+      where: { id: customer.organizationId },
+      select: { name: true },
+    });
     return {
+      empresa: org?.name ?? '',
       contacto: customer.financeContactName ?? customer.contact ?? customer.name,
       folio: invoice.folio ?? invoice.cfdiUuid.slice(0, 8),
       // Saldo, no el total: si ya hubo un pago parcial no se pide de más.

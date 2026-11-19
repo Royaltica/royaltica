@@ -211,6 +211,8 @@ export class ReceivablesService {
           doNotContact: true,
           doNotContactReason: true,
           score: true,
+          riskTier: true,
+          maxDaysOverdue: true,
           assignedAgent: { select: { id: true, name: true } },
           invoices: {
             where: { direction: 'RECEIVABLE', deletedAt: null, status: { in: ['PENDING', 'PAID'] } },
@@ -1062,7 +1064,7 @@ export class ReceivablesService {
     // configurados, para no cambiar el comportamiento de orgs existentes).
     const org = await this.prisma.organization.findUnique({
       where: { id: invoice.organizationId },
-      select: { locale: true, currency: true },
+      select: { locale: true, currency: true, name: true },
     });
     const locale = org?.locale ?? 'es-MX';
     const currency = org?.currency ?? 'MXN';
@@ -1121,6 +1123,7 @@ export class ReceivablesService {
         invoice.organizationId,
         currency,
         paymentInfo,
+        org?.name,
       );
       emailSent = res.sent;
     }

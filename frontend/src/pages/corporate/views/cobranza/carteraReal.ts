@@ -51,9 +51,9 @@ export function cuentaDesdeApi(p: PortfolioCustomer): CuentaCartera {
     emision: fechaCorta(f.date),
     vence: fechaCorta(f.dueDate),
     dias: diasDe(f.dueDate, hoy),
-    // Igual que en el prototipo: las facturas adicionales arrancan su plan
-    // cuando alguien da "Iniciar plan".
-    planInicio: null,
+    // El motor de cobranza trabaja todas las facturas pendientes desde que
+    // existen: no hay que "iniciar" su plan a mano.
+    planInicio: fechaCorta(f.date),
   }));
 
   return {
@@ -97,6 +97,9 @@ export function cuentaDesdeApi(p: PortfolioCustomer): CuentaCartera {
       noContactar: p.doNotContact,
       motivoNoContactar: p.doNotContactReason,
       nota: p.notes ?? null,
+      score: p.score,
+      riesgo: p.riskTier ?? null,
+      diasMasVencida: p.maxDaysOverdue ?? null,
     },
     cliente: p.name,
     folio: principal?.folio ?? '—',

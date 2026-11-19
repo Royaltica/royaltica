@@ -8,6 +8,7 @@ import { useCobranza, type CuentaViva } from './store.tsx';
 import { api } from '../../../../services/apiClient.ts';
 import {
   AccionesCliente,
+  ExportarDatosContacto,
   BitacoraCliente,
   BTN_PRI,
   BTN_SEC,
@@ -294,7 +295,12 @@ function DetalleCliente({
                 </div>
               </div>
             )}
-            {parte === 'bitacora' && <BitacoraCliente dbId={c.dbId} />}
+            {parte === 'bitacora' && (
+              <>
+                <BitacoraCliente dbId={c.dbId} />
+                <ExportarDatosContacto dbId={c.dbId} nombre={c.cliente} />
+              </>
+            )}
           </PanelSub>
         </div>
       </div>

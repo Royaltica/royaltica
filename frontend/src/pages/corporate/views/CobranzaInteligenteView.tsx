@@ -43,7 +43,9 @@ import { CobranzaProvider, useCobranzaOpcional, useCobranza, planCuenta, type Cu
 import { SegmentoChip, SegmentosPanel } from './cobranza/segmento.tsx';
 import { SubFacturas } from './cobranza/facturas.tsx';
 import { AlertasPanel, useAlertas, type Destino } from './cobranza/alertas.tsx';
+import { api, type WaMessage } from '../../../services/apiClient.ts';
 import {
+  BitacoraCliente,
   BTN_SEC,
   CONTROL,
   exportarCuentasCsv,
@@ -390,6 +392,7 @@ function CobranzaIA({ seccion: seccionProp, rol: rolProp, onSeccion, onRol }: Vi
     setSection('recordatorios');
   };
   const reduce = useReducedMotion();
+  const { fuente } = useCobranza();
   const meta = SECCIONES[section];
   const titulo = rol === 'agente' ? ENCABEZADO.agente.titulo : meta.titulo;
   const texto = rol === 'agente' ? ENCABEZADO.agente.texto : meta.texto;
@@ -475,13 +478,17 @@ function CobranzaIA({ seccion: seccionProp, rol: rolProp, onSeccion, onRol }: Vi
       )}
       <div className="h-6" />
 
+      {fuente === 'error' && <SinConexion />}
+      {fuente === 'cargando' && <p className="text-[13px] text-brand-ink/45">Cargando tu cartera…</p>}
+      {fuente === 'ejemplo' && <AvisoEjemplo enDatos={section === 'datos'} onIrDatos={rol === 'agente' ? undefined : () => setSection('datos')} />}
       <motion.div
         key={`${rol}-${section}`}
         initial={reduce ? false : { opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={reduce ? { duration: 0 } : SPRING_SUAVE}
+        className={fuente === 'error' || fuente === 'cargando' ? 'hidden' : undefined}
       >
-        {rol === 'agente' ? (
+        {fuente === 'error' || fuente === 'cargando' ? null : rol === 'agente' ? (
           <AgenteVista renderPlan={(c) => <SubPlan registro={registroDe(c)} />} />
         ) : (
           <>
@@ -531,21 +538,62 @@ function FuenteDatos() {
   const { fuente } = useCobranza();
   if (fuente === 'cargando') return <span className="h-6" />;
   const real = fuente === 'real';
+  const error = fuente === 'error';
   const detalle = real
-    ? 'Clientes, facturas, agentes, historial de pagos, plan y WhatsApp vienen de tu cartera. Pagos, campañas y reportes todavía usan datos de ejemplo.'
-    : 'Tu base todavía no tiene clientes (o no hubo conexión con el servidor). Carga tu cartera en la pestaña Datos para trabajar con tus clientes reales.';
+    ? 'Clientes, facturas, agentes, pagos, plan y WhatsApp salen de tu base de datos. Las campañas todavía no envían mensajes.'
+    : error
+      ? 'No hubo conexión con el servidor. No se muestra ningún dato hasta recuperar la conexión.'
+      : 'Tu base todavía no tiene clientes: lo que ves es un recorrido de ejemplo con clientes ficticios. Carga tu cartera en Datos para trabajar con los tuyos.';
   return (
     <span
       title={detalle}
       className="inline-flex items-center gap-2 rounded-full pl-2.5 pr-3 py-1 text-[11.5px] text-brand-ink/60 bg-white/55 backdrop-blur-xl border border-white/80 ring-1 ring-brand-ink/[0.06]"
     >
-      <span className={`w-1.5 h-1.5 rounded-full ${real ? 'bg-emerald-500' : 'bg-amber-400'}`} />
-      <span className="font-semibold text-brand-ink/80">{real ? 'Datos reales de tu base' : 'Datos de ejemplo'}</span>
-      <span className="hidden md:inline text-brand-ink/45">
-        {real ? '· pagos, campañas y reportes aún de ejemplo' : '· carga tu cartera en Datos'}
-      </span>
+      <span className={`w-1.5 h-1.5 rounded-full ${real ? 'bg-emerald-500' : error ? 'bg-rose-500' : 'bg-amber-400'}`} />
+      <span className="font-semibold text-brand-ink/80">{real ? 'Datos reales de tu base' : error ? 'Sin conexión' : 'Datos de ejemplo'}</span>
+      {!real && !error && <span className="hidden md:inline text-brand-ink/45">· clientes ficticios</span>}
       <Info size={12} className="text-brand-ink/35" aria-hidden />
     </span>
+  );
+}
+
+/** Sin conexión: no se muestra nada que parezca la cartera del cliente. */
+function SinConexion() {
+  const { recargarCartera } = useCobranza();
+  const [cargando, setCargando] = React.useState(false);
+  return (
+    <div className="glass rounded-[28px] p-8 max-w-xl">
+      <h3 className="text-lg font-serif text-brand-ink">No pudimos leer tu cartera</h3>
+      <p className="text-[13px] text-brand-ink/60 mt-2 leading-relaxed">
+        No hubo conexión con el servidor. Para no mostrarte datos que no son tuyos, la pantalla queda en pausa hasta recuperarla.
+      </p>
+      <button
+        type="button"
+        disabled={cargando}
+        onClick={() => {
+          setCargando(true);
+          void recargarCartera().finally(() => setCargando(false));
+        }}
+        className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-brand-ink text-brand-paper text-[12.5px] font-semibold hover:bg-brand-ink/85 disabled:opacity-60"
+      >
+        {cargando ? 'Reintentando…' : 'Reintentar'}
+      </button>
+    </div>
+  );
+}
+
+/** Franja fija mientras la base no tiene clientes: todo lo de abajo es ficticio. */
+function AvisoEjemplo({ enDatos, onIrDatos }: { enDatos: boolean; onIrDatos?: () => void }) {
+  return (
+    <div role="note" className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-2xl bg-amber-400/15 ring-1 ring-amber-500/30 px-4 py-2.5 text-[12.5px] text-amber-950">
+      <span className="font-semibold">Recorrido de ejemplo.</span>
+      <span className="text-amber-950/75">Estos clientes, montos, mensajes y pagos son ficticios: tu base todavía no tiene clientes y aquí no se envía nada.</span>
+      {onIrDatos && !enDatos && (
+        <button type="button" onClick={onIrDatos} className="font-semibold underline underline-offset-2 hover:no-underline">
+          Cargar mi cartera →
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -639,8 +687,13 @@ const SUB_SECCIONES: { id: SubSeccion; label: string }[] = [
  * Expediente de un cliente que todavía no tiene mensajes registrados: misma
  * forma que los de MOCK.recordatorios, con lo que se sabe de la cartera.
  */
+/** Cliente del recorrido de ejemplo (sin base) o sembrado para demostración. */
+const esFicticio = (c: CuentaViva) => !c.dbId || /^k\d\d$/.test(c.id);
+
 function registroDe(c: CuentaViva): RecordatorioItem {
-  const encontrado = MOCK.recordatorios.find((r) => r.cliente === c.cliente);
+  // El historial de ejemplo es solo de los clientes ficticios (recorrido de
+  // ejemplo o los sembrados "demo:kNN"); un cliente real nunca lo hereda.
+  const encontrado = esFicticio(c) ? MOCK.recordatorios.find((r) => r.cliente === c.cliente) : undefined;
   if (encontrado) return encontrado;
   return {
     cliente: c.cliente,
@@ -752,8 +805,8 @@ function RecordatoriosPanel({ foco }: { foco?: { cliente: string; n: number; sub
   // El riesgo de la cuenta vive en MOCK.cartera y se enlaza por nombre de
   // cliente. Puede no existir (un cliente contactado sin factura priorizada),
   // por eso las tarjetas de riesgo y simulación se renderizan condicionadas.
-  const cuenta = cuentaDe(activo.cliente);
   const activoVivo = cartera.find((c) => c.cliente === activo.cliente)!;
+  const cuenta = activoVivo && esFicticio(activoVivo) ? cuentaDe(activo.cliente) : undefined;
 
   // Agregados de la cartera contactada: llenan el pie de la lista con algo
   // útil en vez de dejar aire muerto bajo los cinco clientes.
@@ -1170,8 +1223,14 @@ function RecordatoriosPanel({ foco }: { foco?: { cliente: string; n: number; sub
             {sub === 'facturas' && <SubFacturas cuenta={activoVivo} />}
             {sub === 'plan' && <SubPlan registro={activo} />}
             {sub === 'whatsapp' && <SubWhatsapp cuenta={activoVivo} />}
-            {sub === 'historial' && <SubHistorial registro={activo} reduce={reduce} />}
-            {sub === 'riesgo' && (
+            {sub === 'historial' &&
+              (activoVivo?.dbId && !esFicticio(activoVivo) ? (
+                <HistorialReal customerId={activoVivo.dbId} />
+              ) : (
+                <SubHistorial registro={activo} reduce={reduce} />
+              ))}
+            {sub === 'riesgo' && activoVivo?.dbId && !esFicticio(activoVivo) && <RiesgoReal cuenta={activoVivo} />}
+            {sub === 'riesgo' && !(activoVivo?.dbId && !esFicticio(activoVivo)) && (
               <>
                 <SubResumen cuenta={cuenta} />
                 {cuenta && (
@@ -1438,6 +1497,85 @@ function SimuladorCuenta({ cuenta }: { cuenta: CarteraItem }) {
 
 // ── Subpestaña 1 · Resumen ──────────────────────────────────────────
 
+const RIESGO_REAL: Record<string, { nombre: string; texto: string; clase: string }> = {
+  SANO: { nombre: 'Sano', texto: 'Paga dentro de lo esperado.', clase: 'text-emerald-700' },
+  ATENCION: { nombre: 'Atención', texto: 'Empieza a atrasarse: conviene darle seguimiento cercano.', clase: 'text-amber-700' },
+  RIESGO: { nombre: 'En riesgo', texto: 'Tiene una factura con 150 días o más de vencida.', clase: 'text-rose-600' },
+  INCOBRABLE: { nombre: 'Posible incobrable', texto: 'Tiene una factura con 200 días o más de vencida.', clase: 'text-rose-700' },
+};
+
+/**
+ * Riesgo de un cliente real, con los datos que calcula el servidor (sin
+ * cifras de ejemplo), y un simulador simple de cuánto baja su saldo vencido
+ * si paga una parte hoy.
+ */
+function RiesgoReal({ cuenta }: { cuenta: CuentaViva }) {
+  const [pct, setPct] = React.useState(100);
+  const d = cuenta.datos;
+  const h = cuenta.historial;
+  const aTiempo = h.length ? Math.round((h.filter((x) => x <= 0).length / h.length) * 100) : null;
+  const atrasoProm = h.length ? Math.round(h.reduce((a, x) => a + Math.max(0, x), 0) / h.length) : null;
+  const abiertas = cuenta.facturas.filter((f) => f.monto - f.pagado > 1);
+  const vencidas = abiertas.filter((f) => f.dias > 0);
+  const saldo = abiertas.reduce((a, f) => a + (f.monto - f.pagado), 0);
+  const saldoVencido = vencidas.reduce((a, f) => a + (f.monto - f.pagado), 0);
+  const masVencida = vencidas.reduce((a, f) => Math.max(a, f.dias), 0);
+  const r = d?.riesgo ? RIESGO_REAL[d.riesgo] : null;
+  const pago = Math.round((saldoVencido * pct) / 100);
+  const dato = (label: string, valor: React.ReactNode, nota?: string) => (
+    <div className="px-4 py-3.5">
+      <div className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40">{label}</div>
+      <div className="text-xl font-serif text-brand-ink mt-1">{valor}</div>
+      {nota && <div className="text-[11px] text-brand-ink/45 mt-0.5">{nota}</div>}
+    </div>
+  );
+  return (
+    <div className="px-7 py-6 space-y-6">
+      <div>
+        <BlockTitle>Riesgo</BlockTitle>
+        <p className={`text-lg font-serif mt-1 ${r?.clase ?? 'text-brand-ink/60'}`}>{r?.nombre ?? 'Aún sin clasificar'}</p>
+        <p className="text-[12.5px] text-brand-ink/55 mt-0.5">
+          {r?.texto ?? 'La clasificación se calcula cada día; aparecerá después del primer cálculo.'}
+        </p>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-white/70 border-y border-brand-ink/8">
+        {dato('Puntualidad', d?.score != null ? `${Math.round(d.score)} / 100` : '—', d?.score != null ? 'según cómo ha pagado' : 'sin historial suficiente')}
+        {dato('Pagó a tiempo', aTiempo != null ? `${aTiempo}%` : '—', h.length ? `de sus últimas ${h.length} facturas` : 'sin facturas pagadas')}
+        {dato('Atraso promedio', atrasoProm != null ? `${atrasoProm} días` : '—')}
+        {dato('Más vencida', masVencida ? `${masVencida} días` : 'Al corriente', `${vencidas.length} de ${abiertas.length} abiertas vencidas`)}
+      </div>
+      <div>
+        <BlockTitle>Simulador</BlockTitle>
+        {saldoVencido <= 0 ? (
+          <p className="text-sm text-brand-ink/50 mt-2">No tiene saldo vencido que simular.</p>
+        ) : (
+          <div className="mt-2 space-y-3">
+            <label className="block text-[12.5px] text-brand-ink/60">
+              Si hoy paga el <span className="font-semibold text-brand-ink">{pct}%</span> de lo vencido
+              <input
+                type="range"
+                min={10}
+                max={100}
+                step={10}
+                value={pct}
+                onChange={(e) => setPct(Number(e.target.value))}
+                className="block w-full max-w-sm mt-2 accent-brand-ink"
+                aria-label="Porcentaje del saldo vencido que pagaría"
+              />
+            </label>
+            <div className="grid grid-cols-3 divide-x divide-white/70 border-y border-brand-ink/8 max-w-xl">
+              {dato('Entraría', CURRENCY_FORMATTER.format(pago))}
+              {dato('Quedaría vencido', CURRENCY_FORMATTER.format(saldoVencido - pago))}
+              {dato('Saldo total después', CURRENCY_FORMATTER.format(saldo - pago))}
+            </div>
+            <p className="text-[11px] text-brand-ink/40">Es una cuenta simple sobre sus facturas abiertas. No registra nada ni cambia su plan.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SubResumen({ cuenta }: { cuenta: CarteraItem | undefined }) {
   if (!cuenta) {
     return (
@@ -1605,6 +1743,74 @@ function SubPlan({ registro }: { registro: RecordatorioItem }) {
 // ── Subpestaña 3 · Historial ────────────────────────────────────────
 // Registro de todo lo enviado y lo que contestó el cliente. Cada mensaje se
 // abre para leer el texto exacto que salió y la respuesta literal recibida.
+
+/**
+ * Historial de un cliente real: lo que de verdad salió y entró por WhatsApp
+ * (con su estado de entrega) y la bitácora de cambios y gestiones.
+ */
+function HistorialReal({ customerId }: { customerId: string }) {
+  const [mensajes, setMensajes] = React.useState<WaMessage[] | null | undefined>(undefined);
+  React.useEffect(() => {
+    let vivo = true;
+    api
+      .getWaThread(customerId)
+      .then((h) => vivo && setMensajes(h.messages))
+      .catch(() => vivo && setMensajes(null));
+    return () => {
+      vivo = false;
+    };
+  }, [customerId]);
+  const cuando = (iso: string) => new Date(iso).toLocaleString('es-MX', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const estado = (m: WaMessage) =>
+    m.direction === 'INBOUND'
+      ? 'Respuesta del cliente'
+      : m.delivery?.status === 'failed'
+        ? `No entregado. ${m.delivery.failedReason ?? ''}`
+        : m.delivery?.status === 'read'
+          ? 'Leído'
+          : m.delivery?.status === 'delivered'
+            ? 'Entregado'
+            : m.sent
+              ? 'Enviado'
+              : 'No salió';
+  const lista = [...(mensajes ?? [])].reverse();
+  const respuestas = lista.filter((m) => m.direction === 'INBOUND').length;
+  return (
+    <div className="px-7 py-6 space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <BlockTitle icon={<MessageSquare size={13} className="text-brand-gold" />}>Registro de mensajes</BlockTitle>
+        {mensajes && (
+          <span className="text-[11px] text-brand-ink/40 tabular-nums">
+            {lista.length - respuestas} enviados · {respuestas} del cliente
+          </span>
+        )}
+      </div>
+      {mensajes === undefined ? (
+        <p className="text-sm text-brand-ink/45">Cargando…</p>
+      ) : mensajes === null ? (
+        <p className="text-sm text-rose-600">No se pudo leer el historial.</p>
+      ) : !lista.length ? (
+        <p className="text-sm text-brand-ink/45">Todavía no hay mensajes con este cliente.</p>
+      ) : (
+        <ol className="space-y-2">
+          {lista.map((m) => (
+            <li key={m.id} className="rounded-xl border border-brand-ink/8 bg-brand-paper px-4 py-3">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-brand-ink/50">
+                <span className="font-semibold text-brand-ink/75">{cuando(m.createdAt)}</span>
+                <span>{m.kind === 'TEMPLATE' ? `Plantilla${m.templateName ? ` · ${m.templateName}` : ''}` : m.kind === 'BUTTON' ? 'Botón' : m.kind === 'MEDIA' ? 'Archivo' : 'Texto'}</span>
+                <span className={m.direction === 'INBOUND' ? 'text-cyan-700 font-semibold' : m.delivery?.status === 'failed' || !m.sent ? 'text-rose-600 font-semibold' : ''}>{estado(m)}</span>
+              </div>
+              <p className="text-[13px] text-brand-ink/80 mt-1 whitespace-pre-wrap break-words">{m.body}</p>
+            </li>
+          ))}
+        </ol>
+      )}
+      <div className="pt-2 border-t border-brand-ink/8">
+        <BitacoraCliente dbId={customerId} />
+      </div>
+    </div>
+  );
+}
 
 function SubHistorial({ registro, reduce }: { registro: RecordatorioItem; reduce: boolean | null }) {
   const [abierto, setAbierto] = React.useState<string | null>(null);

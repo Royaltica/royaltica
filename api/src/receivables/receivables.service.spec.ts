@@ -417,6 +417,8 @@ describe('ReceivablesService', () => {
         bankName: 'BBVA',
         clabe: '012345678901234567',
       },
+      // Empresa que cobra (para el pie del correo); el mock no trae nombre.
+      undefined,
     );
   });
 
@@ -454,6 +456,7 @@ describe('ReceivablesService', () => {
       'org-1',
       'MXN',
       {},
+      undefined,
     );
     expect(res).toEqual({ sent: 1 });
   });
