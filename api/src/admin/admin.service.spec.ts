@@ -123,3 +123,33 @@ describe('AdminService.createOrganization', () => {
     );
   });
 });
+
+describe('AdminService.getProductionReadiness (rol de la base)', () => {
+  const build = (queryRaw: jest.Mock) =>
+    new AdminService(
+      { $queryRaw: queryRaw } as unknown as PrismaService,
+      {} as FirebaseService,
+      {} as EmailService,
+      {} as UsageService,
+      { get: jest.fn((k: string) => (k === 'ALLOWED_ORIGINS' ? 'https://app.royaltica.com' : '')) } as unknown as ConfigService<Env, true>,
+      {} as never,
+    );
+  const dbItem = async (queryRaw: jest.Mock) =>
+    (await build(queryRaw).getProductionReadiness()).items.find((i) => i.key === 'db_role');
+
+  it('aprueba un rol sin superusuario ni BYPASSRLS', async () => {
+    const item = await dbItem(jest.fn().mockResolvedValue([{ role: 'royaltica_app', superuser: false, bypassrls: false }]));
+    expect(item).toMatchObject({ status: true });
+  });
+
+  it('marca como pendiente un superusuario o un rol con BYPASSRLS', async () => {
+    expect(await dbItem(jest.fn().mockResolvedValue([{ role: 'postgres', superuser: true, bypassrls: true }]))).toMatchObject({ status: false });
+    expect(await dbItem(jest.fn().mockResolvedValue([{ role: 'otro', superuser: false, bypassrls: true }]))).toMatchObject({ status: false });
+  });
+
+  it('no truena si la consulta falla', async () => {
+    const report = await build(jest.fn().mockRejectedValue(new Error('db down'))).getProductionReadiness();
+    expect(report.items.find((i) => i.key === 'db_role')).toMatchObject({ status: false });
+    expect(report.productionSafe).toBe(false);
+  });
+});

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   InvoiceStatus,
+  Prisma,
   type CollectionSequenceRun,
   type CollectionSequenceRunStatus,
   type CollectionSequenceStep,
@@ -1096,6 +1097,15 @@ export class CollectionSequencesService {
       (s) => s.stepOrder > nextStep.stepOrder,
     );
 
+    // ── Envío interrumpido: la corrida anterior empezó a mandar este paso y
+    // no registró el resultado (el proceso se cayó a la mitad). Nunca se
+    // reenvía a ciegas: se confirma con el hilo de WhatsApp o se pide a una
+    // persona que lo verifique.
+    const interrupted = await this.findInterruptedSend(run.id, nextStep.stepOrder);
+    if (interrupted) {
+      return this.recoverInterruptedSend(invoice, customerName, run, nextStep, interrupted, isLastStep, now);
+    }
+
     // ── Decisión IA opcional (Tradespace: "discernir" según riesgo/relación) ──
     // Opt-in por CollectionPolicy.aiDecisionEnabled (default false = sin
     // cambios). Los guard rails de arriba YA se aplicaron sin importar esto;
@@ -1169,41 +1179,75 @@ export class CollectionSequencesService {
     let channelSent = false;
     let manualChannelRequired = false;
     let whatsappKind: 'TEMPLATE' | 'TEXT' | null = null;
-    if (effectiveChannel === 'EMAIL' && invoice.customer.email) {
-      const sender = await this.prisma.organization.findUnique({
-        where: { id: invoice.organizationId },
-        select: { name: true },
+    const sendsToDebtor =
+      (effectiveChannel === 'EMAIL' && !!invoice.customer.email) ||
+      (effectiveChannel === 'WHATSAPP' &&
+        !!(invoice.customer.financeContactPhone ?? invoice.customer.phone));
+    if (sendsToDebtor) {
+      // Marca previa al envío (escritura directa, no la bitácora tolerante a
+      // fallos): si no se puede guardar, no se manda. Si el proceso se cae
+      // después de mandar, la siguiente corrida la encuentra abierta y no
+      // repite el mensaje (ver findInterruptedSend).
+      await this.prisma.activityLog.create({
+        data: {
+          organizationId: invoice.organizationId,
+          action: 'COLLECTION_SEQUENCE_STEP_SENDING',
+          entityType: 'CollectionSequenceRun',
+          entityId: run.id,
+          metadata: {
+            invoiceId: invoice.id,
+            stepOrder: nextStep.stepOrder,
+            channel: effectiveChannel,
+          } as Prisma.InputJsonValue,
+        },
       });
-      const res = await this.email.sendCollectionSequenceStep(
-        invoice.customer.email,
-        customerName,
-        body,
-        invoice.organizationId,
-        effectiveTone,
-        sender?.name,
-      );
-      channelSent = res.sent;
-    } else if (
-      effectiveChannel === 'WHATSAPP' &&
-      (invoice.customer.financeContactPhone ?? invoice.customer.phone)
-    ) {
-      // Ventana de 24h cerrada → plantilla aprobada del nivel; abierta (el
-      // cliente contestó hace poco) → texto libre. Lo decide el servicio de
-      // conversación, que además deja el mensaje en el hilo del cliente.
-      const res = await this.conversations.sendCollectionStep({
-        customer: invoice.customer,
-        invoice,
-        templateName: nextStep.whatsappTemplateName ?? null,
-        freeText: body,
-        locale,
+    }
+    try {
+      if (effectiveChannel === 'EMAIL' && invoice.customer.email) {
+        const sender = await this.prisma.organization.findUnique({
+          where: { id: invoice.organizationId },
+          select: { name: true },
+        });
+        const res = await this.email.sendCollectionSequenceStep(
+          invoice.customer.email,
+          customerName,
+          body,
+          invoice.organizationId,
+          effectiveTone,
+          sender?.name,
+        );
+        channelSent = res.sent;
+      } else if (
+        effectiveChannel === 'WHATSAPP' &&
+        (invoice.customer.financeContactPhone ?? invoice.customer.phone)
+      ) {
+        // Ventana de 24h cerrada → plantilla aprobada del nivel; abierta (el
+        // cliente contestó hace poco) → texto libre. Lo decide el servicio de
+        // conversación, que además deja el mensaje en el hilo del cliente.
+        const res = await this.conversations.sendCollectionStep({
+          customer: invoice.customer,
+          invoice,
+          templateName: nextStep.whatsappTemplateName ?? null,
+          freeText: body,
+          locale,
+        });
+        channelSent = res.sent;
+        whatsappKind = res.kind;
+      } else if (effectiveChannel === 'SMS' || effectiveChannel === 'PHONE') {
+        // Sin proveedor automático para SMS/llamada: se notifica a los admins
+        // para que hagan el contacto manualmente, pero el paso SÍ avanza (el
+        // sistema ya hizo su parte al detectarlo y avisar).
+        manualChannelRequired = true;
+      }
+    } catch (err) {
+      // El proveedor lanzó un error: se cierra la marca como fallo y se
+      // reintenta en la siguiente corrida, igual que un envío no aceptado.
+      await this.logStep(invoice, run, nextStep, 'COLLECTION_SEQUENCE_STEP_SKIPPED', {
+        reason: 'send-error',
+        channel: effectiveChannel,
+        error: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
       });
-      channelSent = res.sent;
-      whatsappKind = res.kind;
-    } else if (effectiveChannel === 'SMS' || effectiveChannel === 'PHONE') {
-      // Sin proveedor automático para SMS/llamada: se notifica a los admins
-      // para que hagan el contacto manualmente, pero el paso SÍ avanza (el
-      // sistema ya hizo su parte al detectarlo y avisar).
-      manualChannelRequired = true;
+      return { outcome: 'skipped', reason: 'send-failed' };
     }
 
     if (manualChannelRequired) {
@@ -1266,6 +1310,99 @@ export class CollectionSequencesService {
 
   // localHour/dateKey/isBlackout viven ahora en ../common/timezone.util
   // (compartidos con CallGuardrailsService, ver src/calls).
+
+  /** Acciones de bitácora que cierran un intento de envío de un paso. */
+  private static readonly STEP_OUTCOME_ACTIONS = [
+    'COLLECTION_SEQUENCE_STEP_SENDING',
+    'COLLECTION_SEQUENCE_STEP_SENT',
+    'COLLECTION_SEQUENCE_STEP_SKIPPED',
+    'COLLECTION_SEQUENCE_STEP_UNCERTAIN',
+    'COLLECTION_SEQUENCE_ESCALATED',
+  ];
+
+  /**
+   * Devuelve la marca de envío del paso si es lo último que se registró de él
+   * (no hubo SENT, SKIPPED ni otro cierre después): señal de que el proceso
+   * se cayó entre mandar el mensaje y guardar el resultado.
+   */
+  private async findInterruptedSend(
+    runId: string,
+    stepOrder: number,
+  ): Promise<{ createdAt: Date; channel: string | null } | null> {
+    const last = await this.prisma.activityLog.findFirst({
+      where: {
+        entityType: 'CollectionSequenceRun',
+        entityId: runId,
+        action: { in: CollectionSequencesService.STEP_OUTCOME_ACTIONS },
+        metadata: { path: ['stepOrder'], equals: stepOrder },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { action: true, createdAt: true, metadata: true },
+    });
+    if (!last || last.action !== 'COLLECTION_SEQUENCE_STEP_SENDING') return null;
+    const meta = (last.metadata ?? {}) as { channel?: unknown };
+    return { createdAt: last.createdAt, channel: typeof meta.channel === 'string' ? meta.channel : null };
+  }
+
+  /**
+   * Cierra un envío interrumpido sin volver a mandar. Si el hilo de WhatsApp
+   * registra el mensaje como enviado después de la marca, el paso se da por
+   * enviado. Si no hay forma de confirmarlo, también se avanza (es preferible
+   * que una persona confirme a escribirle dos veces al deudor) y se avisa a
+   * los administradores.
+   */
+  private async recoverInterruptedSend(
+    invoice: { id: string; organizationId: string; folio: string | null; cfdiUuid: string },
+    customerName: string,
+    run: CollectionSequenceRun,
+    step: CollectionSequenceStep,
+    interrupted: { createdAt: Date; channel: string | null },
+    isLastStep: boolean,
+    now: Date,
+  ): Promise<AdvanceResult> {
+    const confirmed =
+      interrupted.channel === 'WHATSAPP'
+        ? await this.prisma.whatsappMessage.findFirst({
+            where: {
+              invoiceId: invoice.id,
+              direction: 'OUTBOUND',
+              sent: true,
+              createdAt: { gte: interrupted.createdAt },
+            },
+            orderBy: { createdAt: 'asc' },
+            select: { createdAt: true },
+          })
+        : null;
+
+    await this.prisma.collectionSequenceRun.update({
+      where: { id: run.id },
+      data: {
+        currentStepOrder: step.stepOrder,
+        lastStepSentAt: confirmed?.createdAt ?? interrupted.createdAt,
+        status: isLastStep ? 'COMPLETED' : 'ACTIVE',
+      },
+    });
+
+    if (confirmed) {
+      await this.logStep(invoice, run, step, 'COLLECTION_SEQUENCE_STEP_SENT', {
+        channel: interrupted.channel,
+        recoveredAfterInterruption: true,
+      });
+      return { outcome: 'sent', reason: 'recovered-after-interruption', stepOrder: step.stepOrder };
+    }
+
+    await this.logStep(invoice, run, step, 'COLLECTION_SEQUENCE_STEP_UNCERTAIN', {
+      channel: interrupted.channel,
+      interruptedAt: interrupted.createdAt.toISOString(),
+      checkedAt: now.toISOString(),
+    });
+    await this.notifications.notifyOrgAdmins(invoice.organizationId, {
+      type: 'COLLECTION_SEQUENCE_SEND_UNCERTAIN',
+      title: 'Confirma si salió un mensaje de cobranza',
+      body: `Se interrumpió el envío del paso ${step.stepOrder} de la factura ${this.folioOf(invoice)} (${customerName}) y no se pudo confirmar si llegó. No se reenvió para no duplicarlo; revisa el historial del cliente y, si hace falta, contáctalo a mano.`,
+    });
+    return { outcome: 'skipped', reason: 'interrupted-send', stepOrder: step.stepOrder };
+  }
 
   private async logStep(
     invoice: { id: string; organizationId: string },

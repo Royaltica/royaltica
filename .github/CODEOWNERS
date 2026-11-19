@@ -1,0 +1,21 @@
+# Dueños de las áreas críticas. GitHub pide su revisión en los PR que tocan
+# estas rutas cuando la protección de `main` exige revisión de code owners.
+# Plan del equipo (15 nov): esquema, WhatsApp, motor de cobranza y conciliación.
+
+# Esquema y migraciones
+/api/prisma/                          @josemalfavaun
+
+# WhatsApp (webhook, bandeja sin dueño, envíos)
+/api/src/whatsapp/                    @josemalfavaun
+
+# Motor de cobranza y sus frenos
+/api/src/collection-sequences/        @josemalfavaun
+/api/src/collection-safety/           @josemalfavaun
+/api/src/collection-policy/           @josemalfavaun
+
+# Pagos y conciliación
+/api/src/bank-reconciliation/         @josemalfavaun
+/api/src/payment-ledger/              @josemalfavaun
+
+# Despliegue e integración continua
+/.github/                             @josemalfavaun

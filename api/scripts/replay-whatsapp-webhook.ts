@@ -1,184 +1,107 @@
 /**
- * Reproductor de webhooks de WhatsApp: arma payloads con el formato real de
- * Meta, los firma con el secreto de la app (X-Hub-Signature-256) y los manda
- * a /webhooks/whatsapp. Sirve para probar de punta a punta SIN depender de
- * Meta (con la app sin publicar Meta no entrega eventos reales).
+ * Reproductor de webhooks de WhatsApp para staging y pruebas locales (C4).
  *
- * Uso (desde api/):
- *   npx tsx scripts/replay-whatsapp-webhook.ts <escenario> [opciones]
+ * Arma payloads con el formato real de Meta, los firma con WHATSAPP_APP_SECRET
+ * (cabecera x-hub-signature-256) y los manda a <url>/webhooks/whatsapp. Así se
+ * prueba el webhook sin depender de que Meta entregue eventos.
  *
- * Escenarios:
- *   texto      --from 5215512345678 --text "Hola"            respuesta en texto
- *   respuesta  --from … --text "…" --context wamid.XXX       respuesta a un mensaje nuestro (empate exacto)
- *   boton      --from … --text "Ya pagué, comparto comprobante" --context wamid.XXX
- *   imagen     --from … [--text "comprobante"]               archivo (comprobante)
- *   baja       --from …                                      manda "BAJA"
- *   estado     --id wamid.XXX --status delivered|read|sent   estado de entrega
- *   fallo      --id wamid.XXX [--code 131026]                entrega fallida
- *   plantilla  --name aviso_vencida --event REJECTED         aviso de plantilla
- *   duplicado  --from … --text "…"                           manda el MISMO mensaje dos veces (reintento de Meta)
- *   firma-mala --from …                                      firma inválida (debe responder 403)
+ * Uso, desde api/ (el secreto debe ser el mismo que tiene el backend destino):
+ *   WHATSAPP_APP_SECRET=... npx ts-node scripts/replay-whatsapp-webhook.ts \
+ *     --url http://localhost:8080 --caso texto --from 5215500000001
  *
- * Opciones comunes:
- *   --url http://localhost:8080      destino (default; nunca apunta solo a producción)
- *   --phone-id 123456                phone_number_id receptor (default WHATSAPP_PHONE_ID o "TEST-PN")
- *   --wamid wamid.TEST.1             id del mensaje entrante (default: uno nuevo)
+ * Casos: texto, boton, imagen, estados, baja, duplicado, todos.
+ * Opciones: --texto "..."  --contexto <wamid de un mensaje nuestro>
+ *           --wamid <wamid saliente para "estados">  --phone-id <id del número>
  *
- * El secreto se lee de WHATSAPP_APP_SECRET (.env). Nunca se pasa por
- * argumento ni se imprime. Para staging, exporta el secreto de staging en la
- * terminal antes de correrlo.
+ * Nunca apunta a producción: rechaza api.royaltica.com y app.royaltica.com.
  */
+import { randomUUID } from 'node:crypto';
+import {
+  buttonReply,
+  imageMessage,
+  signBody,
+  statusUpdate,
+  textMessage,
+  type MetaContext,
+} from '../src/whatsapp/testing/meta-webhook-payloads';
 
-import 'dotenv/config';
-import { createHmac, randomUUID } from 'node:crypto';
+const CASOS = ['texto', 'boton', 'imagen', 'estados', 'baja', 'duplicado', 'todos'] as const;
+type Caso = (typeof CASOS)[number];
+const HOSTS_PRODUCCION = new Set(['api.royaltica.com', 'app.royaltica.com', 'royaltica.com', 'www.royaltica.com']);
 
-type Args = Record<string, string>;
-
-function parseArgs(argv: string[]): { scenario: string; args: Args } {
-  const [scenario = '', ...rest] = argv;
-  const args: Args = {};
-  for (let i = 0; i < rest.length; i += 1) {
-    if (rest[i].startsWith('--')) {
-      args[rest[i].slice(2)] = rest[i + 1] ?? '';
-      i += 1;
-    }
+function argumentos(argv: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const clave = argv[i];
+    if (!clave.startsWith('--')) continue;
+    const valor = argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[++i] : 'true';
+    out[clave.slice(2)] = valor;
   }
-  return { scenario, args };
+  return out;
 }
 
-function envelope(phoneId: string, value: Record<string, unknown>, field = 'messages') {
-  return {
-    object: 'whatsapp_business_account',
-    entry: [
-      {
-        id: 'WABA-TEST',
-        changes: [
-          {
-            field,
-            value:
-              field === 'messages'
-                ? { messaging_product: 'whatsapp', metadata: { display_phone_number: '0000000000', phone_number_id: phoneId }, ...value }
-                : value,
-          },
-        ],
-      },
-    ],
-  };
+function destino(url: string | undefined): URL {
+  if (!url) throw new Error('Falta --url (por ejemplo http://localhost:8080).');
+  const base = new URL(url);
+  if (HOSTS_PRODUCCION.has(base.hostname)) {
+    throw new Error(`No se permite producción (${base.hostname}). Usa local o staging.`);
+  }
+  return new URL('/webhooks/whatsapp', base);
 }
 
-function inbound(args: Args, phoneId: string, message: Record<string, unknown>) {
-  const from = args.from;
-  if (!from) throw new Error('Falta --from (teléfono del cliente, solo dígitos, p. ej. 5215512345678).');
-  return envelope(phoneId, {
-    contacts: [{ profile: { name: 'Prueba' }, wa_id: from }],
-    messages: [
-      {
-        from,
-        id: args.wamid || `wamid.TEST.${randomUUID()}`,
-        timestamp: String(Math.floor(Date.now() / 1000)),
-        ...(args.context ? { context: { id: args.context } } : {}),
-        ...message,
-      },
-    ],
-  });
-}
+const wamid = () => `wamid.PRUEBA.${randomUUID()}`;
 
-function build(scenario: string, args: Args, phoneId: string): unknown {
-  switch (scenario) {
+function payloads(caso: Caso, a: Record<string, string>, ctx: MetaContext): { nombre: string; cuerpo: unknown }[] {
+  const from = a.from ?? '5210000000001';
+  const contexto = a.contexto;
+  switch (caso) {
     case 'texto':
-    case 'respuesta':
-    case 'duplicado':
-    case 'firma-mala':
-      return inbound(args, phoneId, { type: 'text', text: { body: args.text || 'Hola' } });
-    case 'baja':
-      return inbound(args, phoneId, { type: 'text', text: { body: 'BAJA' } });
-    case 'boton': {
-      const text = args.text || 'Ya pagué, comparto comprobante';
-      return inbound(args, phoneId, { type: 'button', button: { text, payload: text } });
-    }
+      return [{ nombre: 'texto', cuerpo: textMessage(ctx, from, wamid(), a.texto ?? 'Hola, ¿me confirman el saldo?', contexto) }];
+    case 'boton':
+      return [{ nombre: 'botón', cuerpo: buttonReply(ctx, from, wamid(), a.texto ?? 'Ya pagué, comparto comprobante', contexto) }];
     case 'imagen':
-      return inbound(args, phoneId, {
-        type: 'image',
-        image: { id: 'MEDIA-TEST', mime_type: 'image/jpeg', ...(args.text ? { caption: args.text } : {}) },
-      });
-    case 'estado':
-    case 'fallo': {
-      if (!args.id) throw new Error('Falta --id (wamid del mensaje que enviamos).');
-      const status = scenario === 'fallo' ? 'failed' : args.status || 'delivered';
-      const code = Number(args.code || 131026);
-      return envelope(phoneId, {
-        statuses: [
-          {
-            id: args.id,
-            status,
-            timestamp: String(Math.floor(Date.now() / 1000)),
-            recipient_id: args.from || '5210000000000',
-            ...(status === 'failed'
-              ? { errors: [{ code, title: 'Message undeliverable', error_data: { details: 'Simulado por el reproductor' } }] }
-              : {}),
-          },
-        ],
-      });
+      return [{ nombre: 'imagen', cuerpo: imageMessage(ctx, from, wamid(), a.texto ?? 'comprobante', contexto) }];
+    case 'baja':
+      return [{ nombre: 'baja', cuerpo: textMessage(ctx, from, wamid(), 'BAJA', contexto) }];
+    case 'estados': {
+      if (!a.wamid) throw new Error('El caso "estados" requiere --wamid (un mensaje que enviamos).');
+      return (['sent', 'delivered', 'read', 'failed'] as const).map((estado) => ({
+        nombre: `estado ${estado}`,
+        cuerpo: statusUpdate(ctx, a.wamid, estado, from),
+      }));
     }
-    case 'plantilla':
-      return envelope(
-        phoneId,
-        {
-          event: (args.event || 'REJECTED').toUpperCase(),
-          message_template_name: args.name || 'aviso_vencida',
-          message_template_language: 'es_MX',
-          reason: args.reason || 'INVALID_FORMAT',
-        },
-        'message_template_status_update',
-      );
-    default:
-      throw new Error(
-        `Escenario desconocido: "${scenario}". Usa: texto, respuesta, boton, imagen, baja, estado, fallo, plantilla, duplicado, firma-mala.`,
-      );
+    case 'duplicado': {
+      const cuerpo = textMessage(ctx, from, wamid(), a.texto ?? 'Mensaje repetido por Meta', contexto);
+      return Array.from({ length: 5 }, (_, i) => ({ nombre: `duplicado ${i + 1}/5`, cuerpo }));
+    }
+    case 'todos':
+      return (['texto', 'boton', 'imagen', 'duplicado'] as const).flatMap((c) => payloads(c, a, ctx));
   }
-}
-
-async function post(url: string, raw: string, signature: string) {
-  const res = await fetch(`${url.replace(/\/$/, '')}/webhooks/whatsapp`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-hub-signature-256': signature },
-    body: raw,
-  });
-  const body = await res.text();
-  console.log(`→ HTTP ${res.status} ${body}`);
-  return res.status;
 }
 
 async function main() {
-  const { scenario, args } = parseArgs(process.argv.slice(2));
-  const url = args.url || 'http://localhost:8080';
-  const phoneId = args['phone-id'] || process.env.WHATSAPP_PHONE_ID || 'TEST-PN';
-  const secret = process.env.WHATSAPP_APP_SECRET ?? '';
+  const a = argumentos(process.argv.slice(2));
+  const caso = (a.caso ?? 'texto') as Caso;
+  if (!CASOS.includes(caso)) throw new Error(`Caso desconocido: ${caso}. Opciones: ${CASOS.join(', ')}.`);
+  const url = destino(a.url);
+  const secreto = process.env.WHATSAPP_APP_SECRET ?? '';
+  if (!secreto) throw new Error('Falta WHATSAPP_APP_SECRET (el mismo del backend destino).');
+  const ctx: MetaContext = { phoneNumberId: a['phone-id'] ?? 'PN-PRUEBA' };
 
-  if (/api\.royaltica\.com/.test(url) && args.confirm !== 'produccion') {
-    throw new Error('Ese destino es PRODUCCIÓN. Si de verdad es lo que quieres, agrega --confirm produccion.');
-  }
-  if (!secret) {
-    console.warn('Aviso: WHATSAPP_APP_SECRET vacío. Solo un backend en desarrollo sin secreto aceptará esto.');
-  }
-
-  const raw = JSON.stringify(build(scenario, args, phoneId));
-  const good = 'sha256=' + createHmac('sha256', secret).update(raw).digest('hex');
-  console.log(`Escenario "${scenario}" → ${url}`);
-
-  if (scenario === 'firma-mala') {
-    const status = await post(url, raw, 'sha256=' + '0'.repeat(64));
-    console.log(status === 403 ? 'OK: la firma inválida se rechazó.' : 'OJO: se esperaba 403.');
-    return;
-  }
-  await post(url, raw, good);
-  if (scenario === 'duplicado') {
-    console.log('Reintento (mismo wamid):');
-    await post(url, raw, good);
+  for (const { nombre, cuerpo } of payloads(caso, a, ctx)) {
+    const raw = JSON.stringify(cuerpo);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-hub-signature-256': signBody(raw, secreto) },
+      body: raw,
+    });
+    const texto = (await res.text()).slice(0, 200);
+    console.log(`${res.ok ? 'OK ' : 'ERR'} ${res.status} ${nombre}${texto ? ` → ${texto}` : ''}`);
+    if (!res.ok) process.exitCode = 1;
   }
 }
 
 main().catch((err) => {
-  console.error(err instanceof Error ? err.message : err);
+  console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 });

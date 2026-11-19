@@ -1,0 +1,94 @@
+name: Respaldo diario de producción
+
+# Respaldo fuera de Railway: pg_dump de producción, prueba de restauración en un
+# Postgres temporal del runner y archivo cifrado guardado 14 días como artifact.
+# No corre hasta que existan los secretos PROD_DATABASE_URL y RESPALDO_CLAVE
+# (ver docs/respaldos.md). Si falla, GitHub avisa por correo.
+
+on:
+  schedule:
+    - cron: '17 9 * * *' # 03:17 en Ciudad de México
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: respaldo-diario
+  cancel-in-progress: false
+
+jobs:
+  respaldo:
+    name: Respaldar, restaurar y cifrar
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PROD_DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+      RESPALDO_CLAVE: ${{ secrets.RESPALDO_CLAVE }}
+    services:
+      restaurada:
+        image: postgres:17
+        env:
+          POSTGRES_USER: prueba
+          POSTGRES_PASSWORD: prueba
+          POSTGRES_DB: restaurada
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U prueba"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - name: Revisar secretos
+        id: secretos
+        run: |
+          if [ -z "$PROD_DATABASE_URL" ] || [ -z "$RESPALDO_CLAVE" ]; then
+            echo "::warning::Faltan PROD_DATABASE_URL o RESPALDO_CLAVE; no se respalda."
+            echo "listo=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "listo=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Instalar cliente de Postgres 17
+        if: steps.secretos.outputs.listo == 'true'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -q postgresql-client-17
+
+      - name: Respaldar producción
+        if: steps.secretos.outputs.listo == 'true'
+        run: |
+          ARCHIVO="royaltica-$(date -u +%Y-%m-%d).dump"
+          echo "ARCHIVO=$ARCHIVO" >> "$GITHUB_ENV"
+          /usr/lib/postgresql/17/bin/pg_dump "$PROD_DATABASE_URL" -Fc -f "$ARCHIVO"
+          ls -lh "$ARCHIVO"
+
+      - name: Probar la restauración
+        if: steps.secretos.outputs.listo == 'true'
+        env:
+          PGPASSWORD: prueba
+        run: |
+          BIN=/usr/lib/postgresql/17/bin
+          $BIN/pg_restore -h localhost -U prueba -d restaurada --no-owner --no-acl --exit-on-error "$ARCHIVO"
+          for TABLA in Organization Customer Invoice _prisma_migrations; do
+            N=$($BIN/psql -h localhost -U prueba -d restaurada -At -c "SELECT count(*) FROM \"$TABLA\"")
+            echo "$TABLA: $N"
+          done
+          ORGS=$($BIN/psql -h localhost -U prueba -d restaurada -At -c 'SELECT count(*) FROM "Organization"')
+          if [ "$ORGS" -lt 1 ]; then echo "::error::La copia restaurada no tiene organizaciones."; exit 1; fi
+
+      - name: Cifrar
+        if: steps.secretos.outputs.listo == 'true'
+        run: |
+          gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase-fd 0 \
+            -o "$ARCHIVO.gpg" "$ARCHIVO" <<< "$RESPALDO_CLAVE"
+          rm -f "$ARCHIVO"
+
+      - name: Guardar el respaldo cifrado
+        if: steps.secretos.outputs.listo == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVO }}.gpg
+          path: ${{ env.ARCHIVO }}.gpg
+          retention-days: 14
+          if-no-files-found: error
