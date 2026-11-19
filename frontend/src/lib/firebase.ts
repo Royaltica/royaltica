@@ -9,7 +9,10 @@ import {
 import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
+// Staging puede usar otro proyecto de Firebase: VITE_FIREBASE_CONFIG trae el
+// JSON de configuración web (no es secreto). Sin la variable, se usa el de producción.
+const stagingConfig = import.meta.env.VITE_FIREBASE_CONFIG as string | undefined;
+const app = initializeApp(stagingConfig ? JSON.parse(stagingConfig) : firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const googleProvider = new GoogleAuthProvider();
