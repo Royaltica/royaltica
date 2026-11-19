@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { collectionCompanySchema, collectionNotificationsSchema, collectionWorkspacePatchSchema, DEFAULT_COLLECTION_COMPANY, DEFAULT_COLLECTION_NOTIFICATIONS, DEFAULT_COLLECTION_WORKSPACE, parseUserWorkspaces, type CollectionCompany, type CollectionNotifications, type CollectionWorkspace } from './collection-workspace';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../common/prisma/prisma.service';
 import {
@@ -117,6 +118,9 @@ export interface OrgSettings {
   collectionEngineHour: number;
   collectionSecurity: CollectionSecuritySettings;
   collectionRules: CollectionRulesSettings;
+  collectionNotifications: CollectionNotifications;
+  collectionCompany: CollectionCompany;
+  collectionUserState: Record<string, CollectionWorkspace>;
 }
 
 export const DEFAULT_SETTINGS: OrgSettings = {
@@ -145,6 +149,9 @@ export const DEFAULT_SETTINGS: OrgSettings = {
   collectionEngineHour: 11,
   collectionSecurity: DEFAULT_COLLECTION_SECURITY,
   collectionRules: DEFAULT_COLLECTION_RULES,
+  collectionNotifications: DEFAULT_COLLECTION_NOTIFICATIONS,
+  collectionCompany: DEFAULT_COLLECTION_COMPANY,
+  collectionUserState: {},
 };
 
 /** Rango permitido para la hora del motor de cobranza (hora local). */
@@ -177,7 +184,7 @@ export const SUPPORTED_EXTERNAL_SYNC_PROVIDERS = [
  * parciales (cargo/email opcionales); `parseAuthorizers` las normaliza.
  */
 export type SettingsPatch = Partial<
-  Omit<OrgSettings, 'authorizers' | 'requiredSignatures' | 'collectionSecurity' | 'collectionRules'>
+  Omit<OrgSettings, 'authorizers' | 'requiredSignatures' | 'collectionSecurity' | 'collectionRules' | 'collectionUserState'>
 > & {
   authorizers?: Array<{ name?: string; cargo?: string; email?: string }>;
   collectionSecurity?: Partial<CollectionSecuritySettings>;
@@ -189,6 +196,29 @@ type ExternalSyncProvider = (typeof SUPPORTED_EXTERNAL_SYNC_PROVIDERS)[number];
 @Injectable()
 export class SettingsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async getWorkspace(organizationId: string, userId: string): Promise<CollectionWorkspace> {
+    const settings = await this.get(organizationId);
+    return settings.collectionUserState[userId] ?? structuredClone(DEFAULT_COLLECTION_WORKSPACE);
+  }
+
+  async updateWorkspace(organizationId: string, userId: string, patch: unknown): Promise<CollectionWorkspace> {
+    const parsed = collectionWorkspacePatchSchema.safeParse(patch);
+    if (!parsed.success) throw new BadRequestException('Revisa los datos de trabajo de cobranza.');
+    return this.prisma.withOrg(organizationId, async (tx) => {
+      const rows = await tx.$queryRaw<{ settings: Prisma.JsonValue }[]>`
+        SELECT "settings" FROM "Organization" WHERE "id" = ${organizationId} FOR UPDATE
+      `;
+      if (!rows[0]) throw new NotFoundException('Organización no encontrada.');
+      const stored = this.settingsObject(rows[0].settings);
+      const users = parseUserWorkspaces(stored.collectionUserState);
+      const current = users[userId] ?? DEFAULT_COLLECTION_WORKSPACE;
+      if (current.revision !== parsed.data.revision) throw new ConflictException('Hay cambios más recientes. Recarga tus datos antes de guardar.');
+      const next = { ...current, ...parsed.data, revision: current.revision + 1 };
+      await tx.organization.update({ where: { id: organizationId }, data: { settings: { ...stored, collectionUserState: { ...users, [userId]: next } } as unknown as Prisma.JsonObject } });
+      return next;
+    });
+  }
 
   /** Lee la configuración efectiva (stored ∪ defaults) de una organización. */
   async get(organizationId: string): Promise<OrgSettings> {
@@ -238,6 +268,8 @@ export class SettingsService {
     const authorizers = this.parseAuthorizers(s.authorizers);
     const security = collectionSecuritySchema.partial().safeParse(s.collectionSecurity);
     const rules = collectionRulesSchema.partial().safeParse(s.collectionRules);
+    const notifications = collectionNotificationsSchema.safeParse(s.collectionNotifications);
+    const company = collectionCompanySchema.safeParse(s.collectionCompany);
     return {
       multiUserEnabled:
         typeof s.multiUserEnabled === 'boolean'
@@ -314,6 +346,9 @@ export class SettingsService {
           : DEFAULT_SETTINGS.collectionEngineHour,
       collectionSecurity: { ...DEFAULT_COLLECTION_SECURITY, ...(security.success ? security.data : {}) },
       collectionRules: { ...DEFAULT_COLLECTION_RULES, ...(rules.success ? rules.data : {}) },
+      collectionNotifications: notifications.success ? notifications.data : structuredClone(DEFAULT_COLLECTION_NOTIFICATIONS),
+      collectionCompany: company.success ? company.data : structuredClone(DEFAULT_COLLECTION_COMPANY),
+      collectionUserState: parseUserWorkspaces(s.collectionUserState),
     };
   }
 
@@ -408,6 +443,16 @@ export class SettingsService {
       const parsed = collectionRulesSchema.partial().safeParse(patch.collectionRules);
       if (!parsed.success) throw new BadRequestException('Revisa las reglas de cobranza.');
       out.collectionRules = { ...current.collectionRules, ...parsed.data };
+    }
+    if (patch.collectionNotifications !== undefined) {
+      const parsed = collectionNotificationsSchema.safeParse(patch.collectionNotifications);
+      if (!parsed.success) throw new BadRequestException('Revisa los destinatarios y horarios de alertas.');
+      out.collectionNotifications = parsed.data;
+    }
+    if (patch.collectionCompany !== undefined) {
+      const parsed = collectionCompanySchema.safeParse(patch.collectionCompany);
+      if (!parsed.success) throw new BadRequestException('Revisa los datos de tu empresa (CLABE, correo y liga HTTPS).');
+      out.collectionCompany = parsed.data;
     }
     return out;
   }

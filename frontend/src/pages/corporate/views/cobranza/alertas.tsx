@@ -290,44 +290,17 @@ function calcular(cartera: CuentaViva[], demo: boolean, envioAutomatico: boolean
   return out.sort((x, y) => orden[x.severidad] - orden[y.severidad] || y.monto - x.monto);
 }
 
-type Estado = Record<string, { firma: string; hasta?: string }>;
-const LLAVE = 'royaltica.cobranza.alertas';
 const firmaDe = (a: Alerta) => `${a.titulo}|${a.clientes.join(',')}`;
 const hoyIso = () => new Date().toISOString().slice(0, 10);
 
-function leer(): Estado {
-  try {
-    return JSON.parse(window.localStorage.getItem(LLAVE) ?? '{}') as Estado;
-  } catch {
-    return {};
-  }
-}
-
-// Estado compartido entre la pestaña (contador) y el panel.
-const oyentes = new Set<() => void>();
-function guardar(e: Estado) {
-  try {
-    window.localStorage.setItem(LLAVE, JSON.stringify(e));
-  } catch {
-    /* sin almacenamiento: dura la sesión */
-  }
-  memoria = e;
-  oyentes.forEach((f) => f());
-}
-let memoria: Estado | null = null;
-
 /** Alertas vigentes y atendidas. Una atendida vuelve si cambia su causa. */
 export function useAlertas(_ejemplo: unknown = null) {
-  const { cartera, fuente, envioAutomatico } = useCobranza();
-  const [, forzar] = React.useReducer((x: number) => x + 1, 0);
-  React.useEffect(() => {
-    oyentes.add(forzar);
-    return () => {
-      oyentes.delete(forzar);
-    };
-  }, []);
-  const estado = memoria ?? (memoria = leer());
-  const todas = React.useMemo(() => calcular(cartera, fuente !== 'real', envioAutomatico), [cartera, fuente, envioAutomatico]);
+  const { cartera, envioAutomatico, workspace } = useCobranza();
+  const estado = workspace.data.alertas;
+  const todas = React.useMemo(() => calcular(cartera, false, envioAutomatico), [cartera, envioAutomatico]);
+  const guardar = (fn: (estado: typeof workspace.data.alertas) => typeof workspace.data.alertas) => {
+    void workspace.update((state) => ({ alertas: fn(state.alertas) })).catch(() => undefined);
+  };
   const hoy = hoyIso();
   const atendida = (a: Alerta) => {
     const e = estado[a.id];
@@ -337,16 +310,14 @@ export function useAlertas(_ejemplo: unknown = null) {
   return {
     vigentes: todas.filter((a) => !atendida(a)),
     atendidas: todas.filter(atendida),
-    atender: (a: Alerta) => guardar({ ...estado, [a.id]: { firma: firmaDe(a) } }),
+    atender: (a: Alerta) => guardar((estado) => ({ ...estado, [a.id]: { firma: firmaDe(a) } })),
     posponer: (a: Alerta, dias = 1) => {
       const d = new Date();
       d.setDate(d.getDate() + dias);
-      guardar({ ...estado, [a.id]: { firma: firmaDe(a), hasta: d.toISOString().slice(0, 10) } });
+      guardar((estado) => ({ ...estado, [a.id]: { firma: firmaDe(a), hasta: d.toISOString().slice(0, 10) } }));
     },
     reactivar: (a: Alerta) => {
-      const out = { ...estado };
-      delete out[a.id];
-      guardar(out);
+      guardar((estado) => { const out = { ...estado }; delete out[a.id]; return out; });
     },
   };
 }
@@ -408,7 +379,7 @@ export function AlertasPanel({
             <span className="text-[20px] font-semibold text-brand-ink tabular-nums">{dinero(enJuego)}</span> en juego en alertas críticas ·{' '}
             {plural(clientesCriticos, 'cliente', 'clientes')}
           </p>
-          <span className="ml-auto text-[12px] text-brand-ink/45">Las críticas también llegan al WhatsApp de dirección (Configuración)</span>
+          <span className="ml-auto text-[12px] text-brand-ink/45">Configura los destinatarios en Configuración</span>
         </motion.div>
       )}
 

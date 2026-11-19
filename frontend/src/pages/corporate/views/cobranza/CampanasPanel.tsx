@@ -113,74 +113,51 @@ export function CampanasPanel({ soloLectura = false }: { soloLectura?: boolean }
 
   const { confirmar, nodo: nodoConfirmar } = useConfirmar();
 
-  const ejecutar = (c: Campana, a: AccionCampana, confirmado = false) => {
-    // Lanzar manda mensajes y finalizar la cierra: ambas se confirman.
-    if (!confirmado && a === 'lanzar') {
-      const hoy = c.config.inicio <= HOY;
-      const n = c.config.clientes.length;
-      return confirmar({
-        titulo: hoy ? `¿Lanzar "${c.nombre}"?` : `¿Programar "${c.nombre}"?`,
-        mensaje: hoy
-          ? `Sale hoy por ${c.config.canal} a ${n} ${n === 1 ? 'cliente' : 'clientes'}. Los mensajes enviados no se pueden retirar.`
-          : `Saldrá el ${fmtFecha(c.config.inicio)} por ${c.config.canal} a ${n} ${n === 1 ? 'cliente' : 'clientes'}. Puedes pausarla antes.`,
-        accion: hoy ? `Lanzar a ${n}` : 'Programar',
-        alConfirmar: () => ejecutar(c, a, true),
-      });
-    }
-    if (!confirmado && a === 'finalizar') {
-      return confirmar({
-        titulo: `¿Finalizar "${c.nombre}"?`,
-        mensaje: 'Deja de enviar mensajes y pasa al historial con sus resultados. Para volver a usarla, la repites desde el historial.',
-        accion: 'Finalizar campaña',
-        peligro: true,
-        alConfirmar: () => ejecutar(c, a, true),
-      });
-    }
-    switch (a) {
-      case 'lanzar':
-      case 'reanudar': {
-        const estado = c.config.inicio <= HOY ? 'Activa' : 'Programada';
-        cambiarEstadoCampana(c.id, estado);
-        avisar(
-          estado === 'Activa'
-            ? a === 'reanudar'
-              ? `"${c.nombre}" se reanudó`
-              : `"${c.nombre}" salió a ${c.config.clientes.length} clientes`
-            : `"${c.nombre}" quedó programada para el ${fmtFecha(c.config.inicio)}`,
-        );
-        return;
+  const ejecutar = async (c: Campana, a: AccionCampana, confirmado = false) => {
+    try {
+      if (a === 'lanzar' || a === 'reanudar') { avisar('El envío de campañas aún no está disponible. Puedes guardar borradores.'); return; }
+      if (!confirmado && a === 'finalizar') {
+        return confirmar({
+          titulo: `¿Finalizar "${c.nombre}"?`,
+          mensaje: 'Deja de enviar mensajes y pasa al historial con sus resultados. Para volver a usarla, la repites desde el historial.',
+          accion: 'Finalizar campaña',
+          peligro: true,
+          alConfirmar: () => ejecutar(c, a, true),
+        });
       }
-      case 'pausar':
-        cambiarEstadoCampana(c.id, 'Pausada');
-        avisar(`"${c.nombre}" está en pausa. Reanúdala cuando quieras`);
-        return;
-      case 'finalizar':
-        cambiarEstadoCampana(c.id, 'Finalizada');
-        avisar(`"${c.nombre}" pasó al historial`);
-        return;
-      case 'editar':
-        setWizard({ tipo: 'editar', campana: c });
-        return;
-      case 'renombrar':
-        // Lo resuelve la tarjeta: abre el nombre para editarlo en su lugar.
-        return;
-      case 'duplicar':
-        setWizard({ tipo: 'copia', campana: c, repetir: false });
-        return;
-      case 'repetir':
-        setWizard({ tipo: 'copia', campana: c, repetir: true });
-        return;
-      case 'eliminar': {
-        const index = eliminarCampana(c.id);
-        avisar(`Eliminaste "${c.nombre}"`, () => restaurarCampana(c, index));
-        return;
+      switch (a) {
+        case 'pausar':
+          await cambiarEstadoCampana(c.id, 'Pausada');
+          avisar(`"${c.nombre}" está en pausa. Reanúdala cuando quieras`);
+          return;
+        case 'finalizar':
+          await cambiarEstadoCampana(c.id, 'Finalizada');
+          avisar(`"${c.nombre}" pasó al historial`);
+          return;
+        case 'editar':
+          setWizard({ tipo: 'editar', campana: c });
+          return;
+        case 'renombrar':
+          // Lo resuelve la tarjeta: abre el nombre para editarlo en su lugar.
+          return;
+        case 'duplicar':
+          setWizard({ tipo: 'copia', campana: c, repetir: false });
+          return;
+        case 'repetir':
+          setWizard({ tipo: 'copia', campana: c, repetir: true });
+          return;
+        case 'eliminar': {
+          const index = await eliminarCampana(c.id);
+          avisar(`Eliminaste "${c.nombre}"`, () => { void restaurarCampana(c, index).catch(() => avisar('No se pudo recuperar el borrador.')); });
+          return;
+        }
       }
-    }
+    } catch (e) { avisar(e instanceof Error ? e.message : 'No se pudo guardar el cambio.'); }
   };
 
-  const renombrar = (c: Campana, nombre: string) => {
-    guardarCampana({ ...c, nombre });
-    avisar(`Ahora se llama "${nombre}"`, () => guardarCampana(c));
+  const renombrar = async (c: Campana, nombre: string) => {
+    try { await guardarCampana({ ...c, nombre }); avisar(`Ahora se llama "${nombre}"`); }
+    catch (e) { avisar(e instanceof Error ? e.message : 'No se pudo cambiar el nombre.'); }
   };
 
   return (

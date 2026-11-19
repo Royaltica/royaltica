@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../common/prisma/prisma.service';
-import { SettingsService } from '../settings/settings.service';
+import { SettingsService, type OrgSettings } from '../settings/settings.service';
 import { ActivityLogService } from '../activity/activity-log.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
@@ -44,7 +44,7 @@ export class OrganizationService {
     if (!org) throw new NotFoundException('Organización no encontrada.');
 
     const settings = await this.settings.get(organizationId);
-    return { ...org, settings };
+    return { ...org, settings: this.publicSettings(settings) };
   }
 
   async getSettings(user: AuthenticatedUser) {
@@ -54,7 +54,20 @@ export class OrganizationService {
     // viven en el JSON `settings`): se anexan aparte para que el frontend
     // pueda leerlas con una sola llamada a GET /organization/settings.
     const org = await this.orgColumns(organizationId);
-    return { ...settings, ...org };
+    return { ...this.publicSettings(settings), ...org };
+  }
+
+  getWorkspace(user: AuthenticatedUser) {
+    return this.settings.getWorkspace(this.requireOrg(user), user.id);
+  }
+
+  updateWorkspace(user: AuthenticatedUser, patch: unknown) {
+    return this.settings.updateWorkspace(this.requireOrg(user), user.id, patch);
+  }
+
+  private publicSettings(settings: OrgSettings) {
+    const { collectionUserState: _private, ...publicSettings } = settings;
+    return publicSettings;
   }
 
   async updateSettings(user: AuthenticatedUser, dto: UpdateSettingsDto) {
@@ -105,7 +118,7 @@ export class OrganizationService {
       metadata: { changed: Object.keys(dto) },
     });
 
-    return { ...updated, ...org };
+    return { ...this.publicSettings(updated), ...org };
   }
 
   /**

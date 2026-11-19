@@ -38,7 +38,7 @@ import {
   textoHoy,
   CanalIcon,
 } from './cobranza/plan.tsx';
-import { planDe, planConfig, saldoDe, AGENTES } from './cobranza/mockV1.ts';
+import { planDe, planConfig, saldoDe } from './cobranza/mockV1.ts';
 import { CobranzaProvider, useCobranzaOpcional, useCobranza, planCuenta, type CuentaViva } from './cobranza/store.tsx';
 import { SegmentoChip, SegmentosPanel } from './cobranza/segmento.tsx';
 import { SubFacturas } from './cobranza/facturas.tsx';
@@ -532,17 +532,17 @@ function FuenteDatos() {
   if (fuente === 'cargando') return <span className="h-6" />;
   const real = fuente === 'real';
   const detalle = real
-    ? 'Clientes, facturas, agentes, historial de pagos, plan y WhatsApp vienen de tu cartera. Pagos, campañas y reportes todavía usan datos de ejemplo.'
-    : 'Tu base todavía no tiene clientes (o no hubo conexión con el servidor). Carga tu cartera en la pestaña Datos para trabajar con tus clientes reales.';
+    ? 'Clientes y facturas vienen de tu cartera. Los borradores y reportes guardados se recuperan del servidor.'
+    : 'No se pudo cargar la cartera. Revisa la conexión y vuelve a intentar.';
   return (
     <span
       title={detalle}
       className="inline-flex items-center gap-2 rounded-full pl-2.5 pr-3 py-1 text-[11.5px] text-brand-ink/60 bg-white/55 backdrop-blur-xl border border-white/80 ring-1 ring-brand-ink/[0.06]"
     >
       <span className={`w-1.5 h-1.5 rounded-full ${real ? 'bg-emerald-500' : 'bg-amber-400'}`} />
-      <span className="font-semibold text-brand-ink/80">{real ? 'Datos reales de tu base' : 'Datos de ejemplo'}</span>
+      <span className="font-semibold text-brand-ink/80">{real ? 'Datos reales de tu base' : 'Sin datos'}</span>
       <span className="hidden md:inline text-brand-ink/45">
-        {real ? '· pagos, campañas y reportes aún de ejemplo' : '· carga tu cartera en Datos'}
+        {real ? '· guardado en el servidor' : '· revisa la conexión'}
       </span>
       <Info size={12} className="text-brand-ink/35" aria-hidden />
     </span>
@@ -727,7 +727,7 @@ function RecordatoriosPanel({ foco }: { foco?: { cliente: string; n: number; sub
       if (orden === 'nombre') return a.cliente.localeCompare(b.cliente, 'es');
       return 0;
     });
-  const agentesLista = agentesReales?.map((a) => a.nombre) ?? [...new Set([...AGENTES, ...cartera.map((c) => c.agente)])];
+  const agentesLista = agentesReales?.map((a) => a.nombre) ?? [...new Set(cartera.map((c) => c.agente))];
   const alternarSel = (n: string) => setSeleccion((s) => (s ? (s.includes(n) ? s.filter((x) => x !== n) : [...s, n]) : [n]));
   const elegidas = (seleccion ?? []).map(cuentaPor).filter(Boolean);
   const reasignarSel = () => {
@@ -1753,7 +1753,7 @@ function Burbuja({
 /** Quién lleva cuentas: usuarios reales (si hay acceso) + los que ya tienen cartera. */
 function nombresEquipo(cartera: CuentaViva[], reales: { nombre: string; activo: boolean }[] | null, fuente: string): string[] {
   const conCartera = [...new Set(cartera.map((c) => c.agente))];
-  const base = fuente === 'real' ? (reales ?? []).filter((a) => a.activo).map((a) => a.nombre) : [...AGENTES];
+  const base = (reales ?? []).filter((a) => a.activo).map((a) => a.nombre);
   const todos = [...new Set([...base, ...conCartera])];
   // "Sin asignar" al final: es cartera que nadie está trabajando.
   return [...todos.filter((n) => n !== 'Sin asignar').sort((a, b) => a.localeCompare(b, 'es')), ...(todos.includes('Sin asignar') ? ['Sin asignar'] : [])];

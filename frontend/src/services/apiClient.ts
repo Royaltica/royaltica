@@ -1,3 +1,4 @@
+import type { CollectionWorkspace, CollectionCompany, CollectionNotifications } from './collectionWorkspace.ts';
 /**
  * Cliente HTTP del backend Royáltica (NestJS en :8080).
  *
@@ -1412,6 +1413,13 @@ export const api = {
     return request<ApiAuthResult>('POST', `/admin/organizations/${orgId}/impersonate`);
   },
 
+  async getCollectionWorkspace(): Promise<CollectionWorkspace> {
+    return request<CollectionWorkspace>('GET', '/organization/collection-workspace');
+  },
+  async updateCollectionWorkspace(patch: Partial<CollectionWorkspace> & { revision: number }): Promise<CollectionWorkspace> {
+    return request<CollectionWorkspace>('PATCH', '/organization/collection-workspace', patch);
+  },
+
   // ── Configuración de la organización (completa) ─────────
 
   /** Actualiza los datos fiscales / operativos de la organización. */
@@ -1435,6 +1443,8 @@ export const api = {
     collectionEngineHour: number;
     collectionSecurity: Partial<CollectionSecuritySettings>;
     collectionRules: Partial<CollectionRulesSettings>;
+    collectionCompany: CollectionCompany;
+    collectionNotifications: CollectionNotifications;
   }>): Promise<OrgSettings> {
     return request<OrgSettings>('PATCH', '/organization/settings', patch);
   },
@@ -2208,6 +2218,8 @@ export interface SatVerifyResponse {
 
 /** Configuración de la organización (campos que consume el frontend). */
 export interface OrgSettings {
+  collectionCompany: CollectionCompany;
+  collectionNotifications: CollectionNotifications;
   collectionSecurity: CollectionSecuritySettings;
   collectionRules: CollectionRulesSettings;
   multiUserEnabled: boolean;

@@ -12,6 +12,10 @@ import {
   MaxLength,
   Min,
   ValidateNested,
+  Validate,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+  ValidationArguments,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
@@ -23,6 +27,16 @@ import {
   SUPPORTED_CURRENCIES,
   HEX_COLOR_REGEX,
 } from '../organization.constants';
+
+import { collectionCompanySchema, collectionNotificationsSchema, type CollectionCompany, type CollectionNotifications } from '../../settings/collection-workspace';
+
+@ValidatorConstraint({ name: 'collectionSettings', async: false })
+class CollectionSettingsValidator implements ValidatorConstraintInterface {
+  validate(value: unknown, args: ValidationArguments) {
+    return (args.property === 'collectionCompany' ? collectionCompanySchema : collectionNotificationsSchema).safeParse(value).success;
+  }
+  defaultMessage() { return 'Revisa los datos de empresa o las preferencias de alertas.'; }
+}
 
 /** Un autorizador operativo (su cantidad define las firmas requeridas). */
 export class AuthorizerEntryDto {
@@ -77,6 +91,14 @@ export class CollectionRulesSettingsDto {
 
 /** Parche parcial de la configuración de la organización. */
 export class UpdateSettingsDto {
+  @IsOptional()
+  @Validate(CollectionSettingsValidator)
+  collectionCompany?: CollectionCompany;
+
+  @IsOptional()
+  @Validate(CollectionSettingsValidator)
+  collectionNotifications?: CollectionNotifications;
+
   @IsOptional()
   @ValidateNested()
   @Type(() => CollectionSecuritySettingsDto)

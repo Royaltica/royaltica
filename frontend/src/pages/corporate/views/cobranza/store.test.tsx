@@ -1,6 +1,7 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, type ApiUserRow, type PortfolioCustomer } from '../../../../services/apiClient';
+import { EMPTY_WORKSPACE } from '../../../../services/collectionWorkspace';
 import { EQUIPO_ACTUALIZADO } from './equipo';
 import { CobranzaProvider, useCobranza } from './store';
 
@@ -31,6 +32,7 @@ function cliente(id: string, agentId: string): PortfolioCustomer {
 }
 
 beforeEach(() => {
+  vi.spyOn(api, 'getCollectionWorkspace').mockResolvedValue(structuredClone(EMPTY_WORKSPACE));
   vi.spyOn(api, 'getPortfolio').mockResolvedValue([]);
   vi.spyOn(api, 'getWaPlanActivity').mockResolvedValue({ customers: [], testMode: true } as never);
   vi.spyOn(api, 'getLevelPlan').mockResolvedValue({ policy: null });

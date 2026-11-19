@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { AlertTriangle, Check, ChevronDown, Database, Download, FileSpreadsheet, Loader2, Pencil, Plus, Search, Upload, UploadCloud, Users } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { Reveal, BlockTitle } from './primitives.tsx';
-import { AGENTES, saldoDe, type Agente } from './mockV1.ts';
+import { saldoDe, type Agente } from './mockV1.ts';
 import { useCobranza, type CuentaViva } from './store.tsx';
 import { api } from '../../../../services/apiClient.ts';
 import {
@@ -145,7 +145,7 @@ function TablaClientes({
               <button
                 type="button"
                 onClick={onAgregar}
-                disabled={fuente !== 'real' && fuente !== 'ejemplo'}
+                disabled={fuente !== 'real'}
                 className={BTN_PRI + ' !py-1.5 !px-3.5 !text-[12px]'}
               >
                 <Plus size={13} /> Agregar cliente
@@ -385,7 +385,7 @@ function CargaCartera() {
         <BlockTitle icon={<Database size={12} />}>Base de cartera</BlockTitle>
         {/* Conteos y faltantes viven en la tabla de abajo (filtros): aquí solo el total. */}
         <p className="text-[12px] text-brand-ink/50 mt-3">
-          {fuente === 'real' ? 'Datos de tu base de datos' : 'Datos de ejemplo: todavía no hay clientes cargados'} ·{' '}
+          {fuente === 'real' ? 'Datos de tu base de datos' : 'Sin datos: no se pudo cargar la cartera'} ·{' '}
           <span className="font-semibold text-brand-ink tabular-nums">{CURRENCY_FORMATTER.format(total)}</span> por cobrar
         </p>
 
@@ -503,7 +503,7 @@ export function AsignacionPanel() {
   const [soloSin, setSoloSin] = React.useState(false);
   // Agentes reales (activos) cuando hay cartera real; los del ejemplo si no.
   const opciones =
-    fuente === 'real' && agentesReales ? agentesReales.filter((a) => a.activo).map((a) => a.nombre) : [...AGENTES];
+    agentesReales ? agentesReales.filter((a) => a.activo).map((a) => a.nombre) : [];
   const nombres = [...new Set([...opciones, ...cartera.map((c) => c.agente as string).filter((a) => a !== 'Sin asignar')])];
   const filas = [...cartera].filter((c) => !soloSin || (c.agente as string) === 'Sin asignar').sort((a, b) => b.dias - a.dias);
   const carga = [...nombres, 'Sin asignar'].map((a) => ({ a, n: cartera.filter((f) => f.agente === a).length })).filter((x) => x.n > 0 || x.a !== 'Sin asignar');

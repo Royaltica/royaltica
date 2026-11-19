@@ -24,6 +24,18 @@ export class OrganizationController {
     return this.organization.getSettings(user);
   }
 
+  @Get('collection-workspace')
+  @RequirePermissions(AREAS.CXC)
+  getWorkspace(@CurrentUser() user: AuthenticatedUser) {
+    return this.organization.getWorkspace(user);
+  }
+
+  @Patch('collection-workspace')
+  @RequirePermissions(AREAS.CXC)
+  updateWorkspace(@CurrentUser() user: AuthenticatedUser, @Body() patch: unknown) {
+    return this.organization.updateWorkspace(user, patch);
+  }
+
   @Get('readiness')
   getReadiness(@CurrentUser() user: AuthenticatedUser) {
     return this.organization.getReadiness(user);

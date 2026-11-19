@@ -2,7 +2,7 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, type ApiUserRow, type CollectionLevelPlan, type OrgSettings } from '../../../../services/apiClient';
-import { Equipo, Reglas } from './ConfiguracionPanel';
+import { Equipo, Reglas, Empresa, AlertasCelular } from './ConfiguracionPanel';
 
 vi.mock('./store.tsx', () => ({ useCobranza: () => ({ recargarCartera: async () => undefined }) }));
 vi.mock('./WhatsappPanel.tsx', () => ({ ModoEnvio: () => null }));
@@ -11,6 +11,8 @@ vi.mock('motion/react', async (original) => ({ ...await original<typeof import('
 
 const user: ApiUserRow = { id: 'agente-1', email: 'agente@equipo.invalid', name: 'Agente de prueba', role: 'CORPORATE_USER', status: 'ACTIVE', isActive: true, operationalProfile: 'AGENTE_EJECUTIVO', permissions: ['cxc'], lastLoginAt: null, createdAt: '2026-11-18T16:00:00Z' };
 const settings = {
+  collectionCompany: { empresa: '', telefono_oficial: '', banco: '', clabe: '', liga: '', correo: '', firma: '' },
+  collectionNotifications: { noMolestar: true, resumenHora: '08:00', destinatarios: [] },
   collectionEngineHour: 11,
   collectionSecurity: { dosPasos: false, inactividad: false },
   collectionRules: { festivos: false, descuentoMax: 10, parcialidades: true, prorroga: false, aprueba: 'admin' },
@@ -164,6 +166,73 @@ describe('Reglas persistentes', () => {
     render(<Reglas />);
     expect(await screen.findByRole('alert')).toHaveTextContent('No se pudieron cargar las reglas');
     expect(screen.queryByRole('button', { name: 'Guardar reglas' })).not.toBeInTheDocument();
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('Empresa y destinatarios persistentes', () => {
+  it('guarda empresa y recupera sus datos al volver; la vista previa no inventa clientes', async () => {
+    let saved = structuredClone(settings);
+    vi.mocked(api.getSettings).mockImplementation(async () => saved);
+    const update = vi.spyOn(api, 'updateSettings').mockImplementation(async (patch) => { saved = { ...saved, ...patch } as OrgSettings; return saved; });
+    const storage = vi.spyOn(Storage.prototype, 'setItem');
+    const view = render(<Empresa />);
+    const name = await screen.findByLabelText('Nombre comercial');
+    expect(name).toHaveValue('');
+    expect(screen.getAllByText('Sin datos').length).toBeGreaterThan(0);
+    fireEvent.change(name, { target: { value: 'Empresa de prueba' } });
+    fireEvent.change(screen.getByLabelText('CLABE'), { target: { value: '000000000000000000' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+    await screen.findByText('Datos guardados');
+    expect(update).toHaveBeenCalledWith({ collectionCompany: { ...settings.collectionCompany, empresa: 'Empresa de prueba', clabe: '000000000000000000' } });
+    view.unmount(); render(<Empresa />);
+    expect(await screen.findByLabelText('Nombre comercial')).toHaveValue('Empresa de prueba');
+    expect(storage).not.toHaveBeenCalled();
+  });
+
+  it('conserva el formulario y muestra el error sin anunciar empresa guardada', async () => {
+    vi.spyOn(api, 'updateSettings').mockRejectedValue(new Error('Revisa la CLABE.'));
+    render(<Empresa />);
+    fireEvent.change(await screen.findByLabelText('Nombre comercial'), { target: { value: 'Empresa sin guardar' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Revisa la CLABE.');
+    expect(screen.getByLabelText('Nombre comercial')).toHaveValue('Empresa sin guardar');
+    expect(screen.queryByText('Datos guardados')).not.toBeInTheDocument();
+  });
+
+  it('guarda destinatarios, no molestar y resumen sin fingir verificación ni envíos', async () => {
+    let saved = structuredClone(settings);
+    vi.mocked(api.getSettings).mockImplementation(async () => saved);
+    const update = vi.spyOn(api, 'updateSettings').mockImplementation(async (patch) => { saved = { ...saved, ...patch } as OrgSettings; return saved; });
+    const view = render(<AlertasCelular />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Agregar número' }));
+    fireEvent.change(screen.getByLabelText('Nombre'), { target: { value: 'Persona de prueba' } });
+    fireEvent.change(screen.getByLabelText('WhatsApp'), { target: { value: '+000000000000' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Agregar a la lista' }));
+    expect(screen.queryByText('verificado')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mandar prueba' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('switch', { name: 'No molestar de noche' }));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '18:00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar preferencias' }));
+    await screen.findByText('Preferencias guardadas');
+    expect(update).toHaveBeenCalledWith({ collectionNotifications: { noMolestar: false, resumenHora: '18:00', destinatarios: [expect.objectContaining({ nombre: 'Persona de prueba', telefono: '+000000000000', verificado: false })] } });
+    view.unmount(); render(<AlertasCelular />);
+    expect(await screen.findByText('Persona de prueba')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'No molestar de noche' })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByRole('combobox')).toHaveValue('18:00');
+  });
+
+  it('informa errores al guardar o cargar preferencias sin escribir defaults', async () => {
+    const update = vi.spyOn(api, 'updateSettings').mockRejectedValue(new Error('No se pudieron guardar las preferencias.'));
+    const view = render(<AlertasCelular />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Guardar preferencias' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudieron guardar las preferencias.');
+    expect(screen.queryByText('Preferencias guardadas')).not.toBeInTheDocument();
+    view.unmount(); update.mockClear();
+    vi.mocked(api.getSettings).mockRejectedValue(new Error('Sin conexión'));
+    render(<AlertasCelular />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo cargar');
+    expect(screen.queryByRole('button', { name: 'Guardar preferencias' })).not.toBeInTheDocument();
     expect(update).not.toHaveBeenCalled();
   });
 });
