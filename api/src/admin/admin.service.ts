@@ -786,7 +786,7 @@ export class AdminService {
    * de infraestructura de toda la plataforma, no algo que un admin de un
    * tenant individual deba poder consultar.
    */
-  getProductionReadiness() {
+  async getProductionReadiness() {
     const nodeEnv = this.config.get('NODE_ENV', { infer: true });
     const has = (key: keyof Env) =>
       String(this.config.get(key, { infer: true }) ?? '').length > 0;
@@ -851,6 +851,7 @@ export class AdminService {
         ),
         detail: `JOBS_ENABLED=${this.config.get('JOBS_ENABLED', { infer: true })}`,
       },
+      await this.databaseRoleItem(),
     ];
     const passed = items.filter((i) => i.status).length;
     return {
@@ -863,6 +864,32 @@ export class AdminService {
   }
 
   // ── helpers ───────────────────────────────────────────────
+
+  /**
+   * Con un rol superusuario o con BYPASSRLS, Postgres se salta las políticas
+   * de RLS y el aislamiento entre organizaciones depende solo de los filtros
+   * del código. Ver docs/rol-restringido.md.
+   */
+  private async databaseRoleItem() {
+    const base = { key: 'db_role', label: 'Base de datos con rol restringido' };
+    try {
+      const rows = await this.prisma.$queryRaw<
+        { role: string; superuser: boolean; bypassrls: boolean }[]
+      >`SELECT current_user AS role, rolsuper AS superuser, rolbypassrls AS bypassrls FROM pg_roles WHERE rolname = current_user`;
+      const row = rows[0];
+      if (!row) return { ...base, status: false, detail: 'No se pudo leer el rol de la conexión.' };
+      const restricted = !row.superuser && !row.bypassrls;
+      return {
+        ...base,
+        status: restricted,
+        detail: restricted
+          ? `Rol ${row.role}: sin superusuario ni BYPASSRLS; RLS se aplica.`
+          : `Rol ${row.role} con ${row.superuser ? 'superusuario' : 'BYPASSRLS'}: RLS no se aplica.`,
+      };
+    } catch {
+      return { ...base, status: false, detail: 'No se pudo consultar el rol de la base.' };
+    }
+  }
 
   private async ensureExists(id: string): Promise<void> {
     const org = await this.prisma.organization.findUnique({

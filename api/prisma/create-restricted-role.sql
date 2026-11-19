@@ -1,26 +1,29 @@
 -- Rol de base de datos de mínimo privilegio para el runtime del backend.
 --
--- Uso (contra la URL PÚBLICA de Postgres, Settings → Networking del servicio
--- Postgres en Railway — no la interna *.railway.internal):
+-- Pasos completos (crear, cambiar DATABASE_URL, verificar y revertir) en
+-- docs/rol-restringido.md. La contraseña se pasa como variable de psql y
+-- nunca se escribe en este archivo:
 --
---   psql "<url pública>" -f api/prisma/create-restricted-role.sql \
---     -v role_password="'$(openssl rand -base64 24)'"
+--   psql "<url pública del owner>" -v ON_ERROR_STOP=1 \
+--     -v role_password="$(openssl rand -hex 24)" \
+--     -f api/prisma/create-restricted-role.sql
 --
--- O reemplaza manualmente CAMBIA_ESTA_PASSWORD abajo antes de correrlo.
+-- (Las variables de psql no se expanden dentro de un bloque DO, por eso la
+-- contraseña se fija con ALTER ROLE fuera del bloque.)
 --
--- Después de crear el rol, actualiza en Railway (servicio backend):
---   railway variables --set "DATABASE_URL=postgresql://royaltica_app:<password>@<host>:<port>/<db>"
--- y deja DATABASE_ADMIN_URL apuntando al rol owner original (lo sigue
--- necesitando `prisma migrate deploy`).
+-- DATABASE_ADMIN_URL sigue apuntando al rol owner original: lo necesita
+-- `prisma migrate deploy`.
 
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'royaltica_app') THEN
-    CREATE ROLE royaltica_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS
-      PASSWORD 'CAMBIA_ESTA_PASSWORD';
+    CREATE ROLE royaltica_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
   END IF;
 END
 $$;
+
+ALTER ROLE royaltica_app WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS
+  PASSWORD :'role_password';
 
 DO $$
 BEGIN
