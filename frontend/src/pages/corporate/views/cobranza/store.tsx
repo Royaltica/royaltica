@@ -28,7 +28,7 @@ import {
   type Segmento,
 } from './mockV1.ts';
 import { construirPlan, PASO_DE_PLANTILLA } from './plan.tsx';
-import { api, type WaPlanActivity, type PortfolioCustomer, type CustomerPayload } from '../../../../services/apiClient.ts';
+import { api, type WaPlanActivity, type PortfolioCustomer, type CustomerPayload, type ApiUserRow } from '../../../../services/apiClient.ts';
 import { cuentaDesdeApi } from './carteraReal.ts';
 import { EQUIPO_ACTUALIZADO } from './equipo.ts';
 
@@ -226,23 +226,29 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   const fuente: Store['fuente'] = real === undefined ? 'cargando' : real && real.length > 0 ? 'real' : 'ejemplo';
   const base = React.useMemo(() => (real && real.length > 0 ? real.map(cuentaDesdeApi) : CARTERA), [real]);
 
-  const [agentesReales, setAgentesReales] = React.useState<AgenteReal[] | null>(null);
+  const [usuariosEquipo, setUsuariosEquipo] = React.useState<ApiUserRow[] | null>(null);
   React.useEffect(() => {
     let vigente = true;
     let solicitud = 0;
     const cargar = () => {
       const numero = ++solicitud;
       api.getUsers().then((us) => {
-        if (vigente && numero === solicitud) setAgentesReales(
-          us.filter((u) => u.role === 'CORPORATE_USER' && u.operationalProfile === 'AGENTE_EJECUTIVO')
-            .map((u) => ({ id: u.id, nombre: u.name, activo: u.isActive && u.status === 'ACTIVE' })),
-        );
-      }).catch(() => { if (vigente && numero === solicitud) setAgentesReales(null); });
+        if (vigente && numero === solicitud) setUsuariosEquipo(us);
+      }).catch(() => { if (vigente && numero === solicitud) setUsuariosEquipo(null); });
     };
     cargar();
     window.addEventListener(EQUIPO_ACTUALIZADO, cargar);
     return () => { vigente = false; window.removeEventListener(EQUIPO_ACTUALIZADO, cargar); };
   }, []);
+
+  const agentesReales = React.useMemo<AgenteReal[] | null>(() => {
+    if (!usuariosEquipo || !real) return null;
+    const asignados = new Set(real.flatMap((c) => c.agent ? [c.agent.id] : []));
+    return usuariosEquipo
+      .filter((u) => u.role !== 'SUPERADMIN' && u.role !== 'PROVIDER'
+        && (u.operationalProfile === 'AGENTE_EJECUTIVO' || asignados.has(u.id)))
+      .map((u) => ({ id: u.id, nombre: u.name, activo: u.isActive && u.status === 'ACTIVE' }));
+  }, [usuariosEquipo, real]);
 
   // Lo que pasó por WhatsApp (real). undefined = aún cargando; null = sin conexión.
   const [wa, setWa] = React.useState<WaPlanActivity | null | undefined>(undefined);
