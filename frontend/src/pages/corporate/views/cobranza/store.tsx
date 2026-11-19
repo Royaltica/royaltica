@@ -1,13 +1,7 @@
 import React from 'react';
 import {
-  CARTERA,
-  GESTIONES,
   HOY,
-  CAMPANAS,
   PLANTILLAS,
-  RESPUESTAS_SIM,
-  TOQUES_INICIALES,
-  PAGOS_INICIALES,
   SYNC_ERP_SIM,
   ZIP_REP_SIM,
   CSV_SIM,
@@ -31,14 +25,11 @@ import { construirPlan, PASO_DE_PLANTILLA } from './plan.tsx';
 import { api, type WaPlanActivity, type PortfolioCustomer, type CustomerPayload, type ApiUserRow } from '../../../../services/apiClient.ts';
 import { cuentaDesdeApi } from './carteraReal.ts';
 import { EQUIPO_ACTUALIZADO } from './equipo.ts';
+import { useCollectionWorkspace } from './useCollectionWorkspace.ts';
 
 /**
- * Estado compartido de Cobranza IA. Lo que hace un perfil se ve en los
- * otros: si el Supervisor reasigna una cuenta o cambia su segmento, el
- * Agente lo ve; si el Agente envía o registra un resultado, se refleja en el
- * plan del Administrador y en Reportes; si se lanza una campaña, sus
- * cuentas quedan marcadas, las respuestas le llegan al agente y las
- * llamadas se vuelven tareas suyas.
+ * Cartera real compartida entre las vistas de cobranza. El trabajo guardado
+ * del usuario se recupera del servidor; no se importa el prototipo del navegador.
  */
 export const HORA_ACTUAL = '11:24';
 
@@ -60,30 +51,6 @@ export function normalizarTelefono(t: string): string {
 const ES_EJEMPLO = 'Este cliente es de ejemplo. Carga tu cartera real en Datos para editarlo.';
 const msg = (e: unknown, def: string) => (e instanceof Error && e.message ? e.message : def);
 
-/**
- * Estado que debe sobrevivir a una recarga (campañas, segmentos manuales):
- * se guarda en el navegador. Si el almacenamiento falla, sigue en memoria.
- */
-function usePersistido<T>(clave: string, inicial: T): [T, React.Dispatch<React.SetStateAction<T>>] {
-  const llave = `royaltica.cobranza.${clave}`;
-  const [v, setV] = React.useState<T>(() => {
-    try {
-      const raw = window.localStorage.getItem(llave);
-      return raw ? (JSON.parse(raw) as T) : inicial;
-    } catch {
-      return inicial;
-    }
-  });
-  React.useEffect(() => {
-    try {
-      window.localStorage.setItem(llave, JSON.stringify(v));
-    } catch {
-      /* sin almacenamiento: queda en memoria */
-    }
-  }, [llave, v]);
-  return [v, setV];
-}
-
 /** Cuenta tal como la ven los 3 perfiles: con segmento, agente y lo hecho hoy. */
 /** Factura tal como se muestra: la principal (la que está en cobro) y las demás. */
 export type FacturaViva = Factura & { principal: boolean; pagado: number };
@@ -100,6 +67,7 @@ export type CuentaViva = CuentaCartera & {
 };
 
 type Store = {
+  workspace: ReturnType<typeof useCollectionWorkspace>;
   cartera: CuentaViva[];
   campanas: Campana[];
   gestiones: Gestion[];
@@ -142,15 +110,15 @@ type Store = {
   ) => Promise<string | null>;
   /** Guarda el contacto de finanzas (en la base si el cliente es real). Regresa un error o null. */
   agregarContacto: (id: string, f: NonNullable<CuentaCartera['finanzas']>) => Promise<string | null>;
-  cambiarSegmento: (id: string, segmento: Segmento | null, motivo: string) => void;
+  cambiarSegmento: (id: string, segmento: Segmento | null, motivo: string) => Promise<void>;
   enviar: (id: string, paso: PasoId, canal: string, origen: string) => void;
   registrar: (id: string, resultado: string) => void;
-  guardarCampana: (c: Campana) => void;
-  cambiarEstadoCampana: (id: string, estado: Campana['estado']) => void;
+  guardarCampana: (c: Campana) => Promise<void>;
+  cambiarEstadoCampana: (id: string, estado: Campana['estado']) => Promise<void>;
   /** Quita una campaña (no activa). Regresa su posición para poder deshacer. */
-  eliminarCampana: (id: string) => number;
+  eliminarCampana: (id: string) => Promise<number>;
   /** Deshace un eliminar: la regresa a la posición que tenía. */
-  restaurarCampana: (c: Campana, index: number) => void;
+  restaurarCampana: (c: Campana, index: number) => Promise<void>;
   /**
    * ID real del cliente en el backend (para su conversación de WhatsApp).
    * undefined = cargando · null = no existe en la base · 'error' = no hubo conexión.
@@ -160,9 +128,9 @@ type Store = {
   refrescarWhatsapp: () => Promise<void>;
   /**
    * De dónde sale la cartera: 'real' = clientes de la base de datos;
-   * 'ejemplo' = la base no tiene clientes (o no hubo conexión) y se muestra el prototipo.
+   * 'error' = no hubo conexión; no se muestra cartera de ejemplo.
    */
-  fuente: 'cargando' | 'real' | 'ejemplo';
+  fuente: 'cargando' | 'real' | 'error';
   /** Vuelve a leer la cartera real (tras importar un CSV). */
   recargarCartera: () => Promise<void>;
   /** Recordatorios automáticos (true) o con aprobación (false). null = sin conexión. */
@@ -170,7 +138,7 @@ type Store = {
   cambiarEnvioAutomatico: (auto: boolean) => Promise<void>;
   /** Tipos de deudor importados del análisis de la consultoría (null = sin importar). */
   tiposDeudor: TiposDeudorEstado | null;
-  guardarTiposDeudor: (e: TiposDeudorEstado | null) => void;
+  guardarTiposDeudor: (e: TiposDeudorEstado | null) => Promise<void>;
 };
 
 /** Resultado de importar el análisis: qué tipos están activos y a qué tipo pertenece cada cliente. */
@@ -195,18 +163,16 @@ const A_RESULTADO: Record<string, Resultado> = {
 export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   const [agentes, setAgentes] = React.useState<Record<string, Agente>>({});
   const [contactos, setContactos] = React.useState<Record<string, NonNullable<CuentaCartera['finanzas']>>>({});
-  const [segManual, setSegManual] = usePersistido<Record<string, { segmento: Segmento; motivo: string }>>('segmentos', {});
-  const [cambiosSegmento, setCambiosSegmento] = usePersistido<CambioSegmento[]>('cambiosSegmento', []);
-  const [tiposDeudor, setTiposDeudor] = usePersistido<TiposDeudorEstado | null>('tiposDeudor', null);
+  const workspace = useCollectionWorkspace();
+  const { segmentos: segManual, cambiosSegmento, tiposDeudor, campanas } = workspace.data;
   const [envios, setEnvios] = React.useState<Record<string, Envio>>({});
   const [resultadosHoy, setResultadosHoy] = React.useState<Record<string, string>>({});
-  const [toques, setToques] = React.useState<Record<string, Toque[]>>(TOQUES_INICIALES);
+  const [toques, setToques] = React.useState<Record<string, Toque[]>>({});
   const [tareas, setTareas] = React.useState<Record<string, Tarea>>({});
-  const [campanas, setCampanas] = usePersistido<Campana[]>('campanas', CAMPANAS);
   const [bitacora, setBitacora] = React.useState<Gestion[]>([]);
-  const [pagos, setPagos] = React.useState<Pago[]>(PAGOS_INICIALES);
+  const [pagos, setPagos] = React.useState<Pago[]>([]);
   const [noReconocidos, setNoReconocidos] = React.useState<NoReconocido[]>([]);
-  const [erp, setErp] = React.useState({ ultima: 'hoy 06:00', sincronizado: false });
+  const [erp, setErp] = React.useState({ ultima: 'Sin datos', sincronizado: false });
   const [zipCargado, setZipCargado] = React.useState(false);
   const [csvCargado, setCsvCargado] = React.useState(false);
   const [planesIniciados, setPlanesIniciados] = React.useState<Record<string, string>>({});
@@ -223,8 +189,8 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     void recargarCartera();
   }, [recargarCartera]);
-  const fuente: Store['fuente'] = real === undefined ? 'cargando' : real && real.length > 0 ? 'real' : 'ejemplo';
-  const base = React.useMemo(() => (real && real.length > 0 ? real.map(cuentaDesdeApi) : CARTERA), [real]);
+  const fuente: Store['fuente'] = real === undefined ? 'cargando' : real ? 'real' : 'error';
+  const base = React.useMemo(() => (real ? real.map(cuentaDesdeApi) : []), [real]);
 
   const [usuariosEquipo, setUsuariosEquipo] = React.useState<ApiUserRow[] | null>(null);
   React.useEffect(() => {
@@ -332,27 +298,10 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   const anotar = (c: CuentaViva, r: Resultado, monto?: number) =>
     setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, r, monto, c), agente: c.agente }]);
 
-  // Lanzar una campaña especial: el mensaje va solo a los clientes elegidos
-  // que se pueden contactar. No toca su plan: el plan sigue su curso aparte.
-  const lanzar = (camp: Campana): Campana => {
-    const nuevosToques: Record<string, Toque> = {};
-    for (const id of camp.config.clientes) {
-      const c = cartera.find((x) => x.id === id);
-      if (!c || c.saldada || !c.contactable || !c.finanzas) continue;
-      nuevosToques[id] = { campanaId: camp.id, campana: camp.nombre, plantilla: camp.config.plantilla, hora: HORA_ACTUAL, respuesta: RESPUESTAS_SIM[id] };
-    }
-    setToques((t) => {
-      const out = { ...t };
-      for (const [id, tq] of Object.entries(nuevosToques)) out[id] = [...(out[id] ?? []), tq];
-      return out;
-    });
-    for (const id of Object.keys(nuevosToques)) anotar(cartera.find((x) => x.id === id)!, 'Enviado');
-    return { ...camp, enviados: camp.enviados + Object.keys(nuevosToques).length };
-  };
-
   const value: Store = {
+    workspace,
     tiposDeudor,
-    guardarTiposDeudor: setTiposDeudor,
+    guardarTiposDeudor: (tiposDeudor) => workspace.update(() => ({ tiposDeudor })),
     cartera,
     pagos,
     noReconocidos,
@@ -428,7 +377,7 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
       ),
     descartarNoReconocido: (uuid) => setNoReconocidos((n) => n.filter((x) => x.uuid !== uuid)),
     campanas,
-    gestiones: [...GESTIONES, ...bitacora],
+    gestiones: bitacora,
     envios,
     resultadosHoy,
     toques,
@@ -567,26 +516,14 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
       setContactos((c) => ({ ...c, [id]: f }));
       return null;
     },
-    cambiarSegmento: (id, segmento, motivo) => {
-      const c = cartera.find((x) => x.id === id)!;
-      setSegManual((m) => {
-        const out = { ...m };
-        if (segmento) out[id] = { segmento, motivo };
-        else delete out[id];
-        return out;
-      });
-      setCambiosSegmento((h) => [
-        {
-          cliente: c.cliente,
-          de: c.segmento,
-          a: segmento ?? c.diagnostico.segmento,
-          motivo: segmento ? motivo : 'Regresó al segmento calculado',
-          hora: HORA_ACTUAL,
-          fecha: new Date().toISOString().slice(0, 10),
-        },
-        ...h,
-      ]);
-    },
+    cambiarSegmento: (id, segmento, motivo) => workspace.update((state) => {
+      const c = cartera.find((x) => x.id === id);
+      if (!c) throw new Error('Cliente no encontrado.');
+      const segmentos = { ...state.segmentos };
+      if (segmento) segmentos[id] = { segmento, motivo };
+      else delete segmentos[id];
+      return { segmentos, cambiosSegmento: [{ cliente: c.cliente, de: state.segmentos[id]?.segmento ?? c.diagnostico.segmento, a: segmento ?? c.diagnostico.segmento, motivo: segmento ? motivo : 'Regresó al segmento calculado', hora: new Date().toTimeString().slice(0, 5), fecha: new Date().toISOString().slice(0, 10) }, ...state.cambiosSegmento].slice(0, 500) };
+    }),
     enviar: (id, paso, canal, origen) => {
       setEnvios((e) => ({ ...e, [id]: { paso, canal, origen, hora: HORA_ACTUAL } }));
       anotar(cartera.find((x) => x.id === id)!, 'Enviado');
@@ -600,35 +537,21 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
       });
       anotar(cartera.find((x) => x.id === id)!, A_RESULTADO[resultado] ?? 'Sin respuesta');
     },
-    guardarCampana: (c) => {
-      // Editar o reanudar una campaña que ya salió no la vuelve a enviar.
-      const previa = campanas.find((x) => x.id === c.id);
-      const yaEnviada = (previa?.enviados ?? 0) > 0 || previa?.estado === 'Activa';
-      const final = c.estado === 'Activa' && c.config.inicio <= HOY && !yaEnviada ? lanzar(c) : c;
-      setCampanas((cs) =>
-        previa ? cs.map((x) => (x.id === c.id ? final : x)) : [final, ...cs],
-      );
+    guardarCampana: async (c) => {
+      if (c.estado !== 'Borrador' || c.enviados !== 0) throw new Error('Por ahora puedes guardar borradores. El envío de campañas aún no está disponible.');
+      await workspace.update((state) => ({ campanas: state.campanas.some((x) => x.id === c.id) ? state.campanas.map((x) => x.id === c.id ? c : x) : [c, ...state.campanas] }));
     },
-    eliminarCampana: (id) => {
-      const index = campanas.findIndex((x) => x.id === id);
-      setCampanas((cs) => cs.filter((x) => x.id !== id));
+    eliminarCampana: async (id) => {
+      let index = -1;
+      await workspace.update((state) => { index = state.campanas.findIndex((x) => x.id === id); return { campanas: state.campanas.filter((x) => x.id !== id) }; });
       return index;
     },
-    restaurarCampana: (c, index) =>
-      setCampanas((cs) => {
-        if (cs.some((x) => x.id === c.id)) return cs;
-        const out = [...cs];
-        out.splice(Math.max(0, Math.min(index, out.length)), 0, c);
-        return out;
-      }),
-    cambiarEstadoCampana: (id, estado) => {
-      const camp = campanas.find((x) => x.id === id);
-      if (!camp) return;
-      let upd: Campana = { ...camp, estado };
-      // Solo se envía la primera vez; reanudar una pausa no repite los mensajes.
-      if (estado === 'Activa' && camp.config.inicio <= HOY && camp.enviados === 0) upd = lanzar(upd);
-      setCampanas((cs) => cs.map((x) => (x.id === id ? upd : x)));
-    },
+    restaurarCampana: (c, index) => workspace.update((state) => {
+      if (state.campanas.some((x) => x.id === c.id)) return {};
+      const campanas = [...state.campanas]; campanas.splice(Math.max(0, Math.min(index, campanas.length)), 0, c);
+      return { campanas };
+    }),
+    cambiarEstadoCampana: async () => { throw new Error('El envío de campañas aún no está disponible. Puedes guardar y editar borradores.'); },
     waClienteId: (cliente) =>
       wa === undefined
         ? undefined
@@ -642,7 +565,10 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
     recargarCartera,
   };
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={value}>
+    {workspace.error && <div role="alert" className="rounded-xl bg-rose-50 p-4 text-rose-800">{workspace.error} <button type="button" onClick={() => void workspace.reload()}>Recargar datos</button></div>}
+    {children}
+  </Ctx.Provider>;
 }
 
 /** El estado si hay un <CobranzaProvider> arriba, o null (para no crear uno duplicado). */

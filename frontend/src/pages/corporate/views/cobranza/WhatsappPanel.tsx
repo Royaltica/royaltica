@@ -38,12 +38,10 @@ import { api, type WaMessage, type WaSendResult, type WaTemplateInfo, type WaThr
 const MXN = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' });
 
 export function SubWhatsapp({ cuenta }: { cuenta: CuentaViva }) {
-  const { waClienteId, refrescarWhatsapp, fuente } = useCobranza();
+  const { waClienteId, refrescarWhatsapp } = useCobranza();
   const customerId = waClienteId(cuenta.cliente);
   const [reintentando, setReintentando] = React.useState(false);
 
-  // Sin cartera real: conversación de ejemplo para conocer el flujo.
-  if (fuente === 'ejemplo') return <Conversacion key={cuenta.id} demo cuenta={cuenta} customerId={null} />;
   if (customerId === undefined) return <Cargando />;
   if (customerId === 'error') {
     return (
@@ -523,13 +521,10 @@ function Conversacion({ customerId, cuenta, demo = false }: { key?: string; cust
  * píldora con dos opciones; el detalle va en el título (tooltip).
  */
 export function ModoEnvio() {
-  const { envioAutomatico, cambiarEnvioAutomatico, fuente } = useCobranza();
+  const { envioAutomatico, cambiarEnvioAutomatico } = useCobranza();
   const reduce = useReducedMotion();
   const [guardando, setGuardando] = React.useState(false);
-  // Con datos de ejemplo se puede probar el cambio sin guardar.
-  const [local, setLocal] = React.useState(false);
-  const demo = fuente === 'ejemplo' && (envioAutomatico === null || envioAutomatico === undefined);
-  const valor = demo ? local : envioAutomatico;
+  const valor = envioAutomatico;
   if (valor === undefined || valor === null) return null;
 
   const opciones = [
@@ -552,7 +547,6 @@ export function ModoEnvio() {
               disabled={guardando}
               onClick={async () => {
                 if (activo) return;
-                if (demo) return setLocal(o.auto);
                 setGuardando(true);
                 try {
                   await cambiarEnvioAutomatico(o.auto);

@@ -217,15 +217,16 @@ export function AsistenteTiposDeudor({ onCerrar, onVerPlantillas }: { onCerrar: 
   const activos = detectados.filter((t) => !apagados.has(t.id));
   const conCuenta = filas.filter((f) => f.cuentaId && f.tipo && !apagados.has(f.tipo));
 
-  const guardar = () => {
+  const [errorGuardar, setErrorGuardar] = React.useState<string | null>(null);
+  const guardar = async () => {
     const e: TiposDeudorEstado = {
       activos: activos.map((t) => t.id),
       asignaciones: Object.fromEntries(conCuenta.map((f) => [f.cuentaId!, f.tipo!])),
       archivo: archivo ?? 'análisis',
       fecha: new Date().toISOString(),
     };
-    guardarTiposDeudor(e);
-    ir(3);
+    try { await guardarTiposDeudor(e); ir(3); }
+    catch { setErrorGuardar('No se pudo guardar el análisis. Recarga los datos y vuelve a intentar.'); }
   };
 
   const variantes = {
@@ -236,6 +237,7 @@ export function AsistenteTiposDeudor({ onCerrar, onVerPlantillas }: { onCerrar: 
 
   return createPortal(
     <div className="font-royaltica fixed inset-0 z-[80]" role="presentation">
+      {errorGuardar && <p role="alert" className="fixed top-4 left-1/2 -translate-x-1/2 z-[90] rounded-xl bg-rose-50 p-4 text-rose-800">{errorGuardar}</p>}
       <motion.div
         className="absolute inset-0 bg-brand-ink/35 backdrop-blur-md"
         initial={{ opacity: 0 }}

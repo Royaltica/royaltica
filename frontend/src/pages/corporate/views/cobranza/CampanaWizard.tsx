@@ -109,7 +109,7 @@ export function CampanaWizard({
   onListo: (mensaje: string) => void;
 }) {
   const reduce = useReducedMotion();
-  const { cartera, guardarCampana } = useCobranza();
+  const { cartera, guardarCampana, workspace } = useCobranza();
   const abiertas = React.useMemo(() => cartera.filter((c) => !c.saldada), [cartera]);
 
   // ── Estado inicial según el modo ──
@@ -230,28 +230,21 @@ export function CampanaWizard({
         : `${ocasion.nombre} ${cfg.inicio.slice(0, 4)}`);
   const fechasValidas = cfg ? cfg.fin >= cfg.inicio : false;
 
-  const guardar = (estado: Campana['estado']) => {
-    if (!cfg) return;
+  const [errorGuardar, setErrorGuardar] = React.useState<string | null>(null);
+  const guardar = async () => {
+    if (!cfg || workspace.busy || !workspace.ready) return;
     const base = modo.tipo === 'editar' ? modo.campana : null;
-    guardarCampana({
-      id: base?.id ?? `c${Date.now()}`,
-      nombre: nombreFinal,
-      config: cfg,
-      estado,
-      enviados: base?.enviados ?? 0,
-      respuesta: base?.respuesta,
-    });
-    const n = elegidos.length;
-    onListo(
-      estado === 'Borrador'
-        ? `"${nombreFinal}" quedó como borrador`
-        : modo.tipo === 'editar' && base?.estado === estado
-          ? `Guardaste los cambios de "${nombreFinal}"`
-          : estado === 'Activa'
-            ? `"${nombreFinal}" salió a ${n} ${n === 1 ? 'cliente' : 'clientes'}`
-            : `"${nombreFinal}" quedó programada para el ${fmtFecha(cfg.inicio)}`,
-    );
-    onClose();
+    try {
+      await guardarCampana({
+        id: base?.id ?? `c${Date.now()}`,
+        nombre: nombreFinal,
+        config: cfg,
+        estado: 'Borrador',
+        enviados: 0,
+      });
+      onListo(`"${nombreFinal}" quedó como borrador`);
+      onClose();
+    } catch (e) { setErrorGuardar(e instanceof Error ? e.message : 'No se pudo guardar el borrador.'); }
   };
 
   // ── Resumen de cada paso resuelto (renglón compacto) ──
@@ -585,33 +578,10 @@ export function CampanaWizard({
                       )}
                     </ul>
 
-                    <div className="flex flex-col-reverse sm:flex-row sm:items-center gap-2 pt-2">
-                      {modo.tipo === 'editar' && modo.campana.estado !== 'Borrador' ? (
-                        <>
-                          <span className="text-[12px] text-brand-ink/45 sm:mr-auto">
-                            Sigue {modo.campana.estado.toLowerCase()}. Los mensajes ya enviados no se repiten.
-                          </span>
-                          <BotonPrincipal onClick={() => guardar(modo.campana.estado)} disabled={!elegidos.length}>
-                            Guardar cambios
-                          </BotonPrincipal>
-                        </>
-                      ) : (
-                        <>
-                          <div className="sm:mr-auto">
-                            <BotonSecundario onClick={() => guardar('Borrador')}>Guardar como borrador</BotonSecundario>
-                          </div>
-                          <BotonPrincipal
-                            onClick={() => guardar(lanzaHoy ? 'Activa' : 'Programada')}
-                            disabled={!aprobada || !elegidos.length}
-                            title={!aprobada ? 'La plantilla sigue en revisión en Meta' : undefined}
-                          >
-                            {lanzaHoy
-                              ? `Lanzar a ${elegidos.length} ${elegidos.length === 1 ? 'cliente' : 'clientes'}`
-                              : `Programar para el ${fmtFecha(cfg.inicio)}`}
-                            <ArrowRight size={15} />
-                          </BotonPrincipal>
-                        </>
-                      )}
+                    <p className="text-[12px] text-brand-ink/55">Por ahora puedes guardar borradores. El envío de campañas aún no está disponible.</p>
+                    {errorGuardar && <p role="alert" className="text-rose-700">{errorGuardar}</p>}
+                    <div className="flex justify-end pt-2">
+                      <BotonPrincipal disabled={!workspace.ready || workspace.busy} onClick={() => guardar()}>Guardar como borrador</BotonPrincipal>
                     </div>
                   </div>
                 )}
@@ -710,8 +680,9 @@ export function CampanaWizard({
                 </p>
                 <div className="flex flex-col gap-2 mt-5">
                   {modo.tipo !== 'editar' && cfg && (
-                    <BotonPrincipal onClick={() => guardar('Borrador')}>Guardar como borrador</BotonPrincipal>
+                    <BotonPrincipal disabled={!workspace.ready || workspace.busy} onClick={() => guardar()}>Guardar como borrador</BotonPrincipal>
                   )}
+                  {errorGuardar && <p role="alert" className="text-rose-700">{errorGuardar}</p>}
                   <BotonSecundario onClick={onClose}>{modo.tipo === 'editar' ? 'Salir sin guardar' : 'Descartar'}</BotonSecundario>
                   <button
                     type="button"

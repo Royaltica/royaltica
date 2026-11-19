@@ -29,34 +29,12 @@ import { BTN_PRI, BTN_SEC, CONTROL, ETIQUETA, Ventana, useAviso } from './client
 import { useCobranza } from './store.tsx';
 import { useAlertas, type Alerta } from './alertas.tsx';
 import { ModoEnvio } from './WhatsappPanel.tsx';
-import { EJEMPLO_VARS, tipoDeudor } from './catalogoDeudores.ts';
+import { tipoDeudor } from './catalogoDeudores.ts';
+import { useCollectionSettings } from './useCollectionSettings.ts';
+import type { CollectionNotifications } from '../../../../services/collectionWorkspace.ts';
 import { api, type CollectionStatus, type ShadowReport, type CollectionRulesSettings, type CollectionSecuritySettings, type CollectionLevelPlan } from '../../../../services/apiClient.ts';
 import { actualizarEquipo, perfilDeRol, quitarUsuario, useEquipo, type PersonaEquipo, type RolEquipo } from './equipo.ts';
 import { diasDePolitica, fechasDePolitica, VIGENCIA_DIAS } from './dias-politica.ts';
-
-// Equipo y reglas usan el backend. Las demás secciones se migran en C2b.
-
-// ── Estado guardado en el navegador ───────────────────────────────────
-
-function useGuardado<T>(clave: string, inicial: T): [T, React.Dispatch<React.SetStateAction<T>>] {
-  const llave = `royaltica.cobranza.config.${clave}`;
-  const [v, setV] = React.useState<T>(() => {
-    try {
-      const raw = window.localStorage.getItem(llave);
-      return raw ? (JSON.parse(raw) as T) : inicial;
-    } catch {
-      return inicial;
-    }
-  });
-  React.useEffect(() => {
-    try {
-      window.localStorage.setItem(llave, JSON.stringify(v));
-    } catch {
-      /* sin almacenamiento */
-    }
-  }, [llave, v]);
-  return [v, setV];
-}
 
 type Rol = RolEquipo;
 type Persona = PersonaEquipo;
@@ -310,7 +288,7 @@ function QuitarVentana({ persona, otros, onCerrar, onQuitar }: { persona: Person
 // ══ 2 · Alertas al celular ════════════════════════════════════════════
 
 type Nivel = 'criticas' | 'altas' | 'todas';
-type Destinatario = { id: string; nombre: string; puesto: string; telefono: string; nivel: Nivel; modo: 'momento' | 'resumen'; activo: boolean; verificado: boolean };
+type Destinatario = CollectionNotifications['destinatarios'][number];
 
 const NIVELES: { id: Nivel; nombre: string; detalle: string }[] = [
   { id: 'criticas', nombre: 'Solo críticas', detalle: 'Lo que hay que atender hoy' },
@@ -318,27 +296,30 @@ const NIVELES: { id: Nivel; nombre: string; detalle: string }[] = [
   { id: 'todas', nombre: 'Todas', detalle: 'Incluye las de vigilar' },
 ];
 
-function AlertasCelular() {
+export function AlertasCelular() {
   const { avisar, nodo } = useAviso();
   const { confirmar, nodo: nodoConfirmar } = useConfirmar();
   const { vigentes } = useAlertas();
-  const [lista, setLista] = useGuardado<Destinatario[]>('destinatarios', [
-    { id: 'd-1', nombre: 'Director general', puesto: 'CEO', telefono: '+52 81 1234 5678', nivel: 'criticas', modo: 'momento', activo: true, verificado: true },
-  ]);
-  const [noMolestar, setNoMolestar] = useGuardado('noMolestar', true);
-  const [resumenHora, setResumenHora] = useGuardado('resumenHora', '08:00');
+  const config = useCollectionSettings('collectionNotifications');
+  const lista = config.data?.destinatarios ?? [];
+  const noMolestar = config.data?.noMolestar ?? true;
+  const resumenHora = config.data?.resumenHora ?? '08:00';
+  const setLista = (fn: (lista: Destinatario[]) => Destinatario[]) => config.setData((v) => v ? { ...v, destinatarios: fn(v.destinatarios) } : v);
+  const setNoMolestar = (noMolestar: boolean) => config.setData((v) => v ? { ...v, noMolestar } : v);
+  const setResumenHora = (resumenHora: string) => config.setData((v) => v ? { ...v, resumenHora } : v);
   const [agregar, setAgregar] = React.useState(false);
   const [elegido, setElegido] = React.useState<string>(lista[0]?.id ?? '');
   const actual = lista.find((d) => d.id === elegido) ?? lista[0];
   const muestra = vigentes.find((a) => a.severidad === 'critica') ?? vigentes[0];
   const cambiar = (id: string, c: Partial<Destinatario>) => setLista((l) => l.map((d) => (d.id === id ? { ...d, ...c } : d)));
+  if (!config.data) return <div role={config.error ? 'alert' : 'status'}>{config.error ?? 'Cargando preferencias…'} {config.error && <button onClick={config.retry}>Reintentar</button>}</div>;
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
+    <fieldset disabled={config.busy} className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
       <div className="space-y-5">
         <Tarjeta
-          titulo="Quién recibe las alertas en su WhatsApp"
-          detalle="Cada vez que la plataforma detecta una alerta, le llega al celular de estas personas con un botón para verla. Ideal para que dirección tenga control directo."
+          titulo="Destinatarios de alertas"
+          detalle="Guarda los destinatarios y sus preferencias. Esto no verifica los números ni activa envíos por WhatsApp."
           accion={
             <button type="button" onClick={() => setAgregar(true)} className={BTN_PRI}>
               <Plus size={14} /> Agregar número
@@ -348,8 +329,8 @@ function AlertasCelular() {
           {!lista.length ? (
             <div className="rounded-[22px] border-2 border-dashed border-brand-ink/12 px-6 py-10 text-center">
               <Smartphone size={22} className="mx-auto text-brand-ink/30" />
-              <p className="text-[13.5px] font-semibold text-brand-ink mt-3">Nadie recibe alertas todavía</p>
-              <p className="text-[12.5px] text-brand-ink/50 mt-1">Agrega el WhatsApp del director para que se entere al momento.</p>
+              <p className="text-[13.5px] font-semibold text-brand-ink mt-3">Sin destinatarios guardados</p>
+              <p className="text-[12.5px] text-brand-ink/50 mt-1">Agrega un número y guarda las preferencias.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -372,6 +353,7 @@ function AlertasCelular() {
                         </div>
                         <div className="flex items-center gap-1.5 text-[12px] text-brand-ink/55 tabular-nums">
                           {d.telefono}
+                          {!d.verificado && <span className="text-amber-700">Sin verificar</span>}
                           {d.verificado && (
                             <span className="inline-flex items-center gap-0.5 text-emerald-700 font-semibold">
                               <BadgeCheck size={13} /> verificado
@@ -385,7 +367,7 @@ function AlertasCelular() {
                         onClick={(e) => {
                           e.stopPropagation();
                           confirmar({
-                            titulo: `¿Dejar de mandarle alertas a ${d.nombre}?`,
+                            titulo: `¿Quitar a ${d.nombre} de la lista?`,
                             accion: 'Quitar',
                             peligro: true,
                             alConfirmar: () => setLista((l) => l.filter((x) => x.id !== d.id)),
@@ -431,8 +413,10 @@ function AlertasCelular() {
           )}
         </Tarjeta>
 
-        <Tarjeta titulo="Cuándo llegan">
-          <Fila icono={<Moon size={16} />} titulo="No molestar de 10 p. m. a 7 a. m." detalle="Las críticas sí llegan; las demás esperan a la mañana.">
+        {config.error && <p role="alert" className="text-rose-700">{config.error}</p>}
+        <button type="button" disabled={config.busy} onClick={async () => { if (await config.save()) avisar('Preferencias guardadas'); }} className={BTN_PRI}>{config.busy ? 'Guardando…' : 'Guardar preferencias'}</button>
+        <Tarjeta titulo="Horario preferido">
+          <Fila icono={<Moon size={16} />} titulo="No molestar de 10 p. m. a 7 a. m." detalle="Preferencia para las alertas fuera de horario. No activa envíos.">
             <Interruptor activo={noMolestar} onChange={setNoMolestar} etiqueta="No molestar de noche" />
           </Fila>
           <Fila icono={<Bell size={16} />} titulo="Hora del resumen diario" detalle="Para quien prefiere un solo mensaje al día.">
@@ -447,7 +431,7 @@ function AlertasCelular() {
 
       {/* Así le llega */}
       <div className="xl:sticky xl:top-4">
-        <TelefonoMuestra alerta={muestra} destinatario={actual} onPrueba={() => avisar(`Mensaje de prueba enviado a ${actual?.telefono ?? 'el número'} (ejemplo)`)} />
+        <TelefonoMuestra alerta={muestra} destinatario={actual} onPrueba={() => avisar('El envío de prueba todavía no está disponible.')} />
       </div>
 
       {agregar && (
@@ -457,13 +441,13 @@ function AlertasCelular() {
             setLista((l) => [...l, d]);
             setElegido(d.id);
             setAgregar(false);
-            avisar(`${d.nombre} ya recibe alertas en su WhatsApp`);
+            avisar('Número agregado a la lista. Guarda las preferencias para conservarlo.');
           }}
         />
       )}
       {nodo}
       {nodoConfirmar}
-    </div>
+    </fieldset>
   );
 }
 
@@ -472,7 +456,7 @@ function TelefonoMuestra({ alerta, destinatario, onPrueba }: { alerta?: Alerta; 
   const etiqueta = alerta?.severidad === 'critica' ? '🔴 Alerta crítica' : alerta?.severidad === 'alta' ? '🟠 Alerta alta' : '🔵 Para vigilar';
   return (
     <div className="flex flex-col items-center">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-ink/40 mb-3">Así le llega</div>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-ink/40 mb-3">Vista previa</div>
       <div className="relative w-[300px] rounded-[44px] bg-brand-ink p-3 shadow-[0_40px_80px_-30px_rgba(17,24,39,0.7)]">
         <div className="absolute top-3 left-1/2 -translate-x-1/2 w-24 h-6 rounded-b-2xl bg-brand-ink z-10" />
         <div className="rounded-[34px] overflow-hidden bg-[#ECE5DD]">
@@ -495,8 +479,8 @@ function TelefonoMuestra({ alerta, destinatario, onPrueba }: { alerta?: Alerta; 
                 transition={SPRING}
                 className="max-w-[92%] rounded-lg rounded-tl-none bg-white px-3 py-2 shadow-sm"
               >
-                <div className="text-[12px] font-bold text-brand-ink">{alerta ? etiqueta : '✅ Todo en orden'}</div>
-                <p className="text-[12px] leading-snug text-brand-ink/85 mt-1">{alerta ? alerta.titulo : 'Hoy no hay alertas. Te avisamos en cuanto haya algo.'}</p>
+                <div className="text-[12px] font-bold text-brand-ink">{alerta ? etiqueta : 'Sin datos'}</div>
+                <p className="text-[12px] leading-snug text-brand-ink/85 mt-1">{alerta ? alerta.titulo : 'No hay una alerta disponible para esta vista previa.'}</p>
                 {alerta && alerta.monto > 0 && (
                   <p className="text-[11.5px] text-brand-ink/60 mt-1">En juego: {new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(alerta.monto)}</p>
                 )}
@@ -516,7 +500,7 @@ function TelefonoMuestra({ alerta, destinatario, onPrueba }: { alerta?: Alerta; 
         {destinatario ? `Para ${destinatario.nombre} · ${NIVELES.find((n) => n.id === destinatario.nivel)?.nombre.toLowerCase()}` : 'Agrega un número para ver cómo le llega'}
       </p>
       {destinatario && (
-        <button type="button" onClick={onPrueba} className={BTN_SEC + ' mt-3'}>
+        <button type="button" disabled title="Envío de prueba aún no disponible" onClick={onPrueba} className={BTN_SEC + ' mt-3'}>
           <Send size={12} /> Mandar prueba
         </button>
       )}
@@ -525,19 +509,16 @@ function TelefonoMuestra({ alerta, destinatario, onPrueba }: { alerta?: Alerta; 
 }
 
 function AgregarNumero({ onCerrar, onListo }: { onCerrar: () => void; onListo: (d: Destinatario) => void }) {
-  const [paso, setPaso] = React.useState<'datos' | 'codigo'>('datos');
   const [nombre, setNombre] = React.useState('');
   const [puesto, setPuesto] = React.useState('');
   const [tel, setTel] = React.useState('');
   const [nivel, setNivel] = React.useState<Nivel>('criticas');
-  const [codigo, setCodigo] = React.useState('');
   const digitos = tel.replace(/\D/g, '');
-  const telValido = digitos.length >= 10;
-  const formato = digitos.length === 10 ? `+52 ${digitos.slice(0, 2)} ${digitos.slice(2, 6)} ${digitos.slice(6)}` : tel;
+  const telValido = digitos.length >= 10 && digitos.length <= 15;
+  const formato = digitos.length === 10 ? `+52${digitos}` : `+${digitos}`;
   return (
-    <Ventana titulo={paso === 'datos' ? 'Agregar un número' : 'Confirma el número'} subtitulo={paso === 'datos' ? 'Le llegarán las alertas por WhatsApp.' : `Mandamos un código de 6 dígitos al ${formato}.`} onCerrar={onCerrar} ancho="max-w-md">
+    <Ventana titulo="Agregar un número" subtitulo="Quedará sin verificar. No se envía ningún código." onCerrar={onCerrar} ancho="max-w-md">
       <AnimatePresence mode="wait" initial={false}>
-        {paso === 'datos' ? (
           <motion.form
             key="datos"
             initial={{ opacity: 0, x: -10 }}
@@ -545,7 +526,7 @@ function AgregarNumero({ onCerrar, onListo }: { onCerrar: () => void; onListo: (
             exit={{ opacity: 0, x: -10 }}
             onSubmit={(e) => {
               e.preventDefault();
-              if (nombre.trim() && telValido) setPaso('codigo');
+              if (nombre.trim() && telValido) onListo({ id: `d-${Date.now()}`, nombre: nombre.trim(), puesto: puesto.trim(), telefono: formato, nivel, modo: 'momento', activo: true, verificado: false });
             }}
             className="space-y-4"
           >
@@ -584,43 +565,10 @@ function AgregarNumero({ onCerrar, onListo }: { onCerrar: () => void; onListo: (
                 Cancelar
               </button>
               <button type="submit" disabled={!nombre.trim() || !telValido} className={BTN_PRI}>
-                Enviar código <Send size={13} />
+                Agregar a la lista <Plus size={13} />
               </button>
             </div>
           </motion.form>
-        ) : (
-          <motion.form
-            key="codigo"
-            initial={{ opacity: 0, x: 10 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 10 }}
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (codigo.length === 6)
-                onListo({ id: `d-${Date.now()}`, nombre: nombre.trim(), puesto: puesto.trim() || 'Dirección', telefono: formato, nivel, modo: 'momento', activo: true, verificado: true });
-            }}
-            className="space-y-4"
-          >
-            <input
-              autoFocus
-              inputMode="numeric"
-              maxLength={6}
-              value={codigo}
-              onChange={(e) => setCodigo(e.target.value.replace(/\D/g, ''))}
-              placeholder="••••••"
-              className={CONTROL + ' text-center !text-[26px] tracking-[0.5em] font-semibold tabular-nums'}
-            />
-            <p className="text-[11.5px] text-brand-ink/45 text-center">Ejemplo: escribe cualquier código de 6 dígitos.</p>
-            <div className="flex justify-between gap-2 pt-1">
-              <button type="button" onClick={() => setPaso('datos')} className={BTN_SEC + ' !py-2.5 !px-4 !text-[12.5px]'}>
-                Cambiar número
-              </button>
-              <button type="submit" disabled={codigo.length !== 6} className={BTN_PRI}>
-                <Check size={13} /> Confirmar
-              </button>
-            </div>
-          </motion.form>
-        )}
       </AnimatePresence>
     </Ventana>
   );
@@ -962,17 +910,12 @@ function SeguridadEnvios() {
 
 // ══ 4 · Tu empresa en los mensajes ════════════════════════════════════
 
-function Empresa() {
+export function Empresa() {
   const { avisar, nodo } = useAviso();
-  const [e, setE] = useGuardado('empresa', {
-    empresa: '',
-    telefono_oficial: '',
-    banco: '',
-    clabe: '',
-    liga: '',
-    correo: '',
-    firma: 'Equipo de Cobranza',
-  });
+  const config = useCollectionSettings('collectionCompany');
+  const e = config.data;
+  const setE = config.setData;
+  if (!e) return <div role={config.error ? 'alert' : 'status'}>{config.error ?? 'Cargando empresa…'} {config.error && <button onClick={config.retry}>Reintentar</button>}</div>;
   const campos: { k: keyof typeof e; t: string; ph: string; ayuda?: string }[] = [
     { k: 'empresa', t: 'Nombre comercial', ph: 'Grupo Náutica del Pacífico', ayuda: 'Así te presentas en cada mensaje' },
     { k: 'telefono_oficial', t: 'Teléfono oficial', ph: '55 1234 5678', ayuda: 'Para que el cliente confirme que no es fraude' },
@@ -982,16 +925,16 @@ function Empresa() {
     { k: 'correo', t: 'Correo para respuestas', ph: 'cobranza@tuempresa.mx' },
   ];
   const plantilla = tipoDeudor('olvidadizo-b2c')?.pla.hoy ?? 'Hola {{contacto}}, de parte de {{empresa}}: hoy vence tu factura {{folio}} por {{monto}}. Págala aquí: {{liga}}';
-  const valores: Record<string, string> = { ...EJEMPLO_VARS, ...Object.fromEntries(Object.entries(e).filter(([, v]) => v)) };
+  const valores: Record<string, string> = { ...e };
   const completos = campos.filter((c) => e[c.k]).length;
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-5 items-start">
-      <Tarjeta titulo="Datos que se llenan solos en los mensajes" detalle="Los capturas una vez y aparecen en todas las plantillas, campañas y respuestas de la IA.">
+    <fieldset disabled={config.busy} className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-5 items-start">
+      <Tarjeta titulo="Datos que se llenan solos en los mensajes" detalle="Datos de tu organización para preparar los mensajes. Revisa la vista previa antes de guardar.">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {campos.map((c) => (
             <label key={c.k} className="block">
               <span className={ETIQUETA}>{c.t}</span>
-              <input className={CONTROL + ' mt-1.5'} value={e[c.k]} placeholder={c.ph} onChange={(ev) => setE((x) => ({ ...x, [c.k]: ev.target.value }))} />
+              <input aria-label={c.t} className={CONTROL + ' mt-1.5'} value={e[c.k]} placeholder={c.ph} onChange={(ev) => setE((x) => ({ ...x, [c.k]: ev.target.value }))} />
               {c.ayuda && <span className="block text-[11px] text-brand-ink/40 mt-1">{c.ayuda}</span>}
             </label>
           ))}
@@ -1001,7 +944,7 @@ function Empresa() {
           </label>
         </div>
         <div className="mt-5 flex items-center gap-3">
-          <button type="button" onClick={() => avisar('Datos guardados')} className={BTN_PRI}>
+          <button type="button" disabled={config.busy} onClick={async () => { if (await config.save()) avisar('Datos guardados'); }} className={BTN_PRI}>
             <Check size={13} /> Guardar
           </button>
           <span className="text-[12px] text-brand-ink/45">
@@ -1010,6 +953,7 @@ function Empresa() {
         </div>
       </Tarjeta>
       <div className="xl:sticky xl:top-4 glass rounded-[28px] p-5">
+        {config.error && <p role="alert" className="text-rose-700">{config.error}</p>}
         <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-ink/40">Vista previa</div>
         <p className="text-[12px] text-brand-ink/50 mt-1">Mensaje del día de vencimiento, con tus datos.</p>
         <div className="mt-4 rounded-[20px] rounded-tl-md bg-white ring-1 ring-brand-ink/[0.06] px-4 py-3 text-[13px] leading-relaxed text-brand-ink/80">
@@ -1019,7 +963,7 @@ function Empresa() {
             const propio = !!(e as Record<string, string>)[m[1]];
             return (
               <span key={i} className={`rounded px-1 font-semibold ${propio ? 'bg-emerald-500/12 text-emerald-800' : 'bg-cyan-500/12 text-cyan-800'}`}>
-                {valores[m[1]] ?? m[1]}
+                {valores[m[1]] || 'Sin datos'}
               </span>
             );
           })}
@@ -1029,7 +973,7 @@ function Empresa() {
         </p>
       </div>
       {nodo}
-    </div>
+    </fieldset>
   );
 }
 
@@ -1039,9 +983,9 @@ function Canales() {
   const { avisar, nodo } = useAviso();
   const { envioAutomatico } = useCobranza();
   const canales = [
-    { Icono: MessageCircle, nombre: 'WhatsApp Business', detalle: 'Número de cobranza +52 81 5555 0101', estado: 'ok', texto: 'Conectado con Meta', color: 'bg-emerald-500/12 text-emerald-700' },
-    { Icono: Mail, nombre: 'Correo', detalle: 'Sale desde cobranza@tuempresa.mx', estado: 'ok', texto: 'Funcionando', color: 'bg-sky-500/12 text-sky-700' },
-    { Icono: Database, nombre: 'ERP · Odoo', detalle: 'Facturas y pagos se sincronizan cada mañana', estado: 'ok', texto: 'Sincronizado hoy 06:00', color: 'bg-violet-500/12 text-violet-700' },
+    { Icono: MessageCircle, nombre: 'WhatsApp Business', detalle: 'Sin datos de conexión en esta vista', estado: 'falta', texto: 'Sin datos', color: 'bg-emerald-500/12 text-emerald-700' },
+    { Icono: Mail, nombre: 'Correo', detalle: 'Sin remitente confirmado en esta vista', estado: 'falta', texto: 'Sin datos', color: 'bg-sky-500/12 text-sky-700' },
+    { Icono: Database, nombre: 'ERP', detalle: 'Sin datos de sincronización en esta vista', estado: 'falta', texto: 'Sin datos', color: 'bg-violet-500/12 text-violet-700' },
     { Icono: Wallet, nombre: 'Banco · conciliación', detalle: 'Detecta pagos por SPEI', estado: 'falta', texto: 'Sin conectar', color: 'bg-amber-500/12 text-amber-800' },
   ] as const;
   return (
@@ -1056,12 +1000,12 @@ function Canales() {
               <div className="text-[15px] font-semibold text-brand-ink">{c.nombre}</div>
               <div className="text-[12.5px] text-brand-ink/50 mt-0.5">{c.detalle}</div>
               <div className="mt-3 flex items-center gap-2">
-                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${c.estado === 'ok' ? 'bg-emerald-500/10 text-emerald-700' : 'bg-amber-500/12 text-amber-800'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${c.estado === 'ok' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ${String(c.estado) === 'ok' ? 'bg-emerald-500/10 text-emerald-700' : 'bg-amber-500/12 text-amber-800'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${String(c.estado) === 'ok' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
                   {c.texto}
                 </span>
-                <button type="button" onClick={() => avisar(c.estado === 'ok' ? `${c.nombre}: todo en orden` : 'Te ayudamos a conectarlo en tu onboarding')} className="ml-auto text-[12px] font-semibold text-brand-ink/55 hover:text-brand-ink">
-                  {c.estado === 'ok' ? 'Revisar' : 'Conectar'} →
+                <button type="button" onClick={() => avisar(String(c.estado) === 'ok' ? `${c.nombre}: todo en orden` : 'Te ayudamos a conectarlo en tu onboarding')} className="ml-auto text-[12px] font-semibold text-brand-ink/55 hover:text-brand-ink">
+                  {String(c.estado) === 'ok' ? 'Revisar' : 'Conectar'} →
                 </button>
               </div>
             </div>

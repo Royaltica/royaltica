@@ -68,11 +68,11 @@ export function SegmentosPanel({ onVerPlantillas }: { onVerPlantillas?: () => vo
     });
   const mover = (cuentaId: string, tipo: string) => {
     if (!tiposDeudor) return;
-    guardarTiposDeudor({
+    void guardarTiposDeudor({
       ...tiposDeudor,
       activos: tiposDeudor.activos.includes(tipo) ? tiposDeudor.activos : [...tiposDeudor.activos, tipo],
       asignaciones: { ...tiposDeudor.asignaciones, [cuentaId]: tipo },
-    });
+    }).catch(() => undefined);
   };
 
   return (
@@ -296,9 +296,9 @@ function ClientesSegmento({ lista }: { lista: CuentaViva[] }) {
   const [destinoLote, setDestinoLote] = React.useState<Segmento | ''>('');
   const [motivoLote, setMotivoLote] = React.useState('');
   const [historial, setHistorial] = React.useState<string | null>(null);
-  const guardar = (id: string) => {
+  const guardar = async (id: string) => {
     if (!motivo.trim()) return;
-    cambiarSegmento(id, nuevo, motivo.trim());
+    try { await cambiarSegmento(id, nuevo, motivo.trim()); } catch { return; }
     setEditando(null);
     setMotivo('');
   };
@@ -310,8 +310,8 @@ function ClientesSegmento({ lista }: { lista: CuentaViva[] }) {
       titulo: `¿Mover ${n} ${n === 1 ? 'cliente' : 'clientes'} a ${SEGMENTOS[destinoLote].nombre}?`,
       mensaje: `Su plan cambia al de ese segmento (${SEGMENTOS[destinoLote].calendario.toLowerCase()}). El motivo queda registrado: "${motivoLote.trim()}".`,
       accion: `Mover ${n}`,
-      alConfirmar: () => {
-        elegidos.forEach((id) => cambiarSegmento(id, destinoLote, motivoLote.trim()));
+      alConfirmar: async () => {
+        try { for (const id of elegidos) await cambiarSegmento(id, destinoLote, motivoLote.trim()); } catch { return; }
         setElegidos([]);
         setDestinoLote('');
         setMotivoLote('');
@@ -456,7 +456,7 @@ function ClientesSegmento({ lista }: { lista: CuentaViva[] }) {
                       mensaje: 'Se quita el cambio manual y su segmento vuelve a salir de su historial de pagos.',
                       accion: 'Volver al calculado',
                       alConfirmar: () => {
-                        cambiarSegmento(c.id, null, '');
+                        void cambiarSegmento(c.id, null, '').catch(() => undefined);
                         setEditando(null);
                       },
                     })

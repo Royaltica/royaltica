@@ -3,9 +3,10 @@ import { PanelSub, Subpestanas } from './vidrio.tsx';
 import { Download, Pencil, Save, X } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { Reveal, BlockTitle, Figure } from './primitives.tsx';
-import { AGENTES, HOY, LINEAS, RESULTADOS, type Gestion } from './mockV1.ts';
+import { LINEAS, RESULTADOS, type Gestion } from './mockV1.ts';
 import { useAviso } from './clientes.tsx';
 import { useCobranza } from './store.tsx';
+import type { ReportFilters } from '../../../../services/collectionWorkspace.ts';
 import { AnalisisPeriodoPanel } from './AnalisisPeriodoPanel.tsx';
 
 /**
@@ -14,33 +15,18 @@ import { AnalisisPeriodoPanel } from './AnalisisPeriodoPanel.tsx';
  * resultado de gestión, cuentas no gestionadas), lo guarda y lo exporta.
  * `soloEquipo` limita al supervisor a lo de su equipo.
  */
-type Filtros = {
-  agente: string;
-  linea: string;
-  resultado: string;
-  desde: string;
-  hasta: string;
-  horaDesde: string;
-  horaHasta: string;
-  soloNoGestionadas: boolean;
-};
+type Filtros = ReportFilters;
 
 const INICIAL: Filtros = {
   agente: 'Todos',
   linea: 'Todas',
   resultado: 'Todos',
-  desde: '2026-09-22',
-  hasta: HOY,
+  desde: new Date().toISOString().slice(0, 10),
+  hasta: new Date().toISOString().slice(0, 10),
   horaDesde: '00:00',
   horaHasta: '23:59',
   soloNoGestionadas: false,
 };
-
-const GUARDADOS_INICIALES: { nombre: string; filtros: Filtros }[] = [
-  { nombre: 'Promesas de la semana', filtros: { ...INICIAL, resultado: 'Promesa de pago' } },
-  { nombre: 'Cuentas sin gestionar', filtros: { ...INICIAL, soloNoGestionadas: true } },
-  { nombre: 'Ana · mañanas', filtros: { ...INICIAL, agente: 'Ana Robles', horaHasta: '12:00' } },
-];
 
 function aplicar(f: Filtros, gestiones: Gestion[]): Gestion[] {
   return gestiones.filter(
@@ -105,28 +91,13 @@ export function ReportesPanel({ soloEquipo = false }: { soloEquipo?: boolean }) 
 }
 
 type Guardado = { nombre: string; filtros: Filtros };
-const LLAVE_GUARDADOS = 'royaltica.cobranza.reportesGuardados';
 
 function ReporteMedida({ soloEquipo }: { soloEquipo: boolean }) {
   const [f, setF] = React.useState<Filtros>(INICIAL);
-  const [guardados, setGuardadosRaw] = React.useState<Guardado[]>(() => {
-    try {
-      const raw = window.localStorage.getItem(LLAVE_GUARDADOS);
-      return raw ? (JSON.parse(raw) as Guardado[]) : GUARDADOS_INICIALES;
-    } catch {
-      return GUARDADOS_INICIALES;
-    }
-  });
-  const setGuardados = (fn: (g: Guardado[]) => Guardado[]) =>
-    setGuardadosRaw((g) => {
-      const nuevo = fn(g);
-      try {
-        window.localStorage.setItem(LLAVE_GUARDADOS, JSON.stringify(nuevo));
-      } catch {
-        /* sin almacenamiento */
-      }
-      return nuevo;
-    });
+  const { workspace } = useCobranza();
+  const guardados = workspace.data.reportes;
+  const setGuardados = (fn: (g: Guardado[]) => Guardado[]) => workspace.update((state) => ({ reportes: fn(state.reportes) }));
+  const [error, setError] = React.useState<string | null>(null);
   const [nombre, setNombre] = React.useState('');
   const [renombrando, setRenombrando] = React.useState<{ antes: string; nombre: string } | null>(null);
   const { avisar, nodo } = useAviso();
@@ -141,35 +112,33 @@ function ReporteMedida({ soloEquipo }: { soloEquipo: boolean }) {
   const promesas = filas.filter((g) => g.resultado === 'Promesa de pago').length;
   const sinGestion = filas.filter((g) => g.resultado === 'No gestionada').length;
 
-  const guardar = () => {
+  const guardar = async () => {
     const n = nombre.trim();
-    if (!n) return;
-    // Mismo nombre = se actualiza ese reporte en vez de duplicarlo.
-    setGuardados((g) => [...g.filter((x) => x.nombre !== n), { nombre: n, filtros: f }]);
-    setNombre('');
-    avisar(`Guardaste "${n}"`);
+    if (!n || workspace.busy || !workspace.ready) return;
+    try {
+      await setGuardados((g) => [...g.filter((x) => x.nombre !== n), { nombre: n, filtros: f }]);
+      setNombre(''); setError(null); avisar(`Guardaste "${n}"`);
+    } catch { setError('No se guardó el reporte. Recarga los datos para volver a intentar.'); }
   };
-  const borrar = (r: Guardado) => {
-    const i = guardados.findIndex((x) => x.nombre === r.nombre);
-    setGuardados((g) => g.filter((x) => x.nombre !== r.nombre));
-    avisar(`Borraste "${r.nombre}"`, {
-      deshacer: () =>
-        setGuardados((g) => {
-          const out = [...g];
-          out.splice(Math.max(0, i), 0, r);
-          return out;
-        }),
-    });
+  const borrar = async (r: Guardado) => {
+    if (workspace.busy || !workspace.ready) return;
+    try { await setGuardados((g) => g.filter((x) => x.nombre !== r.nombre)); setError(null); avisar(`Borraste "${r.nombre}"`); }
+    catch { setError('No se borró el reporte. Recarga los datos para volver a intentar.'); }
   };
-  const renombrar = () => {
-    if (!renombrando) return;
+  const renombrar = async () => {
+    if (!renombrando || workspace.busy || !workspace.ready) return;
     const n = renombrando.nombre.trim();
-    if (n && n !== renombrando.antes) setGuardados((g) => g.map((x) => (x.nombre === renombrando.antes ? { ...x, nombre: n } : x)));
-    setRenombrando(null);
+    if (!n || guardados.some((g) => g.nombre === n && g.nombre !== renombrando.antes)) { setError('Usa un nombre distinto para cada reporte.'); return; }
+    try {
+      if (n !== renombrando.antes) await setGuardados((g) => g.map((x) => x.nombre === renombrando.antes ? { ...x, nombre: n } : x));
+      setRenombrando(null); setError(null);
+    } catch { setError('No se cambió el nombre. Recarga los datos para volver a intentar.'); }
   };
 
   return (
     <div className="space-y-5">
+      {error && <p role="alert" className="text-rose-700">{error}</p>}
+      {!workspace.ready && <p role="status">Cargando reportes guardados…</p>}
       {/* Reportes guardados */}
       <Reveal>
         <div className="flex flex-wrap items-center gap-2">
@@ -188,7 +157,6 @@ function ReporteMedida({ soloEquipo }: { soloEquipo: boolean }) {
                   autoFocus
                   value={renombrando.nombre}
                   onChange={(e) => setRenombrando({ ...renombrando, nombre: e.target.value })}
-                  onBlur={renombrar}
                   onKeyDown={(e) => e.key === 'Escape' && setRenombrando(null)}
                   aria-label="Nuevo nombre del reporte"
                   className="px-3 py-1.5 rounded-lg text-[12px] font-semibold border border-brand-gold/60 bg-brand-paper outline-none w-44"
@@ -277,7 +245,7 @@ function ReporteMedida({ soloEquipo }: { soloEquipo: boolean }) {
                   className="flex-1 min-w-0 px-3 py-2 rounded-2xl glass-campo text-sm outline-none focus:border-brand-gold/60"
                 />
                 <button
-                  onClick={guardar}
+                  disabled={!workspace.ready || workspace.busy} onClick={guardar}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-ink text-brand-paper text-[12px] font-semibold hover:bg-brand-ink/85 transition-colors"
                 >
                   <Save size={13} /> Guardar
