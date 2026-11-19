@@ -17,7 +17,12 @@ const TOKEN_KEY = 'royaltica_jwt';
 const IMPERSONATION_STASH_KEY = 'royaltica_jwt_superadmin_stash';
 /** Nombre de la organización que se está impersonando (solo para el banner). */
 const IMPERSONATION_ORG_KEY = 'royaltica_impersonating_org';
-const BASE = '/api';
+/**
+ * En producción el rewrite de vercel.json manda /api a api.royaltica.com.
+ * Staging (otro proyecto de Vercel) define VITE_API_BASE con la URL completa
+ * de su backend. Ver docs/staging.md.
+ */
+const BASE = (import.meta.env.VITE_API_BASE as string | undefined) || '/api';
 
 /**
  * Las facturas reales del backend usan UUID; los mocks usan ids como

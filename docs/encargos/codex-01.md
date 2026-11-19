@@ -33,12 +33,14 @@ Hoy guardan en `localStorage`: `frontend/src/pages/corporate/views/cobranza/Conf
 - Al terminar no debe quedar ningún `localStorage` en `frontend/src/pages/corporate/views/cobranza/` salvo preferencias puramente visuales (pestaña abierta, filtros), y cada una con un comentario que lo explique.
 
 ### C3. Tipos de deudor (3 a 5), segmentos y alertas por WhatsApp
+> **Cambio de reparto (18 nov):** el carril A hace la parte de backend (endpoint de segmentos y alertas por WhatsApp al equipo). A Codex le queda la parte de pantalla: catálogo de tipos, el tipo en la ficha del cliente y la vista de segmentos usando el endpoint del carril A.
 - Usa `Customer.category` (ya existe, texto) para el tipo de deudor. Empieza con 3 a 5 tipos definidos en `frontend/.../catalogoDeudores.ts`, no 25.
 - El tipo se elige en la ficha del cliente y se guarda con `PATCH /customers/:id`.
 - Segmentos: calcúlalos en el backend a partir de `riskTier`, `score` y `category` (endpoint de solo lectura), no en el navegador.
 - Alertas por WhatsApp al equipo: reutiliza `WhatsappService.notifyOrgAdmins` y el resumen diario existente (`whatsapp-notifications-digest` en `jobs.service.ts`); no crees otro cron.
 
 ### C4. Reproductor de webhooks de WhatsApp para staging y pruebas de uso rudo
+> **Cambio de reparto (18 nov):** lo hizo el carril A (`api/scripts/replay-whatsapp-webhook.ts`, `whatsapp-webhook.uso-rudo.spec.ts`, pruebas de caída del motor y del estado de cuenta sucio). Codex no lo toma.
 - Script `api/scripts/replay-whatsapp-webhook.ts` que arme payloads con el formato real de Meta y los **firme con `WHATSAPP_APP_SECRET`** (cabecera `x-hub-signature-256`) para enviarlos a `<URL>/webhooks/whatsapp`. Casos: texto, botón con `context.id`, imagen, estados (`sent`, `delivered`, `read`, `failed`), "BAJA", y el mismo `wamid` repetido 5 veces.
 - Pruebas de uso rudo (jest, con mocks, sin red): ráfaga de 200 mensajes con reintentos duplicados (ninguno se registra dos veces), una caída a media operación del motor (no se repite un envío), dos organizaciones con el mismo teléfono (va a la bandeja sin dueño) y un estado de cuenta sucio (fechas día/mes/año, montos con `$` y comas, filas vacías).
 - Tamaño: el de los pilotos (unos cientos de facturas), no 50,000.

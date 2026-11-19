@@ -42,7 +42,7 @@ describe('Flujo principal del piloto (sin red ni base de datos)', () => {
         create: jest.fn(async ({ data }: { data: { amount: Prisma.Decimal } }) => { paid += Number(data.amount); return { id: 'pago-piloto' }; }),
         aggregate: jest.fn(async () => ({ _sum: { amount: new Prisma.Decimal(paid) } })),
       },
-      activityLog: { count: jest.fn().mockResolvedValue(0) },
+      activityLog: { count: jest.fn().mockResolvedValue(0), findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({}) },
       collectionPolicy: { findFirst: jest.fn(async () => policy) },
       collectionSequenceRun: {
         findUnique: jest.fn(async () => run),

@@ -138,6 +138,43 @@ describe('BankStatementCsvConnector', () => {
     expect(abono).toContainEqual(new Date(Date.UTC(2026, 10, 5)));
   });
 
+  it('uso rudo (C4): estado de cuenta sucio con $, comas, espacios, filas vacías y fechas día/mes/año', async () => {
+    const csv =
+      '\uFEFFFecha,Concepto,Referencia,Cargo,Abono\n' +
+      '\n' +
+      '03/11/2026,  SPEI RECIBIDO ACME SA DE CV  ,REF 1,," $ 12,345.67 "\n' +
+      ',,,,\n' +
+      '3/11/2026,COMISION MANEJO CUENTA,,"$58.00",\n' +
+      '30/11/2026,DEPÓSITO EN EFECTIVO SUCURSAL,,,"1,160"\n' +
+      '\n' +
+      '31/02/2026,FECHA IMPOSIBLE,,,100.00\n' +
+      '04/11/2026,MONTO ILEGIBLE,,,"N/D"\n';
+    const connector = new BankStatementCsvConnector(
+      prisma as unknown as PrismaService,
+      Buffer.from(csv),
+      mxMapping,
+    );
+
+    const result = await connector.import(ORG_ID, 'BBVA');
+
+    expect(result).toMatchObject({ imported: 3, debits: 1 });
+    // Las filas vacías no cuentan como movimientos; la fecha imposible y el
+    // monto ilegible se reportan sin detener el resto del archivo.
+    expect(result.errors).toHaveLength(2);
+    expect(result.errors.join(' ')).toContain('31/02/2026');
+    expect(result.errors.join(' ')).toContain('N/D');
+    expect(result.errors.join(' ')).not.toContain('Falta el campo requerido');
+    const [spei, comision, efectivo] = txMock.$executeRaw.mock.calls.slice(1, 4);
+    expect(spei).toContain(12345.67);
+    expect(spei).toContain(false);
+    expect(spei).toContainEqual(new Date(Date.UTC(2026, 10, 3)));
+    expect(comision).toContain(58);
+    expect(comision).toContain(true);
+    expect(comision).toContainEqual(new Date(Date.UTC(2026, 10, 3)));
+    expect(efectivo).toContain(1160);
+    expect(efectivo).toContainEqual(new Date(Date.UTC(2026, 10, 30)));
+  });
+
   it('rechaza una fila con abono y cargo a la vez', async () => {
     const csv = 'Fecha,Concepto,Referencia,Cargo,Abono\n05/11/2026,RARO,1,10.00,10.00\n';
     const connector = new BankStatementCsvConnector(

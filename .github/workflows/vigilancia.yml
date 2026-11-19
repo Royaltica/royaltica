@@ -1,0 +1,39 @@
+name: Vigilancia de caídas
+
+# Revisa cada hora que la API responda con base de datos y Redis en "ok" y que
+# la app cargue. Si falla, GitHub avisa por correo. Es un respaldo mínimo: para
+# avisos cada 5 minutos usar un servicio externo (ver docs/respaldos.md).
+
+on:
+  schedule:
+    - cron: '7 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vigilar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: API (/health)
+        run: |
+          for intento in 1 2 3; do
+            if curl -fsS --max-time 20 https://api.royaltica.com/health | grep -q '"status":"ok"'; then
+              echo "API ok"; exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::La API no respondió con status ok en 3 intentos."
+          exit 1
+      - name: App
+        run: |
+          for intento in 1 2 3; do
+            if curl -fsS --max-time 20 -o /dev/null https://app.royaltica.com; then
+              echo "App ok"; exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::app.royaltica.com no respondió en 3 intentos."
+          exit 1
