@@ -60,6 +60,16 @@ git checkout -b develop && git push -u origin develop
 - Martes y viernes se promueve `develop` a `main` con un PR, siguiendo la lista de despliegue (respaldo, migraciones, backend y fusión).
 - Para que CI también corra en los PR a `develop`, `.github/workflows/ci.yml` ya acepta esa rama.
 
-## 5. Costo
+## 5. Probar WhatsApp sin Meta
+
+El reproductor arma mensajes con el formato real de Meta, los firma con el mismo `WHATSAPP_APP_SECRET` del backend destino y los manda a `/webhooks/whatsapp`. Rechaza los dominios de producción. Desde `api/`:
+
+```
+WHATSAPP_APP_SECRET=<el de staging> npx ts-node scripts/replay-whatsapp-webhook.ts --url https://api-staging.royaltica.com --caso todos --from 5210000000001
+```
+
+Casos: `texto`, `boton`, `imagen`, `baja`, `duplicado` (el mismo mensaje 5 veces), `estados` (con `--wamid` de un mensaje que enviamos) y `todos`. Con `--contexto <wamid>` el mensaje llega como respuesta a ese envío.
+
+## 6. Costo
 
 Staging consume uso de Railway como producción. Para ahorrar, apaga los servicios de staging cuando no se usen (Railway › servicio › Settings › Sleep o eliminar el despliegue) y vuelve a desplegar cuando toque probar.

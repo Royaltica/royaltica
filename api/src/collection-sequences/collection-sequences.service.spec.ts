@@ -74,7 +74,8 @@ describe('CollectionSequencesService', () => {
       findFirst: jest.Mock;
       update: jest.Mock;
     };
-    activityLog: { count: jest.Mock };
+    activityLog: { count: jest.Mock; findFirst: jest.Mock; create: jest.Mock };
+    whatsappMessage: { findFirst: jest.Mock };
     withOrg: jest.Mock;
   };
   let activity: { record: jest.Mock };
@@ -121,7 +122,12 @@ describe('CollectionSequencesService', () => {
         findFirst: jest.fn().mockResolvedValue(step1),
         update: jest.fn().mockImplementation(({ data }) => ({ ...step1, ...data })),
       },
-      activityLog: { count: jest.fn().mockResolvedValue(0) },
+      activityLog: {
+        count: jest.fn().mockResolvedValue(0),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({}),
+      },
+      whatsappMessage: { findFirst: jest.fn().mockResolvedValue(null) },
       withOrg: jest.fn(),
     };
     prisma.withOrg.mockImplementation((_orgId: string, fn: (tx: unknown) => unknown) =>
@@ -164,6 +170,132 @@ describe('CollectionSequencesService', () => {
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  describe('caída a media operación (C4)', () => {
+    const marca = (stepOrder: number, channel = 'EMAIL') => ({
+      action: 'COLLECTION_SEQUENCE_STEP_SENDING',
+      createdAt: new Date('2026-08-01T11:00:00Z'),
+      metadata: { invoiceId: 'inv-1', stepOrder, channel },
+    });
+
+    it('marca el envío antes de mandar y la cierra con SENT', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      await service.advanceSequence('inv-1');
+      expect(prisma.activityLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: 'COLLECTION_SEQUENCE_STEP_SENDING',
+            metadata: expect.objectContaining({ stepOrder: 1, channel: 'EMAIL' }),
+          }),
+        }),
+      );
+      const marcaAntes = prisma.activityLog.create.mock.invocationCallOrder[0];
+      const envio = email.sendCollectionSequenceStep.mock.invocationCallOrder[0];
+      expect(marcaAntes).toBeLessThan(envio);
+    });
+
+    it('si no puede guardar la marca, no manda', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      prisma.activityLog.create.mockRejectedValue(new Error('db down'));
+      await expect(service.advanceSequence('inv-1')).rejects.toThrow('db down');
+      expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+    });
+
+    it('la corrida siguiente no repite un envío interrumpido; avanza y pide confirmar a una persona', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      prisma.activityLog.findFirst.mockResolvedValue(marca(1));
+
+      const result = await service.advanceSequence('inv-1');
+
+      expect(result).toMatchObject({ outcome: 'skipped', reason: 'interrupted-send', stepOrder: 1 });
+      expect(email.sendCollectionSequenceStep).not.toHaveBeenCalled();
+      expect(conversations.sendCollectionStep).not.toHaveBeenCalled();
+      expect(prisma.collectionSequenceRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ currentStepOrder: 1 }) }),
+      );
+      expect(activity.record).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'COLLECTION_SEQUENCE_STEP_UNCERTAIN' }),
+      );
+      expect(notifications.notifyOrgAdmins).toHaveBeenCalledWith(
+        'org-1',
+        expect.objectContaining({ type: 'COLLECTION_SEQUENCE_SEND_UNCERTAIN' }),
+      );
+    });
+
+    it('si el hilo de WhatsApp confirma el mensaje, lo da por enviado sin reenviar ni avisar', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      prisma.collectionPolicy.findFirst.mockResolvedValue({
+        ...basePolicy,
+        sequenceSteps: [{ ...step1, channel: 'WHATSAPP' }],
+      });
+      prisma.activityLog.findFirst.mockResolvedValue(marca(1, 'WHATSAPP'));
+      prisma.whatsappMessage.findFirst.mockResolvedValue({ createdAt: new Date('2026-08-01T11:00:02Z') });
+
+      const result = await service.advanceSequence('inv-1');
+
+      expect(result).toMatchObject({ outcome: 'sent', reason: 'recovered-after-interruption', stepOrder: 1 });
+      expect(conversations.sendCollectionStep).not.toHaveBeenCalled();
+      expect(notifications.notifyOrgAdmins).not.toHaveBeenCalled();
+      expect(prisma.whatsappMessage.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ invoiceId: 'inv-1', direction: 'OUTBOUND', sent: true }),
+        }),
+      );
+      expect(activity.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'COLLECTION_SEQUENCE_STEP_SENT',
+          metadata: expect.objectContaining({ recoveredAfterInterruption: true }),
+        }),
+      );
+    });
+
+    it('un envío que falló y quedó registrado sí se reintenta', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      prisma.activityLog.findFirst.mockResolvedValue({
+        action: 'COLLECTION_SEQUENCE_STEP_SKIPPED',
+        createdAt: new Date('2026-08-01T11:00:01Z'),
+        metadata: { stepOrder: 1, reason: 'send-error' },
+      });
+
+      const result = await service.advanceSequence('inv-1');
+
+      expect(result.outcome).toBe('sent');
+      expect(email.sendCollectionSequenceStep).toHaveBeenCalledTimes(1);
+    });
+
+    it('si el proveedor lanza un error, cierra la marca como fallo y no avanza', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      email.sendCollectionSequenceStep.mockRejectedValue(new Error('timeout'));
+
+      const result = await service.advanceSequence('inv-1');
+
+      expect(result).toMatchObject({ outcome: 'skipped', reason: 'send-failed' });
+      expect(activity.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'COLLECTION_SEQUENCE_STEP_SKIPPED',
+          metadata: expect.objectContaining({ reason: 'send-error' }),
+        }),
+      );
+      expect(prisma.collectionSequenceRun.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ currentStepOrder: 1 }) }),
+      );
+    });
+
+    it('la búsqueda de la marca se limita a la corrida y al paso', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-01T12:00:00Z'));
+      await service.advanceSequence('inv-1');
+      expect(prisma.activityLog.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            entityType: 'CollectionSequenceRun',
+            entityId: 'run-1',
+            metadata: { path: ['stepOrder'], equals: 1 },
+          }),
+          orderBy: { createdAt: 'desc' },
+        }),
+      );
+    });
   });
 
   it('avanza la secuencia: crea la ejecución, envía el paso 1 por email y actualiza currentStepOrder', async () => {

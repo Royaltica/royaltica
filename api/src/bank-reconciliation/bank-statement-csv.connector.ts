@@ -90,6 +90,9 @@ export class BankStatementCsvConnector {
 
     for (let i = 0; i < rows.length; i += 1) {
       const rowNumber = i + 2; // +1 header, +1 filas humanas empiezan en 1
+      // Renglones sin ningún valor (separadores que meten los bancos, ",,,,"):
+      // no son movimientos ni errores.
+      if (Object.values(rows[i]).every((v) => !String(v ?? '').trim())) continue;
       const mapped = applyMapping(this.mapping, rows[i]);
       const rowErrors = validateMappedRow('BANK_STATEMENT', mapped);
       if (rowErrors.length > 0) {
