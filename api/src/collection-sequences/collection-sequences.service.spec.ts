@@ -80,7 +80,7 @@ describe('CollectionSequencesService', () => {
   };
   let activity: { record: jest.Mock };
   let email: { sendCollectionSequenceStep: jest.Mock };
-  let whatsapp: { sendMessage: jest.Mock };
+  let whatsapp: { sendMessage: jest.Mock; notifyOrgAdmins: jest.Mock };
   let notifications: { notifyOrgAdmins: jest.Mock };
   let aiDecision: { decideNextAction: jest.Mock };
   let conversations: { sendCollectionStep: jest.Mock };
@@ -138,7 +138,10 @@ describe('CollectionSequencesService', () => {
     email = {
       sendCollectionSequenceStep: jest.fn().mockResolvedValue({ sent: true }),
     };
-    whatsapp = { sendMessage: jest.fn().mockResolvedValue({ sent: true }) };
+    whatsapp = {
+      sendMessage: jest.fn().mockResolvedValue({ sent: true }),
+      notifyOrgAdmins: jest.fn().mockResolvedValue({ recipients: 1, sent: 1 }),
+    };
     notifications = { notifyOrgAdmins: jest.fn().mockResolvedValue(1) };
     // Por defecto no se llama (aiDecisionEnabled=false en basePolicy); las
     // pruebas que activan el flag configuran su propio mockResolvedValue.
@@ -221,6 +224,7 @@ describe('CollectionSequencesService', () => {
         'org-1',
         expect.objectContaining({ type: 'COLLECTION_SEQUENCE_SEND_UNCERTAIN' }),
       );
+      expect(whatsapp.notifyOrgAdmins).toHaveBeenCalledWith('org-1', expect.stringContaining('Confirma si salió'));
     });
 
     it('si el hilo de WhatsApp confirma el mensaje, lo da por enviado sin reenviar ni avisar', async () => {

@@ -1391,11 +1391,17 @@ export class CollectionSequencesService {
       interruptedAt: interrupted.createdAt.toISOString(),
       checkedAt: now.toISOString(),
     });
+    const title = 'Confirma si salió un mensaje de cobranza';
+    const body = `Se interrumpió el envío del paso ${step.stepOrder} de la factura ${this.folioOf(invoice)} (${customerName}) y no se pudo confirmar si llegó. No se reenvió para no duplicarlo; revisa el historial del cliente y, si hace falta, contáctalo a mano.`;
     await this.notifications.notifyOrgAdmins(invoice.organizationId, {
       type: 'COLLECTION_SEQUENCE_SEND_UNCERTAIN',
-      title: 'Confirma si salió un mensaje de cobranza',
-      body: `Se interrumpió el envío del paso ${step.stepOrder} de la factura ${this.folioOf(invoice)} (${customerName}) y no se pudo confirmar si llegó. No se reenvió para no duplicarlo; revisa el historial del cliente y, si hace falta, contáctalo a mano.`,
+      title,
+      body,
     });
+    // Crítico: también por WhatsApp a los administradores con opt-in.
+    void this.whatsapp
+      .notifyOrgAdmins(invoice.organizationId, `Royáltica · ${title}: ${body}`)
+      .catch(() => undefined);
     return { outcome: 'skipped', reason: 'interrupted-send', stepOrder: step.stepOrder };
   }
 

@@ -89,6 +89,16 @@ export class ReceivablesController {
     return this.receivables.portfolio(user);
   }
 
+  /**
+   * Segmentos de la cartera calculados en el servidor (puntual, tardío,
+   * olvidadizo, en deterioro, moroso, en disputa, nuevo), con su motivo, más
+   * los totales por tipo de deudor y por nivel de riesgo. Solo lectura.
+   */
+  @Get('segments')
+  segments(@CurrentUser() user: AuthenticatedUser) {
+    return this.receivables.segments(user);
+  }
+
   @Get('export')
   @Header('Content-Type', 'text/csv; charset=utf-8')
   @Header('Content-Disposition', 'attachment; filename="cuentas-por-cobrar.csv"')

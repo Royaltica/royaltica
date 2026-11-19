@@ -461,3 +461,78 @@ describe('JobsService — recordatorio antiguo de un paso (apagado por defecto)'
     expect(receivables.runReminderScan).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('JobsService — alertas por cambio de segmento (C3)', () => {
+  const DAY = 86_400_000;
+  const build = (segmentCustomers: unknown[], withOrgFails = false) => {
+    const tx = {
+      customer: { findMany: jest.fn().mockResolvedValue(segmentCustomers) },
+      activityLog: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const prisma = {
+      organization: { findMany: jest.fn().mockResolvedValue([{ id: 'org-1' }]) },
+      customer: { findMany: jest.fn().mockResolvedValue([{ id: 'c1', name: 'Uno', score: 80, riskTier: 'SANO' }]) },
+      user: { findMany: jest.fn().mockResolvedValue([{ id: 'u1', email: 'admin@example.com' }]) },
+      withOrg: jest.fn((_org: string, fn: (t: unknown) => unknown) =>
+        withOrgFails ? Promise.reject(new Error('db down')) : fn(tx),
+      ),
+    };
+    const notifications = { createMany: jest.fn().mockResolvedValue(undefined) };
+    const email = { sendAlert: jest.fn().mockResolvedValue({ sent: true }) };
+    const activity = makeActivity();
+    const service = new JobsService(
+      prisma as unknown as PrismaService,
+      {} as SettingsService,
+      notifications as unknown as NotificationsService,
+      email as unknown as EmailService,
+      { notifyOrgAdmins: jest.fn() } as unknown as WhatsappService,
+      { record: jest.fn() } as unknown as UsageService,
+      {} as ReceivablesService,
+      {} as DashboardService,
+      {} as ReportsService,
+      {} as CollectionSequencesService,
+      { recomputeOne: jest.fn().mockResolvedValue({ score: 80, previousScore: 80, droppedSignificantly: false }) } as unknown as CustomerScoringService,
+      { recomputeOne: jest.fn().mockResolvedValue({ worsened: false }) } as unknown as CustomerRiskService,
+      {} as OrganizationService,
+      { get: jest.fn().mockReturnValue('true') } as unknown as ConfigService<Env, true>,
+      activity,
+      makeRedis(),
+      {} as PortfolioAnalysisService,
+    );
+    return { service, notifications, activity };
+  };
+
+  const paidInvoices = (lates: number[], lastPaidHoursAgo: number) =>
+    lates.map((late, i) => {
+      const paidDate = new Date(Date.now() - (i === lates.length - 1 ? lastPaidHoursAgo * 3_600_000 : (lates.length - i) * 30 * DAY));
+      return { id: `i${i}`, status: 'PAID', total: 100, amountPaid: 100, paidDate, dueDate: new Date(paidDate.getTime() - late * DAY) };
+    });
+
+  it('avisa a los administradores cuando un cliente entra hoy a "En deterioro"', async () => {
+    const { service, notifications, activity } = build([
+      { id: 'c1', name: 'Uno', category: null, riskTier: 'SANO', score: 80, invoices: paidInvoices([0, 0, 0, 0, 0, 0, 0, 10, 15], 2) },
+    ]);
+    const result = await service.customerScoreRecompute();
+    expect(result.alerted).toBe(1);
+    expect(notifications.createMany).toHaveBeenCalledWith(
+      ['u1'],
+      expect.objectContaining({ type: 'CUSTOMER_SEGMENT_WORSENED', title: 'Uno pasó a En deterioro' }),
+    );
+    expect(activity.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'CUSTOMER_SEGMENT_WORSENED', entityId: 'c1', metadata: { segment: 'deterioro', previous: 'olvidadizo' } }),
+    );
+  });
+
+  it('no avisa si el pago que lo cambió es de días anteriores', async () => {
+    const { service, notifications } = build([
+      { id: 'c1', name: 'Uno', category: null, riskTier: 'SANO', score: 80, invoices: paidInvoices([0, 0, 0, 0, 0, 0, 0, 10, 15], 48) },
+    ]);
+    await expect(service.customerScoreRecompute()).resolves.toMatchObject({ alerted: 0 });
+    expect(notifications.createMany).not.toHaveBeenCalled();
+  });
+
+  it('si falla la consulta de segmentos, el recálculo de score sigue', async () => {
+    const { service } = build([], true);
+    await expect(service.customerScoreRecompute()).resolves.toEqual({ recomputed: 1, alerted: 0 });
+  });
+});
