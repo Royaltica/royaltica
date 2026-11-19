@@ -1011,13 +1011,17 @@ export const api = {
     role?: 'CORPORATE_USER' | 'CORPORATE_ADMIN';
     permissions?: string[];
     operationalProfile?: OperationalProfile;
-  }): Promise<ApiUserRow & { inviteLink?: string | null }> {
+  }): Promise<{ user: ApiUserRow; inviteLink: string | null; emailSent: boolean }> {
     return request('POST', '/users/invite', payload);
   },
 
   /** Activa o desactiva un usuario (revocación inmediata de acceso). */
   async setUserStatus(id: string, isActive: boolean): Promise<ApiUserRow> {
     return request<ApiUserRow>('PATCH', `/users/${id}/status`, { isActive });
+  },
+
+  async deleteUser(id: string): Promise<{ deleted: boolean; id: string }> {
+    return request('DELETE', `/users/${id}`);
   },
 
   /** Edita nombre, rol, áreas y/o perfil operativo de un usuario. */
@@ -1429,6 +1433,8 @@ export const api = {
     externalSyncRestBaseUrl: string | null;
     externalSyncRestAuthHeader: string | null;
     collectionEngineHour: number;
+    collectionSecurity: Partial<CollectionSecuritySettings>;
+    collectionRules: Partial<CollectionRulesSettings>;
   }>): Promise<OrgSettings> {
     return request<OrgSettings>('PATCH', '/organization/settings', patch);
   },
@@ -1910,6 +1916,10 @@ export const api = {
     return request<{ policy: CollectionLevelPlan | null }>('GET', '/collection-sequences/level-plan');
   },
 
+  async updateCollectionPolicy(id: string, patch: { maxContactsPerWeek?: number; blackoutDates?: string[] }): Promise<Pick<CollectionLevelPlan, 'id' | 'maxContactsPerWeek' | 'blackoutDates' | 'timezone'>> {
+    return request('PATCH', `/collection-policies/${id}`, patch);
+  },
+
   async ensureLevelPlan(): Promise<{ created: boolean; policy: CollectionLevelPlan }> {
     return request<{ created: boolean; policy: CollectionLevelPlan }>('POST', '/collection-sequences/level-plan');
   },
@@ -2198,6 +2208,8 @@ export interface SatVerifyResponse {
 
 /** Configuración de la organización (campos que consume el frontend). */
 export interface OrgSettings {
+  collectionSecurity: CollectionSecuritySettings;
+  collectionRules: CollectionRulesSettings;
   multiUserEnabled: boolean;
   authorizers: { name: string; cargo: string; email: string }[];
   requiredSignatures: number;
@@ -2228,6 +2240,19 @@ export interface OrgSettings {
   externalSyncRestAuthHeader?: string | null;
   /** Hora local (6-20) a la que corre el motor de cobranza. */
   collectionEngineHour?: number;
+}
+
+export interface CollectionSecuritySettings {
+  dosPasos: boolean;
+  inactividad: boolean;
+}
+
+export interface CollectionRulesSettings {
+  festivos: boolean;
+  descuentoMax: number;
+  parcialidades: boolean;
+  prorroga: boolean;
+  aprueba: 'admin' | 'supervisor';
 }
 
 /** Lo que el modo sombra habría enviado (GET /collection-sequences/runs/shadow-report). */
@@ -2377,6 +2402,7 @@ export interface ApiUserRow {
   email: string;
   name: string;
   role: string;
+  isActive: boolean;
   status: string;
   permissions: string[];
   operationalProfile?: OperationalProfile | null;
@@ -2776,6 +2802,9 @@ export interface CollectionLevelPlan {
   id: string;
   name: string;
   autoSend: boolean;
+  maxContactsPerWeek: number;
+  blackoutDates: string[];
+  timezone: string;
   /** Modo sombra: calcula y registra lo que enviaría, sin enviar. */
   shadowMode?: boolean;
   /** Guardia de frescura del estado de cuenta, en horas (null = apagada). */

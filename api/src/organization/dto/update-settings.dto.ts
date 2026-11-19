@@ -41,8 +41,52 @@ export class AuthorizerEntryDto {
   email?: string;
 }
 
+export class CollectionSecuritySettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  dosPasos?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  inactividad?: boolean;
+}
+
+export class CollectionRulesSettingsDto {
+  @IsOptional()
+  @IsBoolean()
+  festivos?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(30)
+  descuentoMax?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  parcialidades?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  prorroga?: boolean;
+
+  @IsOptional()
+  @IsIn(['admin', 'supervisor'])
+  aprueba?: 'admin' | 'supervisor';
+}
+
 /** Parche parcial de la configuración de la organización. */
 export class UpdateSettingsDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CollectionSecuritySettingsDto)
+  collectionSecurity?: CollectionSecuritySettingsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CollectionRulesSettingsDto)
+  collectionRules?: CollectionRulesSettingsDto;
+
   @IsOptional()
   @IsBoolean()
   multiUserEnabled?: boolean;
