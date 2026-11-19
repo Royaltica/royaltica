@@ -668,6 +668,7 @@ export function Reglas() {
     if (!politica) return;
     setOcupado(true);
     try {
+      if (r.maxSemana < 1) throw new Error('El máximo de mensajes por semana debe ser al menos 1.');
       const blackoutDates = fechasDePolitica(politica.blackoutDates, r.dias, politica.timezone, referencia);
       const saved = await api.updateCollectionPolicy(politica.id, { maxContactsPerWeek: r.maxSemana, blackoutDates });
       setPolitica(saved);
@@ -711,7 +712,7 @@ export function Reglas() {
           </div>
         </Fila>
         <Fila titulo="Máximo de mensajes por semana" detalle="Tope de contactos de cada secuencia del plan de cobranza.">
-          <Stepper valor={r.maxSemana} min={0} max={100} sufijo="por semana" onChange={(v) => cambiar({ maxSemana: v })} />
+          <Stepper valor={r.maxSemana} min={1} max={100} sufijo="por semana" onChange={(v) => cambiar({ maxSemana: v })} />
         </Fila>
         <button type="button" onClick={() => void guardarPolitica()} className={BTN_PRI + ' mt-4'}><Check size={13} /> Guardar calendario y límite</button>
         </fieldset>

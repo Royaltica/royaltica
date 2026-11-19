@@ -103,6 +103,30 @@ describe('Equipo en configuración', () => {
 });
 
 describe('Reglas persistentes', () => {
+  it('mantiene el máximo semanal en al menos 1 y no permite bajarlo a cero', async () => {
+    vi.mocked(api.getLevelPlan).mockResolvedValue({ policy: { ...policy, maxContactsPerWeek: 1 } });
+    const update = vi.spyOn(api, 'updateCollectionPolicy').mockImplementation(async (_id, patch) => ({ ...policy, ...patch }));
+    render(<Reglas />);
+    await screen.findByRole('button', { name: 'Guardar calendario y límite' });
+    const menos = screen.getAllByRole('button', { name: 'Menos' })[0];
+    expect(menos).toBeDisabled();
+    fireEvent.click(menos);
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar calendario y límite' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(policy.id, expect.objectContaining({ maxContactsPerWeek: 1 })));
+  });
+
+  it('rechaza guardar un cero previo del servidor hasta elegir al menos 1', async () => {
+    vi.mocked(api.getLevelPlan).mockResolvedValue({ policy: { ...policy, maxContactsPerWeek: 0 } });
+    const update = vi.spyOn(api, 'updateCollectionPolicy').mockImplementation(async (_id, patch) => ({ ...policy, ...patch }));
+    render(<Reglas />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Guardar calendario y límite' }));
+    await screen.findByText('El máximo de mensajes por semana debe ser al menos 1.');
+    expect(update).not.toHaveBeenCalled();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Más' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar calendario y límite' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(policy.id, expect.objectContaining({ maxContactsPerWeek: 1 })));
+  });
+
   it('guarda calendario y límite en la política y mantiene la hora únicamente en settings', async () => {
     const update = vi.spyOn(api, 'updateCollectionPolicy').mockImplementation(async (_id, patch) => ({ ...policy, ...patch }));
     const settingsUpdate = vi.spyOn(api, 'updateSettings').mockResolvedValue(settings);

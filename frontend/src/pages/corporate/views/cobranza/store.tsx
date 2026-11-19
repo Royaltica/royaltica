@@ -234,7 +234,7 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
       const numero = ++solicitud;
       api.getUsers().then((us) => {
         if (vigente && numero === solicitud) setAgentesReales(
-          us.filter((u) => u.operationalProfile === 'AGENTE_EJECUTIVO')
+          us.filter((u) => u.role === 'CORPORATE_USER' && u.operationalProfile === 'AGENTE_EJECUTIVO')
             .map((u) => ({ id: u.id, nombre: u.name, activo: u.isActive && u.status === 'ACTIVE' })),
         );
       }).catch(() => { if (vigente && numero === solicitud) setAgentesReales(null); });
