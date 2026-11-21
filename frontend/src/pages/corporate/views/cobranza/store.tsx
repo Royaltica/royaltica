@@ -2,6 +2,8 @@ import React from 'react';
 import {
   CARTERA,
   GESTIONES,
+  CAMPANAS_EJEMPLO,
+  saldoDe,
   HOY,
   CAMPANAS,
   PLANTILLAS,
@@ -28,7 +30,8 @@ import {
   type Segmento,
 } from './mockV1.ts';
 import { construirPlan, PASO_DE_PLANTILLA } from './plan.tsx';
-import { api, type WaPlanActivity, type PortfolioCustomer, type CustomerPayload, type ApiUserRow } from '../../../../services/apiClient.ts';
+import { tipoPilotoDe } from './catalogoDeudores.ts';
+import { api, type WaPlanActivity, type PortfolioCustomer, type CustomerPayload, type Receivable, type ActivityRow, type AgentAccountStatus, type ApiUserRow } from '../../../../services/apiClient.ts';
 import { cuentaDesdeApi } from './carteraReal.ts';
 import { EQUIPO_ACTUALIZADO } from './equipo.ts';
 
@@ -160,9 +163,10 @@ type Store = {
   refrescarWhatsapp: () => Promise<void>;
   /**
    * De dónde sale la cartera: 'real' = clientes de la base de datos;
-   * 'ejemplo' = la base no tiene clientes (o no hubo conexión) y se muestra el prototipo.
+   * 'ejemplo' = la base no tiene clientes y se muestra el recorrido de ejemplo (rotulado);
+   * 'error' = no hubo conexión: no se muestra nada que parezca cartera.
    */
-  fuente: 'cargando' | 'real' | 'ejemplo';
+  fuente: 'cargando' | 'real' | 'ejemplo' | 'error';
   /** Vuelve a leer la cartera real (tras importar un CSV). */
   recargarCartera: () => Promise<void>;
   /** Recordatorios automáticos (true) o con aprobación (false). null = sin conexión. */
@@ -183,6 +187,16 @@ export type TiposDeudorEstado = {
 };
 
 const Ctx = React.createContext<Store | null>(null);
+
+/** Resultado que elige la persona → estatus que guarda el servidor, y de regreso. */
+const A_ESTATUS: Record<string, AgentAccountStatus> = {
+  'Promesa de pago': 'PROMISE_TO_PAY',
+  Contactado: 'CONTACTED',
+  'No contestó': 'NO_ANSWER',
+  Disputa: 'DISPUTE',
+  'Escalado a supervisor': 'ESCALATE_TO_SUPERVISOR',
+};
+const DE_ESTATUS: Record<string, string> = Object.fromEntries(Object.entries(A_ESTATUS).map(([k, v]) => [v, k]));
 
 const A_RESULTADO: Record<string, Resultado> = {
   'Promesa de pago': 'Promesa de pago',
@@ -213,18 +227,35 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   const [facturasNuevas, setFacturasNuevas] = React.useState<Record<string, Factura[]>>({});
   // Cartera real (GET /receivables/portfolio). undefined = cargando; null = sin conexión.
   const [real, setReal] = React.useState<PortfolioCustomer[] | null | undefined>(undefined);
+  // Cobros ya registrados (facturas pagadas): alimentan los reportes reales.
+  const [cobrosReales, setCobrosReales] = React.useState<Receivable[]>([]);
   const recargarCartera = React.useCallback(async () => {
     try {
       setReal(await api.getPortfolio());
     } catch {
       setReal((prev) => prev ?? null);
     }
+    api
+      .getReceivables({ status: 'PAID' })
+      .then(setCobrosReales)
+      .catch(() => undefined);
   }, []);
   React.useEffect(() => {
     void recargarCartera();
   }, [recargarCartera]);
-  const fuente: Store['fuente'] = real === undefined ? 'cargando' : real && real.length > 0 ? 'real' : 'ejemplo';
-  const base = React.useMemo(() => (real && real.length > 0 ? real.map(cuentaDesdeApi) : CARTERA), [real]);
+  // Sin conexión NO se muestra el prototipo (parecería la cartera del
+  // cliente): se queda en 'error' y la vista ofrece reintentar.
+  const fuente: Store['fuente'] =
+    real === undefined ? 'cargando' : real === null ? 'error' : real.length > 0 ? 'real' : 'ejemplo';
+  // Todo lo que no es el recorrido de ejemplo confirmado se trata como real
+  // (cargando o sin conexión nunca enseñan datos ficticios).
+  const esReal = fuente !== 'ejemplo';
+  const base = React.useMemo(
+    // El recorrido de ejemplo solo cuando el servidor confirmó que la base
+    // está vacía; mientras carga o sin conexión no hay cartera que mostrar.
+    () => (real && real.length > 0 ? real.map(cuentaDesdeApi) : real && real.length === 0 ? CARTERA : []),
+    [real],
+  );
 
   const [usuariosEquipo, setUsuariosEquipo] = React.useState<ApiUserRow[] | null>(null);
   React.useEffect(() => {
@@ -302,7 +333,7 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
           res[paso] = resultadoWhatsapp(nivel as NivelWa, !!wa?.testMode);
         }
         // El saldo sale de sumar los pagos aplicados (ERP y/o REP).
-        const pagado = pagos.filter((p) => p.cuentaId === c.id).reduce((a, p) => a + p.monto, 0);
+        const pagado = esReal ? 0 : pagos.filter((p) => p.cuentaId === c.id).reduce((a, p) => a + p.monto, 0);
         return {
           ...c,
           pasosEnviados,
@@ -326,8 +357,86 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
           segmentoManual: manual ? { motivo: manual.motivo } : undefined,
         };
       }),
-    [base, agentes, contactos, segManual, envios, resultadosHoy, pagos, planesIniciados, facturasNuevas, wa],
+    [base, agentes, contactos, segManual, envios, resultadosHoy, pagos, planesIniciados, facturasNuevas, wa, esReal],
   );
+
+  // Gestiones guardadas en el servidor (resultado de cada contacto). Solo
+  // las puede leer un administrador; para los demás queda vacío.
+  const [gestionesServidor, setGestionesServidor] = React.useState<ActivityRow[]>([]);
+  const cargarGestiones = React.useCallback(() => {
+    api
+      .getGestiones()
+      .then(setGestionesServidor)
+      .catch(() => undefined);
+  }, []);
+  React.useEffect(() => {
+    if (esReal) cargarGestiones();
+  }, [esReal, cargarGestiones]);
+  // Lo registrado HOY vuelve a aparecer en la lista del día tras recargar.
+  React.useEffect(() => {
+    if (!esReal || !gestionesServidor.length) return;
+    const hoy: Record<string, string> = {};
+    for (const g of [...gestionesServidor].reverse()) {
+      const dia = new Date(g.createdAt).toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
+      const c = cartera.find((x) => x.dbId === g.entityId);
+      const texto = DE_ESTATUS[String(g.metadata.status)];
+      if (dia === HOY && c && texto) hoy[c.id] = texto;
+    }
+    setResultadosHoy((r) => ({ ...hoy, ...r }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gestionesServidor, esReal]);
+
+  // Gestiones REALES para los reportes: lo que salió y se respondió por
+  // WhatsApp, los cobros registrados y las cuentas vencidas sin ninguna
+  // gestión. Nada de esto es de ejemplo.
+  const gestionesReales = React.useMemo<Gestion[]>(() => {
+    if (!esReal) return [];
+    const out: Gestion[] = [];
+    const lineaDe = (c: CuentaViva | undefined) => c?.datos?.categoria ?? 'Sin categoría';
+    const cuando = (iso: string) => {
+      const d = new Date(iso);
+      return {
+        fecha: d.toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' }),
+        hora: d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Mexico_City' }),
+      };
+    };
+    const contactados = new Set<string>();
+    for (const w of wa?.customers ?? []) {
+      const c = cartera.find((x) => x.dbId === w.customerId) ?? cartera.find((x) => x.cliente === w.name);
+      for (const nivel of Object.values(w.levels) as (NivelWa | undefined)[]) {
+        if (!nivel) continue;
+        contactados.add(w.name);
+        const base = { agente: c?.agente ?? 'Sin asignar', cliente: w.name, linea: lineaDe(c), monto: c ? saldoDe(c) : 0 };
+        out.push({ ...cuando(nivel.sentAt), ...base, resultado: 'Enviado' });
+        if (nivel.reply) out.push({ ...cuando(nivel.reply.at), ...base, resultado: 'Respondió' });
+      }
+    }
+    for (const r of cobrosReales) {
+      if (!r.paidDate) continue;
+      const c = cartera.find((x) => x.dbId === r.customerId);
+      out.push({
+        fecha: r.paidDate.slice(0, 10),
+        hora: '00:00',
+        agente: c?.agente ?? 'Sin asignar',
+        cliente: r.customer?.name ?? c?.cliente ?? '—',
+        linea: lineaDe(c),
+        resultado: 'Pagó',
+        monto: Number(r.total),
+      });
+    }
+    for (const g of gestionesServidor) {
+      const c = cartera.find((x) => x.dbId === g.entityId);
+      const texto = DE_ESTATUS[String(g.metadata.status)];
+      if (!c || !texto) continue;
+      contactados.add(c.cliente);
+      out.push({ ...cuando(g.createdAt), agente: g.user?.name ?? c.agente, cliente: c.cliente, linea: lineaDe(c), resultado: A_RESULTADO[texto] ?? 'Sin respuesta', monto: saldoDe(c) });
+    }
+    for (const c of cartera) {
+      if (c.saldada || c.dias <= 0 || contactados.has(c.cliente) || bitacora.some((b) => b.cliente === c.cliente)) continue;
+      out.push({ fecha: HOY, hora: '00:00', agente: c.agente, cliente: c.cliente, linea: lineaDe(c), resultado: 'No gestionada', monto: saldoDe(c) });
+    }
+    return out;
+  }, [esReal, wa, cartera, cobrosReales, bitacora, gestionesServidor]);
 
   const anotar = (c: CuentaViva, r: Resultado, monto?: number) =>
     setBitacora((b) => [...b, { ...gestion(HOY, HORA_ACTUAL, c.cliente, r, monto, c), agente: c.agente }]);
@@ -335,6 +444,9 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
   // Lanzar una campaña especial: el mensaje va solo a los clientes elegidos
   // que se pueden contactar. No toca su plan: el plan sigue su curso aparte.
   const lanzar = (camp: Campana): Campana => {
+    // Con cartera real las campañas todavía no envían (quedan fuera del
+    // piloto): no se simula ningún envío ni respuesta.
+    if (esReal) return camp;
     const nuevosToques: Record<string, Toque> = {};
     for (const id of camp.config.clientes) {
       const c = cartera.find((x) => x.id === id);
@@ -350,11 +462,25 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
     return { ...camp, enviados: camp.enviados + Object.keys(nuevosToques).length };
   };
 
+  // Lo guardado antes con el catálogo de 25 se lleva a los tipos del piloto.
+  const tiposPiloto = React.useMemo<TiposDeudorEstado | null>(() => {
+    if (!tiposDeudor) return null;
+    const asignaciones: Record<string, string> = {};
+    for (const [cuenta, tipo] of Object.entries(tiposDeudor.asignaciones)) {
+      const p = tipoPilotoDe(tipo);
+      if (p) asignaciones[cuenta] = p;
+    }
+    const activos = [...new Set(tiposDeudor.activos.map(tipoPilotoDe).filter((x): x is string => !!x))];
+    return { ...tiposDeudor, activos, asignaciones };
+  }, [tiposDeudor]);
+
   const value: Store = {
-    tiposDeudor,
+    tiposDeudor: tiposPiloto,
     guardarTiposDeudor: setTiposDeudor,
     cartera,
-    pagos,
+    // Pagos, gestiones, toques y campañas de ejemplo: solo en el recorrido
+    // de ejemplo. Con cartera real cada pantalla lee del backend.
+    pagos: esReal ? [] : pagos,
     noReconocidos,
     erp,
     zipCargado,
@@ -427,11 +553,11 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
         ),
       ),
     descartarNoReconocido: (uuid) => setNoReconocidos((n) => n.filter((x) => x.uuid !== uuid)),
-    campanas,
-    gestiones: [...GESTIONES, ...bitacora],
+    campanas: esReal ? campanas.filter((c) => !CAMPANAS_EJEMPLO.has(c.id)) : campanas,
+    gestiones: esReal ? [...gestionesReales, ...bitacora] : [...GESTIONES, ...bitacora],
     envios,
     resultadosHoy,
-    toques,
+    toques: esReal ? {} : toques,
     tareas,
     cambiosSegmento,
     reasignar: (id, agente) => {
@@ -598,7 +724,18 @@ export function CobranzaProvider({ children }: { children: React.ReactNode }) {
         delete out[id];
         return out;
       });
-      anotar(cartera.find((x) => x.id === id)!, A_RESULTADO[resultado] ?? 'Sin respuesta');
+      const cuenta = cartera.find((x) => x.id === id)!;
+      const estatus = A_ESTATUS[resultado];
+      // Cartera real: se guarda en el servidor y el reporte lo lee de ahí
+      // (sin duplicarlo en la bitácora de la sesión).
+      if (cuenta.dbId && estatus) {
+        void api
+          .updateAgentAccountStatus(cuenta.dbId, estatus)
+          .then(cargarGestiones)
+          .catch(() => anotar(cuenta, A_RESULTADO[resultado] ?? 'Sin respuesta'));
+        return;
+      }
+      anotar(cuenta, A_RESULTADO[resultado] ?? 'Sin respuesta');
     },
     guardarCampana: (c) => {
       // Editar o reanudar una campaña que ya salió no la vuelve a enviar.

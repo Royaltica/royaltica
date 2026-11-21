@@ -1,11 +1,18 @@
 import React from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { AlertTriangle, Check, ChevronDown, Download, FileCheck2, Loader2, Plus, RefreshCw, RotateCcw, Upload } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Download, FileCheck2, Landmark, Loader2, Plus, RefreshCw, RotateCcw, Upload } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { EASE, Reveal, BlockTitle, Figure } from './primitives.tsx';
 import { ERP_CONECTADO, type EstadoPago, type Fuente, type Pago } from './mockV1.ts';
 import { useCobranza, type CuentaViva } from './store.tsx';
-import { api, type Receivable } from '../../../../services/apiClient.ts';
+import {
+  api,
+  type BankImportSummary,
+  type BankReviewQueue,
+  type BankTransactionItem,
+  type ExternalSyncStatus,
+  type Receivable,
+} from '../../../../services/apiClient.ts';
 import { BTN_PRI, BTN_SEC, CONTROL, ETIQUETA, Ventana, useAviso } from './clientes.tsx';
 import { PanelSub, Subpestanas, useConfirmar } from './vidrio.tsx';
 
@@ -35,6 +42,39 @@ const fmt = (n: number) => CURRENCY_FORMATTER.format(n);
 
 /** Franja del encabezado: estado de las fuentes de pago. */
 export function AvisoPagos({ onIr }: { onIr?: () => void }) {
+  const { fuente } = useCobranza();
+  if (fuente === 'cargando' || fuente === 'error') return null;
+  return fuente === 'real' ? <AvisoPagosReal onIr={onIr} /> : <AvisoPagosEjemplo onIr={onIr} />;
+}
+
+/** Cartera real: lo que falta revisar del estado de cuenta del banco. */
+function AvisoPagosReal({ onIr }: { onIr?: () => void }) {
+  const [cola, setCola] = React.useState<BankReviewQueue | null | undefined>(undefined);
+  React.useEffect(() => {
+    api
+      .getBankReviewQueue()
+      .then(setCola)
+      .catch(() => setCola(null));
+  }, []);
+  if (!cola) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-brand-ink/55">
+      <span className="flex items-center gap-1.5">
+        <span className={`w-1.5 h-1.5 rounded-full ${cola.total ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+        {cola.total
+          ? `Pagos: ${cola.total} movimiento${cola.total === 1 ? '' : 's'} del banco por revisar`
+          : 'Pagos: nada pendiente de revisar del banco'}
+      </span>
+      {onIr && (
+        <button onClick={onIr} className="font-semibold text-brand-ink/70 hover:text-brand-ink underline-offset-2 hover:underline">
+          Ver pagos →
+        </button>
+      )}
+    </div>
+  );
+}
+
+function AvisoPagosEjemplo({ onIr }: { onIr?: () => void }) {
   const { erp, pagos, noReconocidos } = useCobranza();
   const pendientes = pagos.filter((p) => p.estado === 'solo_erp' && p.metodo === 'PPD').length;
   const revisar = pagos.filter((p) => p.estado === 'discrepancia' || p.estado === 'solo_rep').length + noReconocidos.length;
@@ -42,7 +82,7 @@ export function AvisoPagos({ onIr }: { onIr?: () => void }) {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-brand-ink/55">
       <span className="flex items-center gap-1.5">
         <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
-        Pagos: {ERP_CONECTADO.nombre} sincronizado {erp.ultima}
+        Ejemplo · Pagos: {ERP_CONECTADO.nombre} sincronizado {erp.ultima}
       </span>
       <span className="text-brand-ink/35">
         {pendientes} REP pendientes{revisar ? ` · ${revisar} por revisar` : ''}
@@ -56,7 +96,20 @@ export function AvisoPagos({ onIr }: { onIr?: () => void }) {
   );
 }
 
-export function PagosPanel({ soloLectura = false, onVerCliente }: { soloLectura?: boolean; onVerCliente?: (cliente: string) => void }) {
+type PropsPagos = { soloLectura?: boolean; onVerCliente?: (cliente: string) => void };
+
+/**
+ * Pagos. Con cartera real todo sale del backend (estado de cuenta del banco,
+ * cobros registrados). Sin clientes cargados se muestra el recorrido de
+ * ejemplo, rotulado como tal.
+ */
+export function PagosPanel(props: PropsPagos) {
+  const { fuente } = useCobranza();
+  if (fuente === 'cargando' || fuente === 'error') return null;
+  return fuente === 'real' ? <PagosReales {...props} /> : <PagosEjemplo {...props} />;
+}
+
+function PagosEjemplo({ soloLectura = false, onVerCliente }: PropsPagos) {
   const {
     pagos: todosLosPagos,
     cartera,
@@ -109,7 +162,7 @@ export function PagosPanel({ soloLectura = false, onVerCliente }: { soloLectura?
       {/* Cifras */}
       <Reveal delay={0.08}>
         <div className="grid grid-cols-2 sm:grid-cols-4 glass rounded-[28px] divide-x divide-white/70">
-          <Kpi label="Cobrado en septiembre" valor={<Figure value={cobrado} format="moneda" />} />
+          <Kpi label="Cobrado en el mes (ejemplo)" valor={<Figure value={cobrado} format="moneda" />} />
           <Kpi label="Confirmados por REP" valor={<Figure value={confirmados} />} />
           <Kpi label="Por revisar" valor={<Figure value={totalRevisar} />} alerta={totalRevisar > 0} />
           <Kpi label="REP pendientes" valor={<Figure value={repPendientes.length} />} />
@@ -399,6 +452,341 @@ export function PagosPanel({ soloLectura = false, onVerCliente }: { soloLectura?
         {parte === 'cobros' && <CobrosRegistrados soloLectura={soloLectura} onVerCliente={onVerCliente} />}
       </PanelSub>
       {nodoConfirmar}
+    </div>
+  );
+}
+
+// ── Pagos con cartera real ────────────────────────────────────────────
+// Fuente de verdad: el estado de cuenta del banco (se sube el CSV, el
+// backend empata cada depósito con su factura) y los cobros que alguien
+// registra a mano. Nada aquí es simulado.
+
+const ESTADO_MOV: Record<BankTransactionItem['matchStatus'], { label: string; chip: string }> = {
+  AUTO_MATCHED: { label: 'Empate sugerido', chip: 'bg-emerald-50 text-emerald-700' },
+  AMBIGUOUS: { label: 'Varias facturas posibles', chip: 'bg-amber-50 text-amber-700' },
+  UNMATCHED: { label: 'Sin factura', chip: 'bg-rose-50 text-rose-700' },
+  MANUALLY_MATCHED: { label: 'Confirmado', chip: 'bg-emerald-50 text-emerald-700' },
+  REJECTED: { label: 'Descartado', chip: 'bg-brand-ink/5 text-brand-ink/50' },
+};
+
+function PagosReales({ soloLectura = false, onVerCliente }: PropsPagos) {
+  const { cartera, recargarCartera } = useCobranza();
+  const { avisar, nodo } = useAviso();
+  const [cola, setCola] = React.useState<BankReviewQueue | null | undefined>(undefined);
+  const [cargas, setCargas] = React.useState<BankImportSummary[] | null | undefined>(undefined);
+  const [cobros, setCobros] = React.useState<Receivable[] | null>(null);
+  const [erp, setErp] = React.useState<ExternalSyncStatus | null>(null);
+  const [ocupado, setOcupado] = React.useState<string | null>(null);
+  const [subiendo, setSubiendo] = React.useState(false);
+  const [resultado, setResultado] = React.useState<string | null>(null);
+  const [banco, setBanco] = React.useState('');
+  const [eleccion, setEleccion] = React.useState<Record<string, string>>({});
+  const archivoRef = React.useRef<HTMLInputElement>(null);
+
+  const cargar = React.useCallback(async () => {
+    const [q, i, c] = await Promise.allSettled([api.getBankReviewQueue(), api.listBankImports(), api.getReceivables({ status: 'PAID' })]);
+    setCola(q.status === 'fulfilled' ? q.value : null);
+    setCargas(i.status === 'fulfilled' ? i.value : null);
+    setCobros(c.status === 'fulfilled' ? c.value : null);
+  }, []);
+  React.useEffect(() => {
+    void cargar();
+    api
+      .getExternalSyncStatus()
+      .then(setErp)
+      .catch(() => setErp(null));
+  }, [cargar]);
+
+  // Facturas abiertas de la cartera, para empatar a mano un depósito.
+  const abiertas = React.useMemo(
+    () =>
+      cartera
+        .flatMap((c) =>
+          c.facturas
+            .filter((f) => f.dbId && f.monto - (f.pagado ?? 0) > 1)
+            .map((f) => ({ id: f.dbId as string, cliente: c.cliente, folio: f.folio, monto: f.monto })),
+        )
+        .sort((a, b) => a.cliente.localeCompare(b.cliente, 'es')),
+    [cartera],
+  );
+  const facturaDe = (id: string | null) => (id ? abiertas.find((f) => f.id === id) ?? null : null);
+
+  const mesActual = new Date().toISOString().slice(0, 7);
+  const delMes = (cobros ?? []).filter((r) => (r.paidDate ?? '').slice(0, 7) === mesActual);
+  const cobradoMes = delMes.reduce((a, r) => a + Number(r.total), 0);
+  const nombreMes = new Date().toLocaleDateString('es-MX', { month: 'long' });
+  const porRevisar = cola?.total ?? 0;
+  const [parte, setParte] = React.useState<'revisar' | 'aplicados' | 'rep' | 'cobros' | 'fuentes'>('revisar');
+
+  const confirmar = async (tx: BankTransactionItem) => {
+    const invoiceId = eleccion[tx.id] || tx.matchedInvoiceId || undefined;
+    if (!invoiceId) return;
+    setOcupado(tx.id);
+    try {
+      await api.confirmBankMatch(tx.id, invoiceId);
+      const f = facturaDe(invoiceId);
+      avisar(f ? `Pago aplicado a ${f.cliente} · ${f.folio}.` : 'Pago aplicado a la factura.');
+      await Promise.all([cargar(), recargarCartera()]);
+    } catch (e) {
+      avisar(e instanceof Error ? e.message : 'No se pudo aplicar el pago.');
+    } finally {
+      setOcupado(null);
+    }
+  };
+  const descartar = async (tx: BankTransactionItem) => {
+    setOcupado(tx.id);
+    try {
+      await api.rejectBankMatch(tx.id);
+      avisar('Movimiento descartado: no se aplicó a ninguna factura.');
+      await cargar();
+    } catch (e) {
+      avisar(e instanceof Error ? e.message : 'No se pudo descartar.');
+    } finally {
+      setOcupado(null);
+    }
+  };
+  const subir = async (archivo: File) => {
+    setSubiendo(true);
+    setResultado(null);
+    try {
+      const r = await api.importBankStatement(archivo, banco.trim() || undefined);
+      const partes = [
+        `${r.imported} movimiento${r.imported === 1 ? '' : 's'} leído${r.imported === 1 ? '' : 's'}`,
+        `${r.autoMatched} con factura sugerida`,
+        `${r.ambiguous} con varias facturas posibles`,
+      ];
+      if (r.skipped) partes.push(`${r.skipped} repetido${r.skipped === 1 ? '' : 's'} (ya estaban)`);
+      setResultado(`${partes.join(' · ')}.${r.errors.length ? ` Con ${r.errors.length} renglón(es) que no se pudieron leer: ${r.errors.slice(0, 3).join(' | ')}` : ''}`);
+      await cargar();
+      if (r.imported) setParte('revisar');
+    } catch (e) {
+      setResultado(e instanceof Error ? e.message : 'No se pudo leer el archivo.');
+    } finally {
+      setSubiendo(false);
+    }
+  };
+
+  const fechaMov = (iso: string) => new Date(iso).toLocaleDateString('es-MX', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+  return (
+    <div className="space-y-5">
+      <Reveal delay={0.08}>
+        <div className="grid grid-cols-2 sm:grid-cols-4 glass rounded-[28px] divide-x divide-white/70">
+          <Kpi label={`Cobrado en ${nombreMes}`} valor={<Figure value={cobradoMes} format="moneda" />} />
+          <Kpi label="Cobros del mes" valor={<Figure value={delMes.length} />} />
+          <Kpi label="Por revisar del banco" valor={<Figure value={porRevisar} />} alerta={porRevisar > 0} />
+          <Kpi label="Estados de cuenta cargados" valor={<Figure value={cargas?.length ?? 0} />} />
+        </div>
+      </Reveal>
+
+      <Subpestanas
+        grupo="pagos"
+        etiqueta="Partes de Pagos"
+        valor={parte}
+        onChange={setParte}
+        opciones={[
+          { id: 'revisar', nombre: 'Por revisar', n: porRevisar, alerta: true },
+          { id: 'aplicados', nombre: 'Pagos aplicados', n: cargas?.length ?? 0 },
+          { id: 'rep', nombre: 'REP pendientes' },
+          { id: 'cobros', nombre: 'Cobros registrados' },
+          { id: 'fuentes', nombre: 'Fuentes de pago' },
+        ]}
+      />
+      <PanelSub id={parte}>
+        {parte === 'revisar' && (
+          <div className="glass rounded-[28px] p-6">
+            <BlockTitle icon={<AlertTriangle size={12} />}>Por revisar</BlockTitle>
+            <p className="text-[12px] text-brand-ink/50 mt-1.5 leading-relaxed">
+              Depósitos del estado de cuenta que todavía no se aplican. Un pago solo detiene la cobranza cuando alguien lo confirma aquí.
+            </p>
+            {cola === undefined ? (
+              <p className="text-[13px] text-brand-ink/45 mt-4 flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin" /> Cargando movimientos…
+              </p>
+            ) : cola === null ? (
+              <p className="text-[13px] text-rose-600 mt-4">No se pudo leer la conciliación. Revisa la conexión y vuelve a entrar.</p>
+            ) : cola.items.length === 0 ? (
+              <p className="text-sm text-brand-ink/45 mt-4">
+                Nada pendiente.{' '}
+                {cargas?.length ? 'Todo lo del último estado de cuenta ya se revisó.' : 'Sube el estado de cuenta del banco en "Fuentes de pago" para detectar los pagos.'}
+              </p>
+            ) : (
+              <ul className="mt-4 space-y-3">
+                {cola.items.map((tx) => {
+                  const sugerida = facturaDe(tx.matchedInvoiceId);
+                  const elegida = eleccion[tx.id] ?? tx.matchedInvoiceId ?? '';
+                  const est = ESTADO_MOV[tx.matchStatus];
+                  return (
+                    <li key={tx.id} className="rounded-[20px] bg-white/45 ring-1 ring-brand-ink/[0.07] px-4 py-3.5">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span className="text-sm font-semibold text-brand-ink tabular-nums">{fmt(Number(tx.amount))}</span>
+                        <span className="text-[12px] text-brand-ink/50">{fechaMov(tx.transactionDate)}</span>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${est.chip}`}>{est.label}</span>
+                        {tx.matchConfidence !== null && tx.matchStatus === 'AUTO_MATCHED' && (
+                          <span className="text-[11px] text-brand-ink/40">coincidencia {Math.round(Number(tx.matchConfidence) * 100)}%</span>
+                        )}
+                      </div>
+                      <p className="text-[12px] text-brand-ink/60 mt-1 break-words">
+                        {tx.description}
+                        {tx.referenceNumber ? ` · ref. ${tx.referenceNumber}` : ''}
+                      </p>
+                      {sugerida && (
+                        <p className="text-[12px] text-brand-ink/70 mt-1.5">
+                          Sugerencia:{' '}
+                          <button type="button" onClick={() => onVerCliente?.(sugerida.cliente)} className="font-semibold hover:underline">
+                            {sugerida.cliente}
+                          </button>{' '}
+                          · {sugerida.folio} · {fmt(sugerida.monto)}
+                        </p>
+                      )}
+                      {!soloLectura && (
+                        <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                          <select
+                            value={elegida}
+                            onChange={(e) => setEleccion((m) => ({ ...m, [tx.id]: e.target.value }))}
+                            className={CONTROL + ' !w-auto !py-1.5 !text-[12px] max-w-full'}
+                            aria-label="Factura a la que corresponde"
+                          >
+                            <option value="">Elige la factura…</option>
+                            {tx.matchedInvoiceId && !sugerida && <option value={tx.matchedInvoiceId}>Factura sugerida</option>}
+                            {abiertas.map((f) => (
+                              <option key={f.id} value={f.id}>
+                                {f.cliente} · {f.folio} · {fmt(f.monto)}
+                              </option>
+                            ))}
+                          </select>
+                          <button type="button" disabled={!elegida || ocupado === tx.id} onClick={() => void confirmar(tx)} className={BTN_PRI}>
+                            {ocupado === tx.id ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Aplicar pago
+                          </button>
+                          <button type="button" disabled={ocupado === tx.id} onClick={() => void descartar(tx)} className={BTN_SEC}>
+                            No es un pago de cliente
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
+        {parte === 'aplicados' && (
+          <div className="glass rounded-[28px] overflow-hidden">
+            <div className="px-6 py-4 border-b border-white/70">
+              <BlockTitle>Estados de cuenta procesados</BlockTitle>
+              <div className="text-[12px] text-brand-ink/50 mt-1">Cada carga del banco, con cuántos depósitos ya quedaron aplicados a una factura.</div>
+            </div>
+            {cargas === undefined ? (
+              <p className="px-6 py-8 text-[13px] text-brand-ink/45 flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin" /> Cargando…
+              </p>
+            ) : cargas === null ? (
+              <p className="px-6 py-8 text-[13px] text-rose-600">No se pudieron leer las cargas.</p>
+            ) : !cargas.length ? (
+              <p className="px-6 py-8 text-center text-[13px] text-brand-ink/45">Todavía no se ha subido ningún estado de cuenta.</p>
+            ) : (
+              <ul className="divide-y divide-white/70">
+                {cargas.map((c) => (
+                  <li key={c.id} className="flex flex-wrap items-center gap-x-5 gap-y-1 px-6 py-3">
+                    <div className="min-w-[160px] flex-1">
+                      <div className="text-sm font-semibold text-brand-ink">{c.bankName || 'Banco'}</div>
+                      <div className="text-[11px] text-brand-ink/45">
+                        Subido el {fechaMov(c.importedAt)}
+                        {c.periodFrom && c.periodTo ? ` · movimientos del ${fechaMov(c.periodFrom)} al ${fechaMov(c.periodTo)}` : ''}
+                      </div>
+                    </div>
+                    <div className="text-[12px] text-brand-ink/60 tabular-nums">{c.totalTransactions} movimientos</div>
+                    <div className="text-[12px] text-emerald-700 font-semibold tabular-nums">{c.matchedCount} aplicados</div>
+                    <div className={`text-[12px] tabular-nums ${c.unmatchedCount ? 'text-amber-700 font-semibold' : 'text-brand-ink/40'}`}>{c.unmatchedCount} sin aplicar</div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+        {parte === 'rep' && (
+          <div className="glass rounded-[28px] p-6">
+            <BlockTitle icon={<FileCheck2 size={12} />}>REP pendientes</BlockTitle>
+            <p className="text-sm text-brand-ink/60 mt-3 leading-relaxed max-w-2xl">
+              La lectura de complementos de pago (REP) todavía no está conectada, así que aquí no hay nada que mostrar. Hoy los pagos se detectan con el
+              estado de cuenta del banco y con los cobros que registras a mano.
+            </p>
+          </div>
+        )}
+        {parte === 'cobros' && <CobrosRegistrados soloLectura={soloLectura} onVerCliente={onVerCliente} />}
+        {parte === 'fuentes' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="glass rounded-[28px] p-6 h-full flex flex-col">
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="flex items-center gap-2 text-lg font-serif text-brand-ink">
+                  <Landmark size={15} className="text-emerald-600" /> Estado de cuenta del banco
+                </h4>
+                <span className="audit-badge bg-emerald-50 text-emerald-700">Conectado</span>
+              </div>
+              <p className="text-[13px] text-brand-ink/65 leading-relaxed mt-2">
+                Sube el CSV de movimientos que descargas de tu banca en línea. Cada depósito se compara con tus facturas abiertas; lo que coincide queda
+                como sugerencia y tú lo confirmas en "Por revisar".
+              </p>
+              <div className="text-[11px] text-brand-ink/45 mt-3">
+                {cargas?.length ? `Última carga: ${fechaMov(cargas[0].importedAt)} · ${cargas[0].totalTransactions} movimientos` : 'Aún no hay cargas.'}
+              </div>
+              {!soloLectura && (
+                <div className="flex flex-wrap items-center gap-2 mt-4">
+                  <input
+                    value={banco}
+                    onChange={(e) => setBanco(e.target.value)}
+                    placeholder="Banco (opcional)"
+                    className={CONTROL + ' !w-40 !py-1.5 !text-[12px]'}
+                    aria-label="Nombre del banco"
+                  />
+                  <BotonAccion onClick={() => archivoRef.current?.click()} cargando={subiendo} icon={<Upload size={13} />}>
+                    Subir CSV del banco
+                  </BotonAccion>
+                  <input
+                    ref={archivoRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void subir(f);
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
+              )}
+              {resultado && <p className="text-[12px] text-brand-ink/70 mt-3 leading-relaxed">{resultado}</p>}
+            </div>
+            <div className="glass rounded-[28px] p-6 h-full flex flex-col">
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="flex items-center gap-2 text-lg font-serif text-brand-ink">
+                  <RefreshCw size={14} className="text-sky-600" /> ERP
+                </h4>
+                <span className={`audit-badge ${erp?.restConfigured ? 'bg-emerald-50 text-emerald-700' : 'bg-brand-ink/5 text-brand-ink/50'}`}>
+                  {erp?.restConfigured ? `Conectado${erp.externalSyncProvider ? ` · ${erp.externalSyncProvider}` : ''}` : 'Sin conexión'}
+                </span>
+              </div>
+              <p className="text-[13px] text-brand-ink/65 leading-relaxed mt-2">
+                {erp?.restConfigured
+                  ? erp.message
+                  : 'Tu ERP no está conectado. Mientras tanto la cartera se actualiza subiendo tu reporte en la sección Datos, y los pagos con el estado de cuenta del banco.'}
+              </p>
+            </div>
+            <div className="glass rounded-[28px] p-6 h-full flex flex-col">
+              <div className="flex items-center justify-between gap-3">
+                <h4 className="flex items-center gap-2 text-lg font-serif text-brand-ink">
+                  <FileCheck2 size={14} className="text-violet-600" /> REP · complemento de pago
+                </h4>
+                <span className="audit-badge bg-brand-ink/5 text-brand-ink/50">Próximamente</span>
+              </div>
+              <p className="text-[13px] text-brand-ink/65 leading-relaxed mt-2">
+                El REP confirma fiscalmente un pago que ya entró. Su lectura automática todavía no está disponible.
+              </p>
+            </div>
+          </div>
+        )}
+      </PanelSub>
+      {nodo}
     </div>
   );
 }

@@ -12,76 +12,20 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../email/email.service';
 import { WhatsappConversationService } from './whatsapp-conversation.service';
 import { PAYMENT_CLAIM_BUTTONS } from './collection-templates';
+import { classifyIntent as classifyInbound, type CustomerIntent as InboundIntent } from './inbound-intent';
 import type { Env } from '../config/env.validation';
 
 /** Clasificación determinista de la respuesta de un cliente. */
-export type CustomerIntent = 'PAYMENT_CLAIMED' | 'CUSTOMER_REPLY';
-
 /**
- * Palabras (sin acentos, minúsculas) que indican que el cliente afirma haber
- * pagado. Coincidencia por inclusión: explicable y auditable, sin caja negra.
+ * Intenciones de una respuesta del cliente. Un solo detector para WhatsApp y
+ * correo (inbound-intent.ts): baja, número equivocado, disputa, afirmación de
+ * pago o respuesta normal.
  */
-const PAYMENT_HINTS = [
-  'ya pague',
-  'ya lo pague',
-  'pague',
-  'pagado',
-  'pagamos',
-  'pago realizado',
-  'realice el pago',
-  'hice el pago',
-  'hice la transferencia',
-  'transferi',
-  'transferencia',
-  'deposit', // deposité / depósito / depositado
-  'liquid', // liquidé / liquidado
-  'abone', // aboné
-  'saldado',
-  'cubierto',
-  'ya quedo',
-  'ya esta pagada',
-];
-
-/** Negaciones que invalidan una aparente afirmación de pago. */
-const NEGATIONS = ['no ', 'aun no', 'todavia no', 'no he', 'no puedo', 'cuando'];
-
-/**
- * Pedidos de baja. Se exige que el mensaje SEA el pedido (o empiece con él y
- * sea corto) para no confundir "dar de baja la factura" o "bajamos el precio"
- * con una baja de contacto.
- */
-const OPT_OUT_PHRASES = [
-  'baja',
-  'stop',
-  'alto',
-  'unsubscribe',
-  'cancelar',
-  'darme de baja',
-  'dame de baja',
-  'denme de baja',
-  'no me escriban',
-  'no me escriba',
-  'no me escriban mas',
-  'no quiero mensajes',
-  'no quiero recibir mensajes',
-  'no quiero recibir mas mensajes',
-];
-
-/** Normaliza para comparar frases: minúsculas, sin acentos ni puntuación. */
-const normalizePhrase = (text: string) =>
-  text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+export type CustomerIntent = InboundIntent;
 
 /** true si el mensaje es un pedido de baja (BAJA, STOP, "no me escriban"…). */
 export function isOptOutRequest(text: string): boolean {
-  const n = normalizePhrase(text);
-  if (!n) return false;
-  return OPT_OUT_PHRASES.some((p) => n === p || (n.startsWith(`${p} `) && n.length <= p.length + 25));
+  return classifyInbound(text).intent === 'OPT_OUT';
 }
 
 /** Orden de los estados de entrega de Meta (no se retrocede: leído > entregado). */
@@ -287,17 +231,9 @@ export class WhatsappWebhookService {
     return out;
   }
 
-  /** Regla determinista: ¿el mensaje afirma un pago? */
+  /** Regla determinista (inbound-intent.ts): baja, número equivocado, disputa, pago o respuesta. */
   classifyIntent(text: string): { intent: CustomerIntent; matched: string | null } {
-    const n = text
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[̀-ͯ]/g, '');
-    const matched = PAYMENT_HINTS.find((h) => n.includes(h)) ?? null;
-    if (matched && !NEGATIONS.some((neg) => n.includes(neg))) {
-      return { intent: 'PAYMENT_CLAIMED', matched };
-    }
-    return { intent: 'CUSTOMER_REPLY', matched: null };
+    return classifyInbound(text);
   }
 
   private async processMessage(msg: IncomingMessage): Promise<void> {
@@ -378,8 +314,8 @@ export class WhatsappWebhookService {
     const { intent, matched } =
       msg.kind === 'BUTTON'
         ? PAYMENT_CLAIM_BUTTONS.has(msg.text)
-          ? { intent: 'PAYMENT_CLAIMED' as const, matched: msg.text }
-          : { intent: 'CUSTOMER_REPLY' as const, matched: null }
+          ? { intent: 'PAYMENT_CLAIMED' as CustomerIntent, matched: msg.text }
+          : { intent: 'CUSTOMER_REPLY' as CustomerIntent, matched: null }
         : this.classifyIntent(msg.text);
     const folio = invoice?.folio ?? invoice?.cfdiUuid.slice(0, 8) ?? 's/folio';
     const total = invoice
@@ -406,6 +342,52 @@ export class WhatsappWebhookService {
       });
     }
 
+    // Número equivocado: ya no se le escribe a ese contacto (todos los canales)
+    // hasta que alguien capture uno nuevo y lo reactive.
+    if (intent === 'WRONG_CONTACT') {
+      await this.prisma.customer.update({
+        where: { id: customer.id },
+        data: {
+          doNotContact: true,
+          doNotContactAt: new Date(),
+          doNotContactReason: `Respondieron que no es el contacto correcto: "${msg.text.slice(0, 120)}". Captura un contacto nuevo.`,
+        },
+      });
+      const title = 'El contacto de un cliente no es el correcto';
+      const body = `En el número de ${customer.name} respondieron que no es la persona correcta ("${msg.text.slice(0, 120)}"). Ya no se le escribirá ahí; captura un contacto nuevo en su ficha y reactívalo.`;
+      await this.notifications.notifyOrgAdmins(customer.organizationId, {
+        type: 'CUSTOMER_WRONG_CONTACT',
+        title,
+        body,
+        metadata: { customerId: customer.id, invoiceId: invoice?.id ?? null },
+      });
+      void this.whatsapp.notifyOrgAdmins(customer.organizationId, `Royáltica · ${title}: ${body}`);
+      return;
+    }
+
+    // Disputa ("no reconozco", "no recibimos la mercancía"): se pausa la
+    // cobranza automática de esa factura (o de todas las del cliente si no
+    // respondió a un mensaje concreto) hasta que una persona la revise.
+    let pausedRuns = 0;
+    if (intent === 'DISPUTE') {
+      const invoiceIds =
+        resolved.how === 'context' && invoice
+          ? [invoice.id]
+          : (
+              await this.prisma.invoice.findMany({
+                where: { customerId: customer.id, direction: 'RECEIVABLE', status: 'PENDING', deletedAt: null },
+                select: { id: true },
+              })
+            ).map((i) => i.id);
+      if (invoiceIds.length) {
+        const res = await this.prisma.collectionSequenceRun.updateMany({
+          where: { invoiceId: { in: invoiceIds }, status: 'ACTIVE' },
+          data: { status: 'PAUSED' },
+        });
+        pausedRuns = res.count;
+      }
+    }
+
     // "Ya pagué": pausa 72 h los envíos automáticos a este cliente (guardia
     // payment-claimed de CollectionSafetyService). Se marca al cliente y no a
     // una factura porque el mensaje no dice con certeza cuál pagó.
@@ -429,28 +411,40 @@ export class WhatsappWebhookService {
     const title =
       intent === 'PAYMENT_CLAIMED'
         ? 'Cliente reporta un pago'
-        : 'Respuesta de cliente (cobranza)';
+        : intent === 'DISPUTE'
+          ? 'Cliente en desacuerdo con una factura'
+          : 'Respuesta de cliente (cobranza)';
     const body =
       intent === 'PAYMENT_CLAIMED'
         ? `${customer.name} reporta que ya pagó la factura ${folio}${
             total ? ` ($${total} MXN)` : ''
           }. Verifícalo contra el banco y confírmalo en Royáltica. Mensaje: "${msg.text.slice(0, 200)}"`
-        : `${customer.name} respondió al recordatorio de cobranza: "${msg.text.slice(
-            0,
-            200,
-          )}". Dale seguimiento.`;
+        : intent === 'DISPUTE'
+          ? `${customer.name} no está de acuerdo con ${
+              resolved.how === 'context' ? `la factura ${folio}` : 'sus facturas'
+            }: "${msg.text.slice(0, 200)}". ${
+              pausedRuns
+                ? 'Se pausó la cobranza automática hasta que una persona lo revise y la reanude.'
+                : 'Revísalo antes de que salga el siguiente recordatorio.'
+            }`
+          : `${customer.name} respondió al recordatorio de cobranza: "${msg.text.slice(
+              0,
+              200,
+            )}". Dale seguimiento.`;
 
     await this.notifications.notifyOrgAdmins(customer.organizationId, {
       type:
         intent === 'PAYMENT_CLAIMED'
           ? 'RECEIVABLE_PAYMENT_CLAIMED'
-          : 'RECEIVABLE_CUSTOMER_REPLY',
+          : intent === 'DISPUTE'
+            ? 'RECEIVABLE_CUSTOMER_DISPUTE'
+            : 'RECEIVABLE_CUSTOMER_REPLY',
       title,
       body,
       metadata: { invoiceId: invoice?.id ?? null, customerId: customer.id },
     });
 
-    const emoji = intent === 'PAYMENT_CLAIMED' ? '🔔' : '💬';
+    const emoji = intent === 'PAYMENT_CLAIMED' || intent === 'DISPUTE' ? '🔔' : '💬';
     void this.whatsapp.notifyOrgAdmins(
       customer.organizationId,
       `${emoji} Royáltica · ${title}: ${body}`,

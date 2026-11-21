@@ -23,7 +23,7 @@ import {
 import { SPRING, SPRING_SUAVE, BotonPrincipal, BotonSecundario } from './campanasUi.tsx';
 import { Subpestanas } from './vidrio.tsx';
 import { useCobranza, type CuentaViva, type TiposDeudorEstado } from './store.tsx';
-import { CAUSAS, TIPOS_DEUDOR, tipoDeudor, type CausaDeudor, type TipoDeudor } from './catalogoDeudores.ts';
+import { CAUSAS, CATALOGO_COMPLETO, TIPOS_DEUDOR, tipoDeudor, tipoPilotoDe, type CausaDeudor, type TipoDeudor } from './catalogoDeudores.ts';
 
 // Tipos de deudor: el análisis de la consultoría dice qué tipo de deudor es
 // cada cliente; aquí se importa, se revisa el empate y se activan los tipos.
@@ -82,10 +82,10 @@ type Fila = { cuentaId: string | null; nombre: string; tipo: string | null; conf
 
 /** Tipo sugerido según cómo ha pagado (mientras no hay archivo real). */
 const POR_SEGMENTO: Record<CuentaViva['segmento'], { tipo: string; confianza: Confianza } | null> = {
-  puntual: { tipo: 'corporativo-con-plazos-impuestos-b2b', confianza: 'revisar' },
+  puntual: { tipo: 'burocratico-b2b', confianza: 'revisar' },
   tardio: { tipo: 'burocratico-b2b', confianza: 'alta' },
   olvidadizo: { tipo: 'desorganizado-b2b', confianza: 'alta' },
-  deterioro: { tipo: 'dependiente-de-su-cobranza-b2b', confianza: 'revisar' },
+  deterioro: { tipo: 'priorizador-b2b', confianza: 'revisar' },
   moroso: { tipo: 'priorizador-b2b', confianza: 'alta' },
   disputa: { tipo: 'disputador-b2b', confianza: 'alta' },
   nuevo: null,
@@ -123,10 +123,14 @@ function empateDeCsv(texto: string, cartera: CuentaViva[]): Fila[] | null {
     const porNombre = !porRfc && n ? cartera.find((c) => fold(c.cliente) === n) ?? cartera.find((c) => fold(c.cliente).includes(n) || n.includes(fold(c.cliente))) : undefined;
     const cuenta = porRfc ?? porNombre;
     const t = fold(col[iTipo] ?? '');
-    const tipo =
-      TIPOS_DEUDOR.find((x) => fold(x.name) === t && x.seg === 'B2B') ??
-      TIPOS_DEUDOR.find((x) => fold(x.name) === t) ??
-      TIPOS_DEUDOR.find((x) => t && (fold(x.name).includes(t) || t.includes(fold(x.name))));
+    // El archivo puede venir con cualquiera de los 25 nombres del catálogo:
+    // se reconoce y se lleva al tipo del piloto que le corresponde.
+    const original =
+      CATALOGO_COMPLETO.find((x) => fold(x.name) === t && x.seg === 'B2B') ??
+      CATALOGO_COMPLETO.find((x) => fold(x.name) === t) ??
+      CATALOGO_COMPLETO.find((x) => t && (fold(x.name).includes(t) || t.includes(fold(x.name))));
+    const pilotoId = original ? tipoPilotoDe(original.id) : null;
+    const tipo = pilotoId ? tipoDeudor(pilotoId) : undefined;
     const exacto = !!porRfc || (!!porNombre && fold(porNombre.cliente) === n);
     return {
       cuentaId: cuenta?.id ?? null,
@@ -621,7 +625,7 @@ function PasoRevisar({ filas, onCambiar }: { filas: Fila[]; onCambiar: (f: Fila[
                   className={`glass-campo rounded-full px-3.5 py-2 text-[12.5px] font-semibold outline-none max-w-[260px] ${f.tipo ? 'text-brand-ink' : 'text-amber-700'}`}
                 >
                   <option value="">Elige su tipo…</option>
-                  {(['B2B', 'B2C'] as const).map((seg) => (
+                  {(['B2B', 'B2C'] as const).filter((seg) => TIPOS_DEUDOR.some((x) => x.seg === seg)).map((seg) => (
                     <optgroup key={seg} label={seg === 'B2B' ? 'Empresas' : 'Personas'}>
                       {TIPOS_DEUDOR.filter((x) => x.seg === seg).map((x) => (
                         <option key={x.id} value={x.id}>
@@ -877,10 +881,12 @@ export function CatalogoTipos({ excluir = [], onElegir, onCerrar }: { excluir?: 
               etiqueta="Tipo de cliente"
               valor={seg}
               onChange={setSeg}
-              opciones={[
-                { id: 'B2B', nombre: 'Empresas', n: TIPOS_DEUDOR.filter((t) => t.seg === 'B2B').length },
-                { id: 'B2C', nombre: 'Personas', n: TIPOS_DEUDOR.filter((t) => t.seg === 'B2C').length },
-              ]}
+              opciones={(
+                [
+                  { id: 'B2B', nombre: 'Empresas', n: TIPOS_DEUDOR.filter((t) => t.seg === 'B2B').length },
+                  { id: 'B2C', nombre: 'Personas', n: TIPOS_DEUDOR.filter((t) => t.seg === 'B2C').length },
+                ] as const
+              ).filter((o) => o.n > 0)}
             />
             <label className="glass-campo ml-auto flex items-center gap-2 rounded-full px-3.5 py-2 w-full sm:w-60">
               <Search size={14} className="text-brand-ink/35" />

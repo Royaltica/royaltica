@@ -235,6 +235,68 @@ export class CustomersService {
   }
 
   /** Exporta el padrón de clientes de la organización a CSV. */
+  /**
+   * Derecho de ACCESO (ARCO): todo lo que la plataforma guarda de un
+   * contacto, en un solo archivo. Solo administradores; queda registrado
+   * quién lo pidió. Incluye clientes ya eliminados (siguen teniendo datos).
+   */
+  async dataExport(admin: AuthenticatedUser, id: string) {
+    const organizationId = this.requireOrg(admin);
+    if (admin.role !== 'CORPORATE_ADMIN' && admin.role !== 'SUPERADMIN') {
+      throw new ForbiddenException('Solo un administrador puede exportar los datos de un contacto.');
+    }
+    const data = await this.prisma.withOrg(organizationId, async (tx) => {
+      const customer = await tx.customer.findFirst({ where: { id, organizationId } });
+      if (!customer) return null;
+      const [invoices, messages, activity] = await Promise.all([
+        tx.invoice.findMany({
+          where: { organizationId, customerId: id },
+          orderBy: { date: 'asc' },
+          select: { folio: true, cfdiUuid: true, total: true, currency: true, date: true, dueDate: true, paidDate: true, status: true },
+        }),
+        tx.whatsappMessage.findMany({
+          where: { organizationId, customerId: id },
+          orderBy: { createdAt: 'asc' },
+          select: { direction: true, kind: true, body: true, templateName: true, sent: true, createdAt: true },
+        }),
+        tx.activityLog.findMany({
+          where: { organizationId, entityType: 'Customer', entityId: id },
+          orderBy: { createdAt: 'asc' },
+          select: { action: true, metadata: true, createdAt: true },
+        }),
+      ]);
+      return { customer, invoices, messages, activity };
+    });
+    if (!data) throw new NotFoundException('Cliente no encontrado.');
+    const c = data.customer;
+    this.log(admin, 'CUSTOMER_DATA_EXPORTED', id);
+    return {
+      generadoEl: new Date().toISOString(),
+      aviso: 'Datos que la plataforma conserva de este contacto. Generado a solicitud de un administrador.',
+      contacto: {
+        nombre: c.name,
+        razonSocial: c.legalName,
+        rfc: c.rfc,
+        contacto: c.contact,
+        correo: c.email,
+        telefono: c.phone,
+        finanzasNombre: c.financeContactName,
+        finanzasTelefono: c.financeContactPhone,
+        finanzasCorreo: c.financeContactEmail,
+        categoria: c.category,
+        notas: c.notes,
+        noContactar: c.doNotContact,
+        motivoNoContactar: c.doNotContactReason,
+        noContactarDesde: c.doNotContactAt,
+        altaEl: c.createdAt,
+        eliminadoEl: c.deletedAt,
+      },
+      facturas: data.invoices.map((i) => ({ ...i, total: Number(i.total) })),
+      mensajesWhatsapp: data.messages,
+      bitacora: data.activity,
+    };
+  }
+
   async exportCsv(admin: AuthenticatedUser): Promise<string> {
     const organizationId = this.requireOrg(admin);
     const rows = await this.prisma.withOrg(organizationId, (tx) =>

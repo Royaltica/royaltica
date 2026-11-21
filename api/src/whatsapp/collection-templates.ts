@@ -21,6 +21,12 @@ export interface TemplateVars {
   fecha: string;
   /** Liga de pago (portal de autoservicio del cliente). */
   liga: string;
+  /**
+   * Empresa que cobra (la organización cliente de Royáltica). Los mensajes
+   * salen de un número de Royáltica, así que el texto debe decir de parte
+   * de quién. Hoy solo la usan las plantillas por tipo de deudor.
+   */
+  empresa: string;
 }
 
 type VarKey = keyof TemplateVars;
@@ -143,3 +149,114 @@ export function renderTemplateBody(t: CollectionTemplate, v: TemplateVars): stri
  * a pagar" son promesas, no pagos.
  */
 export const PAYMENT_CLAIM_BUTTONS = new Set(['Ya pagué, comparto comprobante']);
+
+// ── Plantillas por tipo de deudor (piloto) ─────────────────────────────
+// Dos por cada uno de los 5 tipos del piloto: aviso previo y primera
+// vencida. Categoría UTILITY: una factura concreta, sin ofertas, sin
+// urgencia ni consecuencias. TODAVÍA NO SE ENVÍAN: primero hay que
+// someterlas a Meta (scripts/create-whatsapp-templates.ts --tipos) y que el
+// motor elija plantilla según el tipo de deudor del cliente (pendiente, ese
+// dato aún no vive en la base). Detalle en docs/cobranza-ia/plantillas-por-tipo-deudor.md.
+
+/** Identificador estable del tipo de deudor (el mismo que usa el frontend). */
+export type DebtorTypeId =
+  | 'burocratico-b2b'
+  | 'desorganizado-b2b'
+  | 'priorizador-b2b'
+  | 'intencional-b2b'
+  | 'disputador-b2b';
+
+export interface DebtorTypeTemplate {
+  name: string;
+  debtorType: DebtorTypeId;
+  /** previo = antes de la fecha de pago · vencida = primer contacto ya vencida. */
+  stage: 'previo' | 'vencida';
+  body: string;
+  vars: VarKey[];
+  buttons: string[];
+}
+
+const BASE: VarKey[] = ['contacto', 'empresa', 'folio', 'monto', 'fecha'];
+
+export const DEBTOR_TYPE_TEMPLATES: DebtorTypeTemplate[] = [
+  {
+    name: 'tipo_burocratico_previo',
+    debtorType: 'burocratico-b2b',
+    stage: 'previo',
+    body: 'Hola {{1}}, de parte de {{2}}. Para que la factura {{3}} por {{4}}, con fecha de pago el {{5}}, avance sin contratiempos, ¿nos confirma si ya cuenta con la orden de compra, el contrarrecibo y los documentos que necesitan? Si falta algo, lo enviamos hoy.',
+    vars: BASE,
+    buttons: ['Todo completo', 'Falta un documento'],
+  },
+  {
+    name: 'tipo_burocratico_vencida',
+    debtorType: 'burocratico-b2b',
+    stage: 'vencida',
+    body: 'Hola {{1}}, de parte de {{2}}. Queremos dar seguimiento a la factura {{3}} por {{4}}, con fecha de pago el {{5}}. ¿En qué paso de su proceso de pago se encuentra y quién la tiene? Si falta algún documento, se lo enviamos de inmediato.',
+    vars: BASE,
+    buttons: ['Ya está autorizada', 'Falta un documento'],
+  },
+  {
+    name: 'tipo_desorganizado_previo',
+    debtorType: 'desorganizado-b2b',
+    stage: 'previo',
+    body: 'Hola {{1}}, de parte de {{2}}. Le adelantamos su estado de cuenta: la factura {{3}} por {{4}} tiene como fecha de pago el {{5}}. Aquí puede revisarla: {{6}}. Gracias.',
+    vars: [...BASE, 'liga'],
+    buttons: ['Recibido', 'Tengo una duda'],
+  },
+  {
+    name: 'tipo_desorganizado_vencida',
+    debtorType: 'desorganizado-b2b',
+    stage: 'vencida',
+    body: 'Hola {{1}}, de parte de {{2}}. Por si le sirve para su control, le compartimos el detalle de la factura {{3}} por {{4}}, con fecha de pago el {{5}}: {{6}}. ¿Le ayuda si coordinamos una fecha de pago?',
+    vars: [...BASE, 'liga'],
+    buttons: ['Ya pagué, comparto comprobante', 'Coordinemos una fecha'],
+  },
+  {
+    name: 'tipo_priorizador_previo',
+    debtorType: 'priorizador-b2b',
+    stage: 'previo',
+    body: 'Hola {{1}}, de parte de {{2}}. Con tiempo le comentamos que la factura {{3}} por {{4}} tiene como fecha de pago el {{5}}. Si prefiere dejar un calendario de pagos desde ahora, con gusto lo revisamos. ¿Qué le funcionaría?',
+    vars: BASE,
+    buttons: ['Está programada', 'Prefiero un calendario'],
+  },
+  {
+    name: 'tipo_priorizador_vencida',
+    debtorType: 'priorizador-b2b',
+    stage: 'vencida',
+    body: 'Hola {{1}}, de parte de {{2}}. Sobre la factura {{3}} por {{4}}, con fecha de pago el {{5}}: sabemos que hay varios compromisos. Si nos comparte cuándo podría quedar lista, la dejamos agendada. ¿Qué fecha le acomoda?',
+    vars: BASE,
+    buttons: ['Les comparto una fecha', 'Platiquemos'],
+  },
+  {
+    name: 'tipo_intencional_previo',
+    debtorType: 'intencional-b2b',
+    stage: 'previo',
+    body: 'Hola {{1}}, de parte de {{2}}. Le recordamos con tiempo que la factura {{3}} por {{4}} tiene como fecha de pago el {{5}}. ¿Nos confirma que está programada para esa fecha?',
+    vars: BASE,
+    buttons: ['Sí, está programada', 'Tengo una duda'],
+  },
+  {
+    name: 'tipo_intencional_vencida',
+    debtorType: 'intencional-b2b',
+    stage: 'vencida',
+    body: 'Hola {{1}}, de parte de {{2}}. Le escribimos por la factura {{3}} por {{4}}, con fecha de pago el {{5}}. ¿Nos confirma la fecha en que quedará lista? Con ese dato actualizamos su cuenta en nuestros registros.',
+    vars: BASE,
+    buttons: ['Les comparto la fecha', 'Ya pagué, comparto comprobante'],
+  },
+  {
+    name: 'tipo_disputador_previo',
+    debtorType: 'disputador-b2b',
+    stage: 'previo',
+    body: 'Hola {{1}}, de parte de {{2}}. Si hay alguna diferencia por aclarar en la factura {{3}} por {{4}}, con fecha de pago el {{5}}, avísenos con tiempo y la revisamos antes de esa fecha. ¿Todo en orden?',
+    vars: BASE,
+    buttons: ['Todo en orden', 'Hay una diferencia'],
+  },
+  {
+    name: 'tipo_disputador_vencida',
+    debtorType: 'disputador-b2b',
+    stage: 'vencida',
+    body: 'Hola {{1}}, de parte de {{2}}. Sobre la factura {{3}} por {{4}}: entendemos que puede haber una diferencia por aclarar. ¿Nos comparte el detalle (cantidad, precio o producto) para revisarlo hoy?',
+    vars: ['contacto', 'empresa', 'folio', 'monto'],
+    buttons: ['Les mando el detalle', 'Ya está aclarado'],
+  },
+];

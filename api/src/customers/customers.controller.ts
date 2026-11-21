@@ -56,6 +56,15 @@ export class CustomersController {
     return this.customers.exportCsv(user);
   }
 
+  /** Todo lo que se guarda de un contacto (derecho de acceso). Solo administradores. */
+  @Get(':id/data-export')
+  dataExport(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.customers.dataExport(user, id);
+  }
+
   @Get(':id')
   findOne(
     @CurrentUser() user: AuthenticatedUser,

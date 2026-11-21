@@ -1204,12 +1204,17 @@ export class CollectionSequencesService {
     }
     try {
       if (effectiveChannel === 'EMAIL' && invoice.customer.email) {
+        const sender = await this.prisma.organization.findUnique({
+          where: { id: invoice.organizationId },
+          select: { name: true },
+        });
         const res = await this.email.sendCollectionSequenceStep(
           invoice.customer.email,
           customerName,
           body,
           invoice.organizationId,
           effectiveTone,
+          sender?.name,
         );
         channelSent = res.sent;
       } else if (

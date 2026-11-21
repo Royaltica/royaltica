@@ -3,7 +3,7 @@ import { PanelSub, Subpestanas } from './vidrio.tsx';
 import { Download, Pencil, Save, X } from 'lucide-react';
 import { CURRENCY_FORMATTER } from '../../../../utils/format.ts';
 import { Reveal, BlockTitle, Figure } from './primitives.tsx';
-import { AGENTES, HOY, LINEAS, RESULTADOS, type Gestion } from './mockV1.ts';
+import { HOY, LINEAS, RESULTADOS, type Gestion } from './mockV1.ts';
 import { useAviso } from './clientes.tsx';
 import { useCobranza } from './store.tsx';
 import { AnalisisPeriodoPanel } from './AnalisisPeriodoPanel.tsx';
@@ -29,7 +29,7 @@ const INICIAL: Filtros = {
   agente: 'Todos',
   linea: 'Todas',
   resultado: 'Todos',
-  desde: '2026-09-22',
+  desde: new Date(Date.parse(HOY) - 6 * 86_400_000).toISOString().slice(0, 10),
   hasta: HOY,
   horaDesde: '00:00',
   horaHasta: '23:59',
@@ -39,8 +39,9 @@ const INICIAL: Filtros = {
 const GUARDADOS_INICIALES: { nombre: string; filtros: Filtros }[] = [
   { nombre: 'Promesas de la semana', filtros: { ...INICIAL, resultado: 'Promesa de pago' } },
   { nombre: 'Cuentas sin gestionar', filtros: { ...INICIAL, soloNoGestionadas: true } },
-  { nombre: 'Ana · mañanas', filtros: { ...INICIAL, agente: 'Ana Robles', horaHasta: '12:00' } },
 ];
+/** Reporte guardado de muestra del recorrido de ejemplo (usa una agente ficticia). */
+const GUARDADO_EJEMPLO = 'Ana · mañanas';
 
 function aplicar(f: Filtros, gestiones: Gestion[]): Gestion[] {
   return gestiones.filter(
@@ -130,7 +131,10 @@ function ReporteMedida({ soloEquipo }: { soloEquipo: boolean }) {
   const [nombre, setNombre] = React.useState('');
   const [renombrando, setRenombrando] = React.useState<{ antes: string; nombre: string } | null>(null);
   const { avisar, nodo } = useAviso();
-  const { gestiones } = useCobranza();
+  const { gestiones, fuente } = useCobranza();
+  const ejemplo = fuente !== 'real';
+  // Líneas: las del ejemplo, o las categorías que de verdad tienen tus clientes.
+  const lineas = ejemplo ? [...LINEAS] : [...new Set(gestiones.map((g) => g.linea))].sort((a, b) => a.localeCompare(b, 'es'));
   // Agentes que aparecen en las gestiones (los reales, no los del ejemplo).
   const agentesReporte = [...new Set([...gestiones.map((g) => g.agente)])].sort();
   // Lo más reciente arriba: lo que se hizo hoy se ve primero.
@@ -174,7 +178,7 @@ function ReporteMedida({ soloEquipo }: { soloEquipo: boolean }) {
       <Reveal>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[10px] uppercase tracking-[0.14em] text-brand-ink/40 mr-1">Guardados</span>
-          {guardados.map((r) =>
+          {guardados.filter((r) => ejemplo || r.nombre !== GUARDADO_EJEMPLO).map((r) =>
             renombrando?.antes === r.nombre ? (
               <form
                 key={r.nombre}
@@ -234,8 +238,8 @@ function ReporteMedida({ soloEquipo }: { soloEquipo: boolean }) {
             <Campo label="Agente">
               <Select value={f.agente} onChange={(v) => set('agente', v)} opciones={['Todos', ...agentesReporte]} />
             </Campo>
-            <Campo label="Línea de negocio">
-              <Select value={f.linea} onChange={(v) => set('linea', v)} opciones={['Todas', ...LINEAS]} />
+            <Campo label={ejemplo ? 'Línea de negocio' : 'Categoría del cliente'}>
+              <Select value={f.linea} onChange={(v) => set('linea', v)} opciones={['Todas', ...lineas]} />
             </Campo>
             <Campo label="Resultado de gestión">
               <Select

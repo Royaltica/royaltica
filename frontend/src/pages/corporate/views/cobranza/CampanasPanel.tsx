@@ -82,7 +82,7 @@ type Toast = { id: number; texto: string; deshacer?: () => void };
 
 export function CampanasPanel({ soloLectura = false }: { soloLectura?: boolean }) {
   const reduce = useReducedMotion();
-  const { cartera, campanas, cambiarEstadoCampana, eliminarCampana, restaurarCampana, guardarCampana } = useCobranza();
+  const { cartera, campanas, cambiarEstadoCampana, eliminarCampana, restaurarCampana, guardarCampana, fuente } = useCobranza();
   const abiertas = cartera.filter((c) => !c.saldada);
   const [wizard, setWizard] = React.useState<ModoWizard | null>(null);
   const [filtro, setFiltro] = React.useState<Filtro>('todas');
@@ -192,6 +192,13 @@ export function CampanasPanel({ soloLectura = false }: { soloLectura?: boolean }
       </div>
 
       <div className="relative space-y-8">
+        {fuente === 'real' && (
+          <div role="note" className="rounded-2xl bg-amber-400/15 ring-1 ring-amber-500/30 px-4 py-2.5 text-[12.5px] text-amber-950/85 leading-relaxed">
+            <span className="font-semibold text-amber-950">Las campañas todavía no envían mensajes. </span>
+            Puedes prepararlas y guardarlas, pero al activarlas no sale nada: los mensajes promocionales requieren plantillas de Marketing aprobadas por
+            Meta y el permiso de cada cliente. El cobro diario sí sale, con el plan de cada cliente.
+          </div>
+        )}
         {/* ── Encabezado oscuro con cifras ── */}
         <motion.section
           initial={reduce ? false : { opacity: 0, y: 16 }}
