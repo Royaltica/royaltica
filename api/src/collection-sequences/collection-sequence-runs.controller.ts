@@ -4,6 +4,7 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CollectionSequencesService } from './collection-sequences.service';
@@ -39,10 +40,14 @@ export class CollectionSequenceRunsController {
     return this.sequences.aiActionsInbox(user);
   }
 
-  /** Lo que el modo sombra habría enviado en las últimas 24 h. Antes de ':id'. */
+  /**
+   * Lo que el modo sombra habría enviado en los últimos `dias` (1 por omisión,
+   * máximo 14; 7 = la semana de prueba del piloto). Antes de ':id'.
+   */
   @Get('shadow-report')
-  shadowReport(@CurrentUser() user: AuthenticatedUser) {
-    return this.sequences.shadowReport(user);
+  shadowReport(@CurrentUser() user: AuthenticatedUser, @Query('dias') dias?: string) {
+    const n = Math.min(14, Math.max(1, Math.floor(Number(dias) || 1)));
+    return this.sequences.shadowReport(user, new Date(Date.now() - n * 24 * 3600 * 1000));
   }
 
   @Get(':id')

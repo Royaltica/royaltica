@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckCircle2, LogOut, LogIn, ChevronRight, FileText, X, Plus, ChevronLeft, Activity, Loader2, DollarSign, Crown, Users, Server, Gauge, Handshake, HeartPulse, MessageSquare } from 'lucide-react';
+import { CheckCircle2, LogOut, LogIn, ChevronRight, FileText, X, Plus, Activity, Loader2, DollarSign, Crown, Users, Server, Gauge, Handshake, HeartPulse, MessageSquare } from 'lucide-react';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { api, isRealId, type AdminOrg, type AdminActivity, type AdminCostByFeature, type AdminOrgCost, type AdminCollectionEngineHealth, type AdminRemindersCost, type AdminLoginEvent, type AdminHealthHistory } from '../../services/apiClient.ts';
 import { NotificationBell } from '../../components/NotificationBell.tsx';
@@ -135,7 +135,7 @@ const fmtCostMxn = (n: number): string =>
 type AdminTab = 'overview' | 'clients' | 'health' | 'activity' | 'leads' | 'whatsapp';
 const ADMIN_TABS: AdminTab[] = ['overview', 'clients', 'health', 'activity', 'leads', 'whatsapp'];
 
-export function AdminDashboard({ user, onLogout, onBackToRole, onImpersonate }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, onImpersonate?: (orgId: string) => Promise<void> }) {
+export function AdminDashboard({ user, onLogout, onImpersonate }: { user: FirebaseUser, onLogout: () => void, onBackToRole?: () => void, onImpersonate?: (orgId: string) => Promise<void> }) {
   // La pestaña activa vive en la URL (react-router): permite recargar,
   // compartir el link, y usar atrás/adelante del navegador.
   const location = useLocation();
@@ -161,6 +161,9 @@ export function AdminDashboard({ user, onLogout, onBackToRole, onImpersonate }: 
   // Clientes reales del backend (/admin/organizations). Arranca con los mocks
   // como fallback; si la carga falla, la consola sigue mostrando algo.
   const [tenants, setTenants] = useState<AdminTenant[]>(MOCK_TENANTS);
+  // true cuando la lista viene del backend (los mocks no se pueden "ver como cliente").
+  const [tenantsLive, setTenantsLive] = useState(false);
+  const [showViewAs, setShowViewAs] = useState(false);
   const filteredTenants = React.useMemo(() => {
     const q = clientSearch.trim().toLowerCase();
     return tenants.filter(t =>
@@ -172,7 +175,7 @@ export function AdminDashboard({ user, onLogout, onBackToRole, onImpersonate }: 
   const loadTenants = React.useCallback(() => {
     return api.adminOrganizations()
       // Se ocultan las organizaciones con soft-delete (deleted) del panel.
-      .then(orgs => { const live = orgs.filter(o => !o.deleted); if (live.length) setTenants(live.map(mapOrgToTenant)); })
+      .then(orgs => { const live = orgs.filter(o => !o.deleted); if (live.length) { setTenants(live.map(mapOrgToTenant)); setTenantsLive(true); } })
       .catch(() => { /* sin sesión SUPERADMIN o backend caído: se quedan los mocks */ });
   }, []);
   useEffect(() => { void loadTenants(); }, [loadTenants]);
@@ -374,9 +377,37 @@ export function AdminDashboard({ user, onLogout, onBackToRole, onImpersonate }: 
             <SidebarLink icon={<MessageSquare size={18} />} label="WhatsApp" active={adminTab === 'whatsapp'} collapsed={isSidebarCollapsed} onClick={() => setAdminTab('whatsapp')} />
           </nav>
           <div className="mt-auto pb-6 space-y-2 border-t border-brand-bone/10 pt-4">
-            <button onClick={onBackToRole} className="text-brand-bone/50 hover:text-brand-bone transition-colors flex items-center gap-3 text-[9px] uppercase font-bold tracking-widest w-full cursor-pointer">
-              <ChevronLeft size={16} /> {!isSidebarCollapsed && "Cambiar Rol"}
-            </button>
+            {/* "Ver como cliente": antes decía "Cambiar Rol" y cerraba la sesión
+                (ya no hay pantalla de selección de rol). Ahora abre la lista de
+                organizaciones y entra con "Entrar como este cliente" (auditado). */}
+            {onImpersonate && (
+              <div className="relative">
+                <button
+                  onClick={() => { if (tenantsLive) setShowViewAs(v => !v); else setAdminTab('clients'); }}
+                  aria-expanded={showViewAs}
+                  className="text-brand-bone/50 hover:text-brand-bone transition-colors flex items-center gap-3 text-[9px] uppercase font-bold tracking-widest w-full cursor-pointer"
+                >
+                  <LogIn size={16} /> {!isSidebarCollapsed && "Ver como cliente"}
+                </button>
+                {showViewAs && (
+                  <div role="menu" className="absolute bottom-8 left-0 z-50 w-64 rounded-xl bg-white shadow-xl border border-brand-sand/30 p-2">
+                    <p className="px-2 pb-1 text-[10px] text-brand-ink/50">Entrar al portal de:</p>
+                    {tenants.filter(t => t.status !== 'suspended').map(t => (
+                      <button
+                        key={t.id}
+                        role="menuitem"
+                        disabled={impersonatingOrgId === t.id}
+                        onClick={() => { setShowViewAs(false); void handleImpersonate(t.id); }}
+                        className="w-full text-left px-2 py-1.5 rounded-lg text-[12px] text-brand-ink hover:bg-brand-bone/60 disabled:opacity-50 cursor-pointer"
+                      >
+                        {t.name}
+                      </button>
+                    ))}
+                    {impersonateError && <p className="px-2 pt-1 text-[11px] text-red-600">{impersonateError}</p>}
+                  </div>
+                )}
+              </div>
+            )}
             <button onClick={onLogout} className="text-brand-bone/60 hover:text-red-300 transition-colors flex items-center gap-3 text-[9px] uppercase font-bold tracking-widest w-full cursor-pointer">
               <LogOut size={16} /> {!isSidebarCollapsed && "Salir"}
             </button>

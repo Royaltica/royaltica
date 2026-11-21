@@ -8,6 +8,7 @@ import { EASE, Reveal, BlockTitle, Figure, Bar, Tag } from './primitives.tsx';
 import { SEGMENTOS, diagnosticoAnterior, saldoDe, type Segmento } from './mockV1.ts';
 import { useCobranza, type CuentaViva } from './store.tsx';
 import { useConfirmar } from './vidrio.tsx';
+import { SegmentosServidor } from './SegmentosServidor.tsx';
 
 /**
  * Etiqueta de segmento. Al pasar el cursor (o enfocar con teclado) explica
@@ -49,7 +50,7 @@ const ORDEN: Segmento[] = ['puntual', 'tardio', 'olvidadizo', 'nuevo', 'deterior
  */
 export function SegmentosPanel({ onVerPlantillas }: { onVerPlantillas?: () => void } = {}) {
   const reduce = useReducedMotion();
-  const { cartera, tiposDeudor, guardarTiposDeudor } = useCobranza();
+  const { cartera, tiposDeudor, guardarTiposDeudor, fuente } = useCobranza();
   const importado = !!tiposDeudor;
   // Sin análisis: el tipo que sugiere su historial de pagos (los segmentos de antes).
   const tipoDe = (c: CuentaViva): string | null => (tiposDeudor ? (tiposDeudor.asignaciones[c.id] ?? null) : tipoSugerido(c));
@@ -77,6 +78,13 @@ export function SegmentosPanel({ onVerPlantillas }: { onVerPlantillas?: () => vo
 
   return (
     <div className="space-y-5">
+      {/* Con datos reales: segmentos calculados en el servidor (C3). Con datos de
+          ejemplo no se muestran, porque mezclarían la cartera de ejemplo con la real. */}
+      {fuente === 'real' && (
+        <Reveal>
+          <SegmentosServidor />
+        </Reveal>
+      )}
       <Reveal>
         <TarjetaTiposDeudor onVerPlantillas={onVerPlantillas} />
       </Reveal>

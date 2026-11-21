@@ -34,6 +34,7 @@ Hoy guardan en `localStorage`: `frontend/src/pages/corporate/views/cobranza/Conf
 
 ### C3. Tipos de deudor (3 a 5), segmentos y alertas por WhatsApp
 > **Cambio de reparto (18 nov):** el carril A hace la parte de backend (endpoint de segmentos y alertas por WhatsApp al equipo). A Codex le queda la parte de pantalla: catálogo de tipos, el tipo en la ficha del cliente y la vista de segmentos usando el endpoint del carril A.
+> **Actualización (20 nov):** la vista de segmentos ("Cómo pagan hoy" en Cobranza IA › Segmentos, `SegmentosServidor.tsx`) también la hizo el carril A. El catálogo de tipos y el tipo en la ficha del cliente ya existían. **Codex ya no toma C3.**
 - Usa `Customer.category` (ya existe, texto) para el tipo de deudor. Empieza con 3 a 5 tipos definidos en `frontend/.../catalogoDeudores.ts`, no 25.
 - El tipo se elige en la ficha del cliente y se guarda con `PATCH /customers/:id`.
 - Segmentos: calcúlalos en el backend a partir de `riskTier`, `score` y `category` (endpoint de solo lectura), no en el navegador.

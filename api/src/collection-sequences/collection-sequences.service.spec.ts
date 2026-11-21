@@ -198,6 +198,19 @@ describe('CollectionSequencesService', () => {
         }),
       );
     });
+
+    it('avisa si el periodo trae más registros de los que se revisan', async () => {
+      const p = prisma as unknown as Record<string, Record<string, jest.Mock>>;
+      const many = Array.from({ length: 2001 }, () => ({ createdAt: new Date(), metadata: {} }));
+      p.activityLog.findMany = jest.fn().mockResolvedValue(many);
+      p.invoice.findMany = jest.fn().mockResolvedValue([]);
+      const r = await service.shadowReport({ organizationId: 'org-1' } as never, new Date('2026-12-01T00:00:00Z'));
+      expect(r.truncated).toBe(true);
+      expect(r.total).toBe(2000);
+      expect(p.activityLog.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ createdAt: { gte: new Date('2026-12-01T00:00:00Z') } }) }),
+      );
+    });
   });
 
   describe('caída a media operación (C4)', () => {

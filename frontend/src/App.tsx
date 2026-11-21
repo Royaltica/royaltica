@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
 import { auth, signInWithEmail, signInWithGoogle } from './lib/firebase.ts';
@@ -40,6 +40,7 @@ export default function App() {
 }
 
 function LegacyApp() {
+  const navigate = useNavigate();
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [role, setRole] = useState<Role>(null);
@@ -191,6 +192,11 @@ function LegacyApp() {
     setIsLocked(false);
   };
 
+  // El logo del menú lateral antes llamaba a handleLogout (herencia de la
+  // pantalla de selección de rol que ya no existe) y cerraba la sesión.
+  // Ahora solo regresa al inicio del portal.
+  const goHome = () => navigate('/');
+
   if (!user) {
     return <LandingPage onLogin={handleLogin} onGoogleLogin={handleGoogleLogin} />;
   }
@@ -211,11 +217,11 @@ function LegacyApp() {
   }
 
   if (role === 'provider' && providerSupplier) {
-    return <ProviderDashboard user={user} supplier={providerSupplier} onLogout={handleLogout} onBackToRole={handleLogout} />;
+    return <ProviderDashboard user={user} supplier={providerSupplier} onLogout={handleLogout} onBackToRole={goHome} />;
   }
 
   if (role === 'admin') {
-    return <AdminDashboard user={user} onLogout={handleLogout} onBackToRole={handleLogout} onImpersonate={handleImpersonate} />;
+    return <AdminDashboard user={user} onLogout={handleLogout} onImpersonate={handleImpersonate} />;
   }
 
   if (role === 'agent') {
@@ -224,7 +230,7 @@ function LegacyApp() {
 
   if (role === 'corporate') {
     return <CorporateDashboard
-      user={user} onLogout={handleLogout} onBackToRole={handleLogout} sessionStartedAt={sessionStartedAt}
+      user={user} onLogout={handleLogout} onBackToRole={goHome} sessionStartedAt={sessionStartedAt}
       permissions={apiPermissions} role={apiRole} organizationProduct={apiProduct}
       isImpersonating={isImpersonating()} impersonatedOrgName={getImpersonatedOrgName()}
       onExitImpersonation={handleExitImpersonation}
