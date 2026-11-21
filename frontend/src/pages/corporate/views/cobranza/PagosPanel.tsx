@@ -162,7 +162,7 @@ function PagosEjemplo({ soloLectura = false, onVerCliente }: PropsPagos) {
       {/* Cifras */}
       <Reveal delay={0.08}>
         <div className="grid grid-cols-2 sm:grid-cols-4 glass rounded-[28px] divide-x divide-white/70">
-          <Kpi label="Cobrado en septiembre" valor={<Figure value={cobrado} format="moneda" />} />
+          <Kpi label="Cobrado en el mes (ejemplo)" valor={<Figure value={cobrado} format="moneda" />} />
           <Kpi label="Confirmados por REP" valor={<Figure value={confirmados} />} />
           <Kpi label="Por revisar" valor={<Figure value={totalRevisar} />} alerta={totalRevisar > 0} />
           <Kpi label="REP pendientes" valor={<Figure value={repPendientes.length} />} />

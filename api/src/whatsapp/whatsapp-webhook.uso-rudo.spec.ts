@@ -42,6 +42,10 @@ function memoria(customers: { id: string; organizationId: string; name: string; 
         id: `inv-${where.customerId}`, folio: `F-${where.customerId}`, cfdiUuid: '00000000', total: new Prisma.Decimal(1000),
       })),
       update: jest.fn(async () => ({})),
+      findMany: jest.fn(async ({ where }: { where: { customerId?: string } }) => [{ id: `inv-${where.customerId}` }, { id: `inv2-${where.customerId}` }]),
+    },
+    collectionSequenceRun: {
+      updateMany: jest.fn(async ({ where }: { where: { invoiceId: { in: string[] } } }) => ({ count: where.invoiceId.in.length })),
     },
     invoiceAuditLog: { create: jest.fn(async ({ data }: { data: Row }) => { bitacora.push({ ...data, id: id() }); return {}; }) },
     whatsappMessage: {
@@ -175,5 +179,39 @@ describe('Webhook de WhatsApp: uso rudo (C4)', () => {
     expect(db.clientes[0].doNotContact).toBe(true);
     const avisos = notifications.notifyOrgAdmins.mock.calls.filter(([, n]) => n.type === 'CUSTOMER_OPT_OUT');
     expect(avisos).toHaveLength(1);
+  });
+
+  it('número equivocado: deja de escribirle a ese contacto y avisa, sin tratarlo como pago', async () => {
+    const db = memoria([{ id: 'c1', organizationId: 'org-a', name: 'Uno', phone: tel(1) }]);
+    const { svc, notifications } = servicio(db);
+    await svc.handleIncoming(textMessage(ctx, tel(1), 'wamid.EQUIV', 'Número equivocado, aquí no es esa empresa'));
+    expect(db.clientes[0]).toMatchObject({ doNotContact: true });
+    expect(String(db.clientes[0].doNotContactReason)).toContain('no es el contacto correcto');
+    const tipos = notifications.notifyOrgAdmins.mock.calls.map(([, n]) => n.type);
+    expect(tipos).toEqual(['CUSTOMER_WRONG_CONTACT']);
+  });
+
+  it('disputa: pausa la cobranza automática de sus facturas y avisa', async () => {
+    const db = memoria([{ id: 'c1', organizationId: 'org-a', name: 'Uno', phone: tel(1) }]);
+    const { svc, notifications } = servicio(db);
+    await svc.handleIncoming(textMessage(ctx, tel(1), 'wamid.DISP', 'No reconozco esa factura'));
+    expect(db.prisma.collectionSequenceRun.updateMany).toHaveBeenCalledWith({
+      where: { invoiceId: { in: ['inv-c1', 'inv2-c1'] }, status: 'ACTIVE' },
+      data: { status: 'PAUSED' },
+    });
+    const aviso = notifications.notifyOrgAdmins.mock.calls.find(([, n]) => n.type === 'RECEIVABLE_CUSTOMER_DISPUTE');
+    expect(aviso?.[1].body).toContain('Se pausó la cobranza automática');
+    expect(db.clientes[0].doNotContact).toBe(false);
+  });
+
+  it('disputa respondiendo a un mensaje: pausa solo esa factura', async () => {
+    const db = memoria([{ id: 'c1', organizationId: 'org-a', name: 'Uno', phone: tel(1) }]);
+    db.mensajes.push({ id: 'out-1', waMessageId: 'wamid.OUT', direction: 'OUTBOUND', customerId: 'c1', invoiceId: 'inv-c1' });
+    const { svc } = servicio(db);
+    await svc.handleIncoming(textMessage(ctx, tel(1), 'wamid.DISP2', 'Esa ya la cancelamos', 'wamid.OUT'));
+    expect(db.prisma.collectionSequenceRun.updateMany).toHaveBeenCalledWith({
+      where: { invoiceId: { in: ['inv-c1'] }, status: 'ACTIVE' },
+      data: { status: 'PAUSED' },
+    });
   });
 });

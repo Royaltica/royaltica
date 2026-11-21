@@ -1,104 +1,78 @@
 # WhatsApp de punta a punta (carril B)
 
-Qué quedó construido, cómo probarlo y qué se le pide al carril de base de datos.
-Complementa `docs/whatsapp-meta-diagnostico.md`.
+Qué hace hoy el WhatsApp de cobranza, cómo probarlo y qué falta. Actualizado el 20 nov al integrar el carril B con `main` (PR #16 y #17): una versión anterior de este documento describía piezas de la rama del 16 nov que no llegaron a `main` (ver sección 5). Complementa `docs/whatsapp-meta-diagnostico.md`.
 
-## 1. Qué hace ahora el webhook (`POST /webhooks/whatsapp`)
+## 1. Qué hace el webhook (`POST /webhooks/whatsapp`)
 
-### Empate de la respuesta con su cliente
-En este orden (`whatsapp-webhook.service.ts`, `matchInbound`):
+Código: `api/src/whatsapp/whatsapp-webhook.service.ts`.
 
-1. **Por contexto.** Si el mensaje trae `context.id` (el cliente respondió a un mensaje nuestro o tocó un botón), se busca el saliente con ese `waMessageId`. De ahí salen organización, cliente y factura exactos.
-2. **Por teléfono** (últimos 10 dígitos, teléfono general o de finanzas). Un solo cliente: ese. Varios: al que se le escribió más recientemente en los últimos 7 días, **solo si todos los que recibieron mensajes son de la misma organización**.
-3. **Sin empate.** Si sigue habiendo duda no se adivina: el mensaje va a la bandeja sin empate y se avisa solo al equipo de Royáltica (SUPERADMIN). Nunca a una organización cliente, porque el mismo teléfono puede ser de clientes de organizaciones distintas.
+### A qué cliente pertenece una respuesta
+En este orden, sin adivinar (`resolveSender`):
 
-Diferencia con el diseño D3: D3 dice "el más reciente" entre varios candidatos. Aquí, si los candidatos recientes son de organizaciones distintas, se manda a la bandeja en lugar de elegir. Es más conservador: evita entregar una respuesta a la organización equivocada.
+1. **Por contexto.** Si el mensaje trae `context.id` (respondió a un mensaje nuestro o tocó un botón), se toma el saliente con ese `waMessageId`: cliente y factura exactos.
+2. **Por teléfono** (últimos 10 dígitos, teléfono general o de Finanzas). Si es un solo cliente, ese.
+3. **Varios con el mismo teléfono:** el último al que le escribimos desde el mismo número de Meta en los últimos 30 días, si es uno solo.
+4. **Sin certeza:** va a la bandeja sin dueño (`WhatsappInboundUnmatched`) y no se le atribuye a nadie.
 
-### Intenciones (reglas deterministas, `inbound-intent.ts`)
-| Intención | Ejemplos | Efecto |
+### Qué dijo el cliente
+Un solo detector para WhatsApp y correo: `api/src/whatsapp/inbound-intent.ts` (reglas por frases, sin acentos ni signos; explicables y auditables).
+
+| Intención | Ejemplos | Qué pasa |
 |---|---|---|
-| `OPT_OUT` | "BAJA", "STOP", "no me escriban", "dejen de escribir" | `doNotContact = true` (todos los canales), acuse único por texto libre, aviso al administrador, bitácora `CUSTOMER_OPT_OUT` |
-| `WRONG_CONTACT` | "número equivocado", "ya no trabajo ahí" | `doNotContact = true` con motivo "captura un contacto nuevo", acuse único, aviso al administrador |
-| `DISPUTE` | "no reconozco", "ya la cancelé", "no recibimos la mercancía" | Pausa la secuencia de esa factura (si respondió a un mensaje) o de todas las del cliente, aviso al administrador |
-| `PAYMENT_CLAIMED` | "ya pagué", botón "Ya pagué, comparto comprobante" | Aviso al administrador. **No** marca el pago ni pausa (eso es del carril A, cambio C7) |
-| `CUSTOMER_REPLY` | cualquier otra cosa | Aviso al administrador |
+| `OPT_OUT` | "BAJA", "Baja por favor", "STOP", "no me escriban", "dejen de mandar" | `doNotContact = true` en todos los canales, bitácora `CUSTOMER_OPT_OUT`, aviso a administradores |
+| `WRONG_CONTACT` | "número equivocado", "ya no trabajo ahí" | `doNotContact = true` con motivo "captura un contacto nuevo", aviso a administradores (campana y WhatsApp) |
+| `DISPUTE` | "no reconozco", "ya la cancelamos", "no recibimos la mercancía" | Pausa las secuencias activas de esa factura (si respondió a un mensaje) o de todas sus facturas pendientes; aviso a administradores. Se reanuda a mano desde la secuencia |
+| `PAYMENT_CLAIMED` | "ya pagué", botón "Ya pagué, comparto comprobante" | Pausa 72 h los envíos (guardia "ya pagué" del motor) a esa factura o al cliente; aviso para verificar contra el banco. Nunca marca la factura como pagada |
+| `CUSTOMER_REPLY` | cualquier otra cosa | Aviso a administradores |
 
-Prioridad: baja → número equivocado → disputa → pago → respuesta. Hay negaciones para no apagar a un cliente por error ("no se dé de baja").
+Prioridad: baja → número equivocado → disputa → pago → respuesta. Hay negaciones para no apagar a un cliente por error ("no se dé de baja", "aún no he pagado"). "Dar de baja la factura", "cancelar la factura" o "alto ahí, ¿quién habla?" no son bajas.
 
-Decisión pendiente de Paolo: hoy la baja apaga **todos** los canales (opción A). Si se decide "solo WhatsApp" hace falta un campo nuevo.
+**Correo:** el mismo detector revisa las respuestas por correo (solo lo que escribió la persona, sin el mensaje citado). Todo correo de cobranza lleva el pie "responda con la palabra BAJA" y sale con `COLLECTIONS_REPLY_TO`.
 
 ### Estados de entrega
-Se procesan `statuses[]`: `sent`, `delivered`, `read`, `failed` (con código). Idempotente y monótono (nunca regresa de leído a entregado). Un `failed`:
-- deja el mensaje como no enviado (`sent = false`), para que el plan no avance con algo que no llegó;
-- avisa al administrador con el motivo en español (`meta-errors.util.ts`);
-- si van 2 o más fallos seguidos por número inválido, el aviso lo dice.
+Se procesan `statuses[]` de Meta (`sent`, `delivered`, `read`, `failed`) en `WhatsappMessage.deliveryStatus`, `deliveryStatusAt` y `deliveryError`. Nunca retroceden (leído no vuelve a entregado). Un `failed` deja el mensaje como no enviado. La pantalla del hilo muestra "Entregado", "Leído" o "No entregado".
 
-El hilo (`GET /whatsapp/conversations/:customerId`) regresa `delivery` en cada mensaje saliente y la pantalla muestra "Entregado", "Leído" o "No entregado" con el motivo.
+### Imágenes y documentos
+Se registra que llegaron ("[Imagen recibida: …]") en el hilo del cliente. **El archivo no se descarga todavía** (pendiente, sección 4).
 
-### Comprobantes (imagen o PDF)
-Cuando el cliente manda un archivo, `WhatsappMediaService` lo descarga de Meta y lo guarda en el almacenamiento privado (`whatsapp/<organización>/<cliente>/`). Límites: solo JPG, PNG, WebP o PDF, máximo 10 MB (se mide el archivo real, no lo que anuncia Meta) y solo desde dominios de Meta. La descarga no detiene el webhook. En el hilo aparece "Ver la imagen / el PDF", que abre una liga firmada de 15 minutos (`GET /whatsapp/conversations/:customerId/media/:messageId`). Si no se pudo guardar, el hilo dice por qué. Un archivo nunca se interpreta como pago: lo valida una persona.
-
-Requiere `WHATSAPP_TOKEN` y almacenamiento configurado (S3/GCS); sin eso queda anotado "no guardado". La descarga real contra Meta solo está probada con pruebas unitarias; falta probarla con la app en Live.
-
-### Bajas por correo
-Todo correo de cobranza lleva un pie: "responda con la palabra BAJA". El correo entrante la detecta (ignorando el mensaje citado) y pone al cliente en no contactar. El correo de las secuencias ahora lleva `COLLECTIONS_REPLY_TO`; antes las respuestas a ese correo no llegaban al sistema.
-
-### Avisos de la cuenta de Meta
-`message_template_status_update` (rechazada, pausada, desactivada), `template_category_update` (reclasificada fuera de Utilidad), `phone_number_quality_update` y `account_update` generan una alerta al equipo de Royáltica. Para recibirlos hay que **suscribir esos campos** en la app de Meta además de `messages`.
-
-### Bandeja sin empate (solo SUPERADMIN)
-- `GET /admin/whatsapp/unmatched` (`?all=true` incluye resueltos)
-- `POST /admin/whatsapp/unmatched/:id/assign` `{ customerId }` (solo entre los candidatos; se agrega al hilo con la hora real en que llegó)
-- `POST /admin/whatsapp/unmatched/:id/dismiss`
-- `GET /admin/whatsapp/alerts`
-
-La pantalla está en el panel de administración de Royáltica → WhatsApp (`frontend/src/features/admin/WhatsappAdminPanel.tsx`): muestra el mensaje, sus candidatos con su organización, y permite asignarlo o descartarlo.
+### Bandeja sin dueño
+- Organización: `GET /whatsapp/conversations/unmatched`, `POST …/unmatched/:id/assign`, `POST …/unmatched/:id/dismiss`.
+- Royáltica (SUPERADMIN): `GET /admin/whatsapp/unmatched` (`?all=true` incluye resueltos), `POST /admin/whatsapp/unmatched/:id/assign` `{ customerId }`, `POST /admin/whatsapp/unmatched/:id/dismiss`.
 
 ## 2. Cómo probar sin depender de Meta
 
+Reproductor firmado (`api/scripts/replay-whatsapp-webhook.ts`), desde `api/`:
+
 ```bash
-cd api
-npx tsx scripts/replay-whatsapp-webhook.ts texto     --from 5215512345678 --text "Hola"
-npx tsx scripts/replay-whatsapp-webhook.ts respuesta --from 5215512345678 --text "Recibido" --context wamid.XXX
-npx tsx scripts/replay-whatsapp-webhook.ts boton     --from 5215512345678 --context wamid.XXX
-npx tsx scripts/replay-whatsapp-webhook.ts baja      --from 5215512345678
-npx tsx scripts/replay-whatsapp-webhook.ts estado    --id wamid.XXX --status read
-npx tsx scripts/replay-whatsapp-webhook.ts fallo     --id wamid.XXX --code 131026
-npx tsx scripts/replay-whatsapp-webhook.ts duplicado --from 5215512345678 --text "Hola"
-npx tsx scripts/replay-whatsapp-webhook.ts firma-mala --from 5215512345678
+WHATSAPP_APP_SECRET=<el del backend destino> npx ts-node scripts/replay-whatsapp-webhook.ts \
+  --url http://localhost:8080 --caso texto --from 5215512345678 --texto "Hola"
 ```
 
-Firma con `WHATSAPP_APP_SECRET` del entorno. Destino por defecto `http://localhost:8080`; para staging `--url https://<staging>`. Se niega a apuntar a producción sin `--confirm produccion`.
+Casos: `texto`, `boton`, `imagen`, `baja`, `duplicado` (el mismo mensaje 5 veces), `estados` (con `--wamid` de un mensaje que enviamos) y `todos`. `--contexto <wamid>` lo manda como respuesta a ese envío. Rechaza los dominios de producción.
 
-Probado en local (16 nov): contexto con teléfono compartido entre dos organizaciones, desempate por envío reciente, ambiguo a la bandeja sin duplicar en el reintento, estados con duplicado, fallo con motivo, disputa, baja con acuse y bloqueo del siguiente envío (403). No se pudo probar el rechazo de firma inválida porque el entorno local no tiene secreto.
+Pruebas automáticas: `whatsapp-webhook.service.spec.ts`, `whatsapp-webhook.uso-rudo.spec.ts` (ráfaga de 200 con reintentos, mismo teléfono en dos organizaciones, estados desordenados, baja repetida, número equivocado, disputa) e `inbound-intent.spec.ts`.
 
-## 3. Pedido al carril de base de datos (José / carril A)
+## 3. Plantillas
+- En uso: `royaltica_nivel_0` a `nivel_4`, `aviso_vencida` y `seguimiento_vencida` (`collection-templates.ts`). Faltan `aviso_vencida` y `seguimiento_vencida` en Meta.
+- 10 plantillas por tipo de deudor (`DEBTOR_TYPE_TEMPLATES`): escritas, **no se envían** hasta que Meta las apruebe y el tipo de deudor viva en el cliente (`Customer.category`). Ver `plantillas-por-tipo-deudor.md`.
 
-Hoy no se tocó el esquema. Dos cosas viven en `ActivityLog` como solución temporal y conviene pasarlas a columnas/tabla propias en la migración de D2:
+## 4. Pendiente
+| Qué | De quién |
+|---|---|
+| Descargar comprobantes (imagen/PDF) al almacenamiento privado y ligarlos a la factura | Carril A |
+| Avisos de la cuenta de Meta (plantilla rechazada o pausada, calidad del número) | Carril A |
+| Pantalla de la bandeja sin dueño para SUPERADMIN | Carril A |
+| Bandera de teléfono no entregable para pasar a correo | Carril A |
+| App de Meta en Live, App Review, plantillas aprobadas, token permanente | Paolo |
 
-| Dato | Dónde vive hoy | Lo que se pide |
-|---|---|---|
-| Estado de entrega por mensaje | `ActivityLog` (acción `WHATSAPP_STATUS`, `entityId` = id del mensaje) | `WhatsappMessage.deliveryStatus`, `deliveredAt`, `readAt`, `failedCode`, `failedReason` |
-| Mensaje al que respondió el cliente | `InvoiceAuditLog.metadata.contextWaMessageId` | `WhatsappMessage.contextWaMessageId` |
-| Bandeja sin empate | `ActivityLog` sin organización (acción `WHATSAPP_INBOUND_UNMATCHED`) | Tabla `WhatsappInboundUnmatched` (teléfono, texto, wamid, número receptor, fecha, candidatos, resolución) |
-| Comprobante de un mensaje | `ActivityLog` (acción `WHATSAPP_MEDIA`, `entityId` = id del mensaje) | `WhatsappMessage.mediaStorageUrl`, `mediaMimeType`, `mediaSize` |
-| Teléfono no entregable | Solo se calcula para el aviso | Bandera por contacto, para que el motor pase a correo |
-| Consentimiento | No existe | `consentSource`, `consentAt` por contacto (D5) |
+## 5. Nota sobre la versión anterior de este documento
+La rama del carril B del 16 nov tenía `WhatsappMediaService`, `WhatsappDeliveryService`, avisos de Meta y un `WhatsappAdminPanel`, guardando estados en `ActivityLog`. Al integrar `main` se conservó la versión del carril A (estados y bandeja con columnas y tabla propias, migración del 16 nov), y esas piezas no entraron. Si se quieren recuperar, se reimplementan sobre las tablas actuales (sección 4).
 
-Todo el acceso a estados pasa por `WhatsappDeliveryService`; cuando existan las columnas solo cambia esa clase. `ActivityLog` no tiene índice por `entityId`: con el volumen de dos pilotos no pesa, pero es otra razón para migrar.
-
-## 4. Hallazgos que no son de este carril
-
-1. **Hora del motor.** El motor de secuencias corre con `@Cron(EVERY_DAY_AT_11AM)` sin zona horaria, y después exige que la hora local de la política esté dentro de la ventana de contacto. Si el servidor de Railway está en UTC, las 11:00 son las 05:00 en México y todos los pasos se saltarían por "outside-contact-window". Hay que confirmar la zona del servidor o fijar `timeZone: 'America/Mexico_City'` en el cron.
-2. **Las plantillas no dicen de parte de quién.** La decisión es un solo número de Royáltica "en nombre de [cliente]", pero ninguna plantilla (`royaltica_nivel_0`, `nivel_1` a `nivel_4`, `aviso_vencida`, `seguimiento_vencida`) nombra a la empresa que cobra. El deudor recibiría "la factura F-123 por $X" de un número que no conoce. Antes de crear `aviso_vencida` y `seguimiento_vencida` en Meta conviene decidir si llevan `{{empresa}}`; las cinco ya aprobadas tendrían que volver a someterse.
-3. **Instrucción de la IA de decisión.** `collection-sequences-ai-decision.service.ts` le dice al modelo que trabaja "para Tradespace, una empresa canadiense". Con pilotos mexicanos hay que neutralizarla.
-4. **Dos caminos de envío.** Sigue vigente el hallazgo del plan: recordatorio antiguo a las 10:00 y motor por niveles a las 11:00.
-
-## 5. Prueba de aceptación con Meta (cuando la app esté en Live)
-
-1. Webhook verificado (GET responde el challenge) y suscrito a `messages`, `message_template_status_update`, `template_category_update`, `phone_number_quality_update`.
-2. Enviar `nivel_1` a un teléfono real; en el hilo debe pasar a "Entregado" y luego "Leído".
-3. Responder desde el teléfono citando el mensaje: aparece en Clientes → WhatsApp en menos de 10 s (la pantalla refresca cada 8 s).
-4. Tocar "Ya pagué, comparto comprobante": llega el aviso al administrador.
-5. Responder "BAJA": llega el acuse, el cliente queda en no contactar y el siguiente envío responde 403.
-6. Enviar a un número sin WhatsApp: el mensaje queda "No entregado" con su motivo.
+## 6. Prueba de aceptación con Meta (con la app en Live)
+1. Webhook verificado y suscrito a `messages` (y, cuando exista el punto 2 de la sección 4, a `message_template_status_update` y `phone_number_quality_update`).
+2. Enviar `nivel_1` a un teléfono real: en el hilo pasa a "Entregado" y luego "Leído".
+3. Responder citando el mensaje: aparece en Clientes → WhatsApp del cliente correcto.
+4. Tocar "Ya pagué, comparto comprobante": llega el aviso y se pausan los envíos 72 h.
+5. Responder "BAJA": el cliente queda en no contactar y ya no se le envía nada.
+6. Responder "no reconozco esa factura": se pausa su secuencia y llega el aviso.
+7. Enviar a un número sin WhatsApp: el mensaje queda "No entregado" con su motivo.

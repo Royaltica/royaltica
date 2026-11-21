@@ -45,6 +45,13 @@ const OPT_OUT_EXACT = new Set([
   'quiero baja',
 ]);
 
+/**
+ * Palabras que, al inicio de un mensaje corto, son baja ("Baja por favor").
+ * No incluye "cancelar" ni "dar de baja" ("cancelar la factura", "dar de baja
+ * la factura duplicada") ni "alto" ("alto ahí, ¿quién habla?").
+ */
+const OPT_OUT_PREFIXES = ['baja', 'stop', 'unsubscribe', 'darme de baja', 'dame de baja', 'denme de baja', 'deme de baja'];
+
 /** Frases de baja dentro de un mensaje más largo. */
 const OPT_OUT_PHRASES = [
   'no me escriban',
@@ -248,6 +255,9 @@ export function classifyIntent(text: string): IntentResult {
 
   if (!OPT_OUT_NEGATIONS.some((neg) => n.includes(neg))) {
     if (OPT_OUT_EXACT.has(n)) return { intent: 'OPT_OUT', matched: n };
+    // "BAJA por favor", "Stop gracias": empieza con la palabra de baja y es corto.
+    const prefix = OPT_OUT_PREFIXES.find((p) => n.startsWith(`${p} `) && n.length <= p.length + 25);
+    if (prefix) return { intent: 'OPT_OUT', matched: prefix };
     const optOut = findPhrase(n, OPT_OUT_PHRASES);
     if (optOut) return { intent: 'OPT_OUT', matched: optOut };
   }

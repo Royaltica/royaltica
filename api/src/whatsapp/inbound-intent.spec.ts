@@ -69,4 +69,13 @@ describe('classifyIntent (WhatsApp entrante)', () => {
   it('regresa la regla que disparó, para la bitácora', () => {
     expect(classifyIntent('Dejen de molestar').matched).toBe('dejen de molestar');
   });
+
+  it.each(['Baja por favor', 'STOP gracias', 'Denme de baja!'])('baja corta al inicio: %s', (t) => expect(intent(t)).toBe('OPT_OUT'));
+
+  it.each([
+    '¿Pueden dar de baja la factura F-1 que está duplicada?',
+    'Cancelar la factura 123',
+    'Bajamos el precio la próxima vez',
+    'baja de precio en la factura de la semana pasada por favor',
+  ])('no es baja: %s', (t) => expect(intent(t)).not.toBe('OPT_OUT'));
 });

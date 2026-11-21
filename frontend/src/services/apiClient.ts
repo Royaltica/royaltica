@@ -1896,11 +1896,6 @@ export const api = {
     return request('POST', `/admin/whatsapp/unmatched/${id}/dismiss`);
   },
 
-  /** Avisos de Meta: plantillas rechazadas/pausadas y calidad del número. */
-  async adminWaAlerts(): Promise<{ id: string; at: string; field: string; title: string }[]> {
-    return request('GET', '/admin/whatsapp/alerts');
-  },
-
   // ── Cobranza IA: conversación de WhatsApp (plantilla → ventana 24h → IA) ──
 
   async getWaConversations(): Promise<WaConversationSummary[]> {
