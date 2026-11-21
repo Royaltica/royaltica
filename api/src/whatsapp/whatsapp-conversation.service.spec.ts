@@ -345,6 +345,29 @@ describe('WhatsappConversationService', () => {
       resolvedAt: null,
     };
 
+    it('lista la bandeja con candidatos y el nombre de su organización', async () => {
+      const p = prisma as unknown as Record<string, unknown>;
+      p.whatsappInboundUnmatched = {
+        findMany: jest.fn().mockResolvedValue([
+          { ...row, candidates: [{ organizationId: 'org-1', customerId: 'c-1', name: 'ACME' }, { organizationId: 'org-2', customerId: 'c-2', name: 'Beta' }] },
+          { ...row, id: 'u-10', candidates: [] },
+        ]),
+      };
+      p.organization = { findMany: jest.fn().mockResolvedValue([{ id: 'org-1', name: 'Uno SA' }, { id: 'org-2', name: 'Dos SA' }]) };
+      const r = await service.listUnmatchedPlatform();
+      expect(r[0]).toMatchObject({
+        id: 'u-9',
+        reason: 'AMBIGUOUS',
+        from: '5215512345678',
+        text: 'Todo en orden',
+        candidates: [
+          { customerId: 'c-1', customerName: 'ACME', organizationName: 'Uno SA' },
+          { customerId: 'c-2', customerName: 'Beta', organizationName: 'Dos SA' },
+        ],
+      });
+      expect(r[1]).toMatchObject({ id: 'u-10', reason: 'NO_CANDIDATES', candidates: [] });
+    });
+
     it('asigna a un cliente de cualquier organización y la fila queda con esa organización', async () => {
       const unmatched = {
         findFirst: jest.fn().mockResolvedValue(row),

@@ -1,5 +1,5 @@
 # ─── Stage 1: build ────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Alpine no trae OpenSSL por default. Prisma necesita el binario `openssl`
@@ -17,7 +17,7 @@ COPY . .
 RUN npx prisma generate && npm run build
 
 # ─── Stage 2: production ───────────────────────────────
-FROM node:20-alpine AS production
+FROM node:22-alpine AS production
 WORKDIR /app
 ENV NODE_ENV=production
 

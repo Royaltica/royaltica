@@ -742,12 +742,42 @@ ${hilo}
   // de VARIAS organizaciones (organizationId null). Consultas de sistema,
   // sin withOrg, solo expuestas a SUPERADMIN.
 
+  /**
+   * Bandeja de Royáltica: respuestas que no se pudieron atribuir (teléfono de
+   * nadie, o de clientes de varias organizaciones). Con el nombre de cada
+   * candidato y su organización, para decidir a quién asignarla.
+   */
   async listUnmatchedPlatform() {
-    return this.prisma.whatsappInboundUnmatched.findMany({
+    const rows = await this.prisma.whatsappInboundUnmatched.findMany({
       where: { organizationId: null, resolvedAt: null },
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
+    const parsed = rows.map((r) => ({
+      row: r,
+      candidates: (Array.isArray(r.candidates) ? r.candidates : []).flatMap((c) => {
+        const x = c as { organizationId?: unknown; customerId?: unknown; name?: unknown };
+        return typeof x.customerId === 'string' && typeof x.organizationId === 'string'
+          ? [{ customerId: x.customerId, organizationId: x.organizationId, customerName: typeof x.name === 'string' ? x.name : '' }]
+          : [];
+      }),
+    }));
+    const orgIds = [...new Set(parsed.flatMap((p) => p.candidates.map((c) => c.organizationId)))];
+    const orgs = orgIds.length
+      ? await this.prisma.organization.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } })
+      : [];
+    const orgName = new Map(orgs.map((o) => [o.id, o.name]));
+    return parsed.map(({ row, candidates }) => ({
+      id: row.id,
+      receivedAt: row.createdAt.toISOString(),
+      reason: candidates.length ? ('AMBIGUOUS' as const) : ('NO_CANDIDATES' as const),
+      from: row.fromPhone,
+      kind: row.kind,
+      text: row.body,
+      resolved: false,
+      resolution: null,
+      candidates: candidates.map((c) => ({ ...c, organizationName: orgName.get(c.organizationId) ?? '' })),
+    }));
   }
 
   async assignUnmatchedPlatform(adminUserId: string, id: string, customerId: string) {

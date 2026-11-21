@@ -807,12 +807,20 @@ function ReporteSombra() {
       <div className="text-[12.5px] font-semibold text-brand-ink mb-2">
         En las últimas 24 horas se habrían enviado {rep.total} mensaje(s):
       </div>
+      {(rep.alreadyPaidCount ?? 0) > 0 ? (
+        <p role="alert" className="text-[12px] font-semibold text-red-700 mb-2">
+          {rep.alreadyPaidCount} habrían ido a facturas que ya estaban pagadas. Revisa la carga de pagos antes de activar los envíos reales.
+        </p>
+      ) : (
+        <p className="text-[12px] text-emerald-700 mb-2">Ninguno habría ido a una factura ya pagada.</p>
+      )}
       <ul className="space-y-1 max-h-48 overflow-auto">
         {rep.items.slice(0, 50).map((it, i) => (
           <li key={i} className="text-[12px] text-brand-ink/65">
             {it.customerName ?? 'Cliente'} · factura {it.folio ?? '—'} · {it.channel ?? '—'}
             {it.template ? ` (${it.template})` : ''}
             {typeof it.daysOverdue === 'number' ? ` · ${it.daysOverdue} día(s) respecto al vencimiento` : ''}
+            {it.alreadyPaid ? <span className="text-red-700 font-semibold"> · ya estaba pagada</span> : null}
           </li>
         ))}
       </ul>

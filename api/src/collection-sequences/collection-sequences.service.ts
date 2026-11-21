@@ -836,18 +836,31 @@ export class CollectionSequencesService {
       ? await this.prisma.withOrg(organizationId, (tx) =>
           tx.invoice.findMany({
             where: { id: { in: invoiceIds }, organizationId },
-            select: { id: true, folio: true, cfdiUuid: true, customer: { select: { name: true } } },
+            select: {
+              id: true,
+              folio: true,
+              cfdiUuid: true,
+              status: true,
+              paidDate: true,
+              customer: { select: { name: true } },
+              ledgerPayments: { where: { reversedAt: null }, select: { paidAt: true } },
+            },
           }),
         )
       : [];
     const byId = new Map(invoices.map((i) => [i.id, i]));
-    return {
-      since: from.toISOString(),
-      total: logs.length,
-      items: logs.map((l) => {
+    // Indicador del criterio de salida: mensajes que se habrían mandado a una
+    // factura que en ese momento YA estaba pagada (pago real con fecha
+    // anterior, aunque se haya registrado después). Debe ser 0.
+    const alreadyPaid = (inv: (typeof invoices)[number] | undefined, at: Date) =>
+      !!inv &&
+      (inv.ledgerPayments.some((p) => p.paidAt <= at) ||
+        (inv.status === 'PAID' && !!inv.paidDate && inv.paidDate <= at));
+    const items = logs.map((l) => {
         const m = (l.metadata ?? {}) as Record<string, unknown>;
         const inv = byId.get(String(m.invoiceId ?? ''));
         return {
+          alreadyPaid: alreadyPaid(inv, l.createdAt),
           at: l.createdAt,
           invoiceId: m.invoiceId ?? null,
           folio: inv ? this.folioOf(inv) : null,
@@ -857,7 +870,12 @@ export class CollectionSequencesService {
           daysOverdue: m.daysOverdue ?? null,
           stepOrder: m.stepOrder ?? null,
         };
-      }),
+      });
+    return {
+      since: from.toISOString(),
+      total: logs.length,
+      alreadyPaidCount: items.filter((i) => i.alreadyPaid).length,
+      items,
     };
   }
 

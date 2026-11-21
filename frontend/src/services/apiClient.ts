@@ -2301,7 +2301,10 @@ export interface CollectionRulesSettings {
 export interface ShadowReport {
   since: string;
   total: number;
+  /** Mensajes que habrían ido a facturas que ya estaban pagadas (meta: 0). */
+  alreadyPaidCount?: number;
   items: {
+    alreadyPaid?: boolean;
     at: string;
     invoiceId: string | null;
     folio: string | null;
