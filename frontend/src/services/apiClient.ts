@@ -1864,6 +1864,11 @@ export const api = {
     return request<PortfolioCustomer[]>('GET', '/receivables/portfolio');
   },
 
+  /** Segmentos de la cartera calculados en el servidor (C3). */
+  async getSegments(): Promise<PortfolioSegments> {
+    return request<PortfolioSegments>('GET', '/receivables/segments');
+  },
+
   // ── Cobranza IA: conversación de WhatsApp (plantilla → ventana 24h → IA) ──
 
   async getWaConversations(): Promise<WaConversationSummary[]> {
@@ -2888,4 +2893,30 @@ export interface ActivityRow {
   metadata: Record<string, unknown>;
   createdAt: string;
   user: { id: string; name: string; email: string } | null;
+}
+
+/** GET /receivables/segments: segmentos de cobranza calculados en el servidor. */
+export type CustomerSegmentId = 'puntual' | 'tardio' | 'olvidadizo' | 'deterioro' | 'moroso' | 'disputa' | 'nuevo';
+
+export interface PortfolioSegments {
+  generatedAt: string;
+  segments: { segment: CustomerSegmentId; name: string; count: number; outstanding: number }[];
+  byCategory: { category: string; count: number; outstanding: number }[];
+  byRiskTier: { riskTier: string; count: number; outstanding: number }[];
+  customers: {
+    id: string;
+    name: string;
+    category: string | null;
+    riskTier: string | null;
+    score: number | null;
+    outstanding: number;
+    brokenPromises: number;
+    disputed: boolean;
+    segment: CustomerSegmentId;
+    segmentName: string;
+    reason: string;
+    onTimeRate: number;
+    avgDaysLate: number;
+    offsetDays: number;
+  }[];
 }
