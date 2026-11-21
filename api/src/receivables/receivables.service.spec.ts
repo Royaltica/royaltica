@@ -606,4 +606,20 @@ describe('ReceivablesService', () => {
       );
     });
   });
+
+  describe('segments (C3, calculados en el servidor)', () => {
+    it('devuelve segmentos por organización y un Agente solo ve sus clientes', async () => {
+      (prisma as unknown as { activityLog: { findMany: jest.Mock } }).activityLog = { findMany: jest.fn().mockResolvedValue([]) };
+      prisma.customer.findMany.mockResolvedValue([
+        { id: 'c-1', name: 'ACME', category: 'Distribuidor', riskTier: 'SANO', score: 95, invoices: [] },
+      ]);
+      const r = await service.segments({ id: 'ag-1', organizationId: 'org-1', operationalProfile: 'AGENTE_EJECUTIVO' } as never);
+      expect(prisma.withOrg).toHaveBeenCalledWith('org-1', expect.any(Function));
+      expect(prisma.customer.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ organizationId: 'org-1', assignedAgentId: 'ag-1' }) }),
+      );
+      expect(r.customers).toEqual([expect.objectContaining({ id: 'c-1', segment: 'nuevo', category: 'Distribuidor' })]);
+      expect(r.byCategory).toEqual([{ category: 'Distribuidor', count: 1, outstanding: 0 }]);
+    });
+  });
 });

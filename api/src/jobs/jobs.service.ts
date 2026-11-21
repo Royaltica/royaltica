@@ -24,6 +24,7 @@ import {
   DEFAULT_CURRENCY,
   DEFAULT_LOCALE,
 } from '../organization/organization.constants';
+import { loadSegmentInputs, newlyWorsened, SEGMENT_NAMES } from '../receivables/customer-segments';
 
 /**
  * Acción de bitácora (ActivityLog, organizationId=null = evento de
@@ -717,12 +718,53 @@ export class JobsService {
           });
         }
       }
+
+      // Segmentos (C3): quien entró hoy a "En deterioro" o "Moroso recurrente"
+      // por un pago de las últimas 24 h. Va a la campana y al resumen diario
+      // por WhatsApp (no es crítico). Un fallo aquí no detiene el recálculo.
+      alerted += await this.alertWorsenedSegments(org.id, admins);
     }
 
     this.logger.log(
       `customer-score-recompute: ${recomputed} recalculado(s), ${alerted} alerta(s).`,
     );
     return { recomputed, alerted };
+  }
+
+  private async alertWorsenedSegments(
+    organizationId: string,
+    admins: { id: string; email: string }[],
+  ): Promise<number> {
+    if (admins.length === 0) return 0;
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const inputs = await this.prisma.withOrg(organizationId, (tx) =>
+        loadSegmentInputs(tx, organizationId),
+      );
+      const changes = newlyWorsened(inputs, since);
+      for (const ch of changes) {
+        await this.fanOut(organizationId, admins, {
+          type: 'CUSTOMER_SEGMENT_WORSENED',
+          title: `${ch.name} pasó a ${SEGMENT_NAMES[ch.segment]}`,
+          body: `${ch.reason} Antes: ${SEGMENT_NAMES[ch.previous]}. Saldo abierto: $${ch.outstanding.toLocaleString('es-MX', { minimumFractionDigits: 2 })}.`,
+        });
+        await this.activity.record({
+          organizationId,
+          action: 'CUSTOMER_SEGMENT_WORSENED',
+          entityType: 'Customer',
+          entityId: ch.id,
+          metadata: { segment: ch.segment, previous: ch.previous },
+        });
+      }
+      return changes.length;
+    } catch (err) {
+      this.logger.warn(
+        `customer-score-recompute: no se pudieron revisar los segmentos de ${organizationId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return 0;
+    }
   }
 
   // ── Análisis periódico de cartera (quincenal/mensual/bimestral) ──

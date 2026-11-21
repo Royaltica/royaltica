@@ -33,6 +33,7 @@ import {
 import { RFC_REGEX } from '../customers/dto/create-customer.dto';
 import { QueryReceivablesDto } from './dto/query-receivables.dto';
 import { empatarCliente, rfcValido, type ClienteMatch } from './cfdi-match';
+import { loadSegmentInputs, summarizeSegments } from './customer-segments';
 
 /** Archivo recibido por multer (solo lo que se usa). */
 export type ArchivoSubido = { buffer: Buffer; originalname: string };
@@ -243,6 +244,16 @@ export class ReceivablesService {
         history: pagadas.map((i) => Math.round((i.paidDate!.getTime() - i.dueDate!.getTime()) / DIA)),
       };
     });
+  }
+
+  /** Segmentos de la cartera (C3). Un Agente solo ve sus clientes asignados. */
+  async segments(user: AuthenticatedUser) {
+    const organizationId = this.requireOrg(user);
+    const soloAsignados = user.operationalProfile === 'AGENTE_EJECUTIVO';
+    const inputs = await this.prisma.withOrg(organizationId, (tx) =>
+      loadSegmentInputs(tx, organizationId, soloAsignados ? { assignedAgentId: user.id } : {}),
+    );
+    return { generatedAt: new Date().toISOString(), ...summarizeSegments(inputs) };
   }
 
   async findAll(
