@@ -57,8 +57,31 @@ function LegacyApp() {
   // todo — ver punto 5c de José: separación completa CXP/CXC.
   const [apiProduct, setApiProduct] = useState<string | null>(null);
 
+  // Al recargar la página Firebase recuerda la identidad, pero el rol y la
+  // sesión de Royáltica vivían solo en memoria: la app caía al login (cada
+  // recarga = cerrar sesión). Ahora, en la PRIMERA revisión, se rehace el canje
+  // real contra el backend (con 2FA si la cuenta lo tiene), igual que CxCApp.
+  // Las siguientes llamadas (login/logout) siguen como antes.
+  const primeraRevision = React.useRef(true);
+  const restaurarRef = React.useRef<(u: FirebaseUser) => Promise<void>>(async () => {});
   useEffect(() => {
-    return onAuthStateChanged(auth, (u) => {
+    return onAuthStateChanged(auth, async (u) => {
+      if (primeraRevision.current) {
+        primeraRevision.current = false;
+        if (u) {
+          try {
+            await restaurarRef.current(u);
+          } catch {
+            // Sesión inválida o cuenta no invitada: se limpia todo, sin estado a medias.
+            api.logout();
+            endImpersonation();
+            await signOut(auth).catch(() => {});
+            setUser(null);
+          }
+          setLoading(false);
+          return;
+        }
+      }
       setUser(u);
       setLoading(false);
     });
@@ -69,18 +92,6 @@ function LegacyApp() {
   }, [user]);
 
   useInactivityLock(!!user && !isLocked && !needs2FA, handleLock);
-
-  if (loading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-brand-paper">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
-          className="w-12 h-12 border-2 border-brand-sand border-t-brand-ink rounded-full"
-        />
-      </div>
-    );
-  }
 
   // Login ÚNICO + ruteo por rol: Firebase valida la identidad (correo+contraseña
   // o Google), el backend canjea ese ID token por la sesión propia
@@ -183,6 +194,7 @@ function LegacyApp() {
 
   // Cierra sesión y vuelve a la pantalla de login (ya no hay selección de rol).
   const handleLogout = () => {
+    endImpersonation(); // borra el JWT de superadmin guardado, si lo había
     api.logout();
     signOut(auth);
     setUser(null);
@@ -196,6 +208,32 @@ function LegacyApp() {
   // pantalla de selección de rol que ya no existe) y cerraba la sesión.
   // Ahora solo regresa al inicio del portal.
   const goHome = () => navigate('/');
+
+  // Restaurar al recargar: si el superadmin estaba "viendo como cliente", se
+  // conserva esa sesión; si no, se canjea de nuevo la identidad de Firebase.
+  restaurarRef.current = async (u: FirebaseUser) => {
+    if (isImpersonating()) {
+      try {
+        await applyApiUser(await api.me(), false, null);
+        return;
+      } catch {
+        endImpersonation();
+      }
+    }
+    await finishLogin(await u.getIdToken());
+  };
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-brand-paper">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
+          className="w-12 h-12 border-2 border-brand-sand border-t-brand-ink rounded-full"
+        />
+      </div>
+    );
+  }
 
   if (!user) {
     return <LandingPage onLogin={handleLogin} onGoogleLogin={handleGoogleLogin} />;
