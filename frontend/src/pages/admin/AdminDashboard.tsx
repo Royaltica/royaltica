@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckCircle2, LogOut, LogIn, ChevronRight, FileText, X, Plus, ChevronLeft, Activity, Loader2, DollarSign, Crown, Users, Server, Gauge, Handshake, HeartPulse } from 'lucide-react';
+import { CheckCircle2, LogOut, LogIn, ChevronRight, FileText, X, Plus, ChevronLeft, Activity, Loader2, DollarSign, Crown, Users, Server, Gauge, Handshake, HeartPulse, MessageSquare } from 'lucide-react';
 import type { User as FirebaseUser } from 'firebase/auth';
 import { api, isRealId, type AdminOrg, type AdminActivity, type AdminCostByFeature, type AdminOrgCost, type AdminCollectionEngineHealth, type AdminRemindersCost, type AdminLoginEvent, type AdminHealthHistory } from '../../services/apiClient.ts';
 import { NotificationBell } from '../../components/NotificationBell.tsx';
 import { SidebarLink } from '../../components/SidebarLink.tsx';
 import { LeadsAdminPanel } from '../../features/admin/LeadsAdminPanel.tsx';
+import { WhatsappAdminPanel } from '../../features/admin/WhatsappAdminPanel.tsx';
 
 // ─── Admin Dashboard (Royáltica CEO Portal) ──────────────────────────────────
 const EMPTY_SEATS = { admin: 0, supervisor: 0, agente: 0 };
@@ -131,8 +132,8 @@ const fmtCostMxn = (n: number): string =>
   n === 0 ? '$0.00' : n < 1 ? `$${n.toFixed(4)}` : `$${n.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 
-type AdminTab = 'overview' | 'clients' | 'health' | 'activity' | 'leads';
-const ADMIN_TABS: AdminTab[] = ['overview', 'clients', 'health', 'activity', 'leads'];
+type AdminTab = 'overview' | 'clients' | 'health' | 'activity' | 'leads' | 'whatsapp';
+const ADMIN_TABS: AdminTab[] = ['overview', 'clients', 'health', 'activity', 'leads', 'whatsapp'];
 
 export function AdminDashboard({ user, onLogout, onBackToRole, onImpersonate }: { user: FirebaseUser, onLogout: () => void, onBackToRole: () => void, onImpersonate?: (orgId: string) => Promise<void> }) {
   // La pestaña activa vive en la URL (react-router): permite recargar,
@@ -370,6 +371,7 @@ export function AdminDashboard({ user, onLogout, onBackToRole, onImpersonate }: 
             <SidebarLink icon={<Server size={18} />} label="Sistema" active={adminTab === 'health'} collapsed={isSidebarCollapsed} onClick={() => setAdminTab('health')} />
             <SidebarLink icon={<Activity size={18} />} label="Actividad" active={adminTab === 'activity'} collapsed={isSidebarCollapsed} onClick={() => setAdminTab('activity')} />
             <SidebarLink icon={<Handshake size={18} />} label="Leads" active={adminTab === 'leads'} collapsed={isSidebarCollapsed} onClick={() => setAdminTab('leads')} />
+            <SidebarLink icon={<MessageSquare size={18} />} label="WhatsApp" active={adminTab === 'whatsapp'} collapsed={isSidebarCollapsed} onClick={() => setAdminTab('whatsapp')} />
           </nav>
           <div className="mt-auto pb-6 space-y-2 border-t border-brand-bone/10 pt-4">
             <button onClick={onBackToRole} className="text-brand-bone/50 hover:text-brand-bone transition-colors flex items-center gap-3 text-[9px] uppercase font-bold tracking-widest w-full cursor-pointer">
@@ -389,7 +391,7 @@ export function AdminDashboard({ user, onLogout, onBackToRole, onImpersonate }: 
           <div className="flex items-center justify-between mb-10">
             <div>
               <h2 className="text-4xl font-serif text-brand-ink">
-                {adminTab === 'overview' ? 'Panel de Control' : adminTab === 'clients' ? 'Gestión de Clientes' : adminTab === 'health' ? 'Salud del Sistema' : adminTab === 'leads' ? 'Leads' : 'Registro de Actividad'}
+                {adminTab === 'overview' ? 'Panel de Control' : adminTab === 'clients' ? 'Gestión de Clientes' : adminTab === 'health' ? 'Salud del Sistema' : adminTab === 'leads' ? 'Leads' : adminTab === 'whatsapp' ? 'WhatsApp sin dueño' : 'Registro de Actividad'}
               </h2>
               <p className="text-sm text-brand-ink/40 mt-1">Royáltica Operations · {user.displayName || 'CEO'}</p>
             </div>
@@ -1003,6 +1005,13 @@ export function AdminDashboard({ user, onLogout, onBackToRole, onImpersonate }: 
           {adminTab === 'leads' && (
             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
               <LeadsAdminPanel />
+            </motion.div>
+          )}
+
+          {/* ═══ WHATSAPP SIN DUEÑO ═══ */}
+          {adminTab === 'whatsapp' && (
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+              <WhatsappAdminPanel />
             </motion.div>
           )}
         </div>

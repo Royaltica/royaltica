@@ -175,6 +175,31 @@ describe('CollectionSequencesService', () => {
     jest.useRealTimers();
   });
 
+  describe('reporte de sombra: mensajes a facturas ya pagadas', () => {
+    it('cuenta los que habrían ido a una factura con pago anterior al mensaje', async () => {
+      const at = new Date('2026-12-02T17:00:00Z');
+      const p = prisma as unknown as Record<string, Record<string, jest.Mock>>;
+      p.activityLog.findMany = jest.fn().mockResolvedValue([
+        { createdAt: at, metadata: { invoiceId: 'pagada', stepOrder: 1 } },
+        { createdAt: at, metadata: { invoiceId: 'pagada-despues', stepOrder: 1 } },
+        { createdAt: at, metadata: { invoiceId: 'pendiente', stepOrder: 2 } },
+      ]);
+      p.invoice.findMany = jest.fn().mockResolvedValue([
+        { id: 'pagada', folio: 'F-1', cfdiUuid: 'u1', status: 'PENDING', paidDate: null, customer: { name: 'A' }, ledgerPayments: [{ paidAt: new Date('2026-12-01T12:00:00Z') }] },
+        { id: 'pagada-despues', folio: 'F-2', cfdiUuid: 'u2', status: 'PAID', paidDate: new Date('2026-12-03T12:00:00Z'), customer: { name: 'B' }, ledgerPayments: [{ paidAt: new Date('2026-12-03T12:00:00Z') }] },
+        { id: 'pendiente', folio: 'F-3', cfdiUuid: 'u3', status: 'PENDING', paidDate: null, customer: { name: 'C' }, ledgerPayments: [] },
+      ]);
+      const r = await service.shadowReport({ organizationId: 'org-1' } as never);
+      expect(r.alreadyPaidCount).toBe(1);
+      expect(r.items.map((i) => i.alreadyPaid)).toEqual([true, false, false]);
+      expect(p.invoice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ ledgerPayments: { where: { reversedAt: null }, select: { paidAt: true } } }),
+        }),
+      );
+    });
+  });
+
   describe('caída a media operación (C4)', () => {
     const marca = (stepOrder: number, channel = 'EMAIL') => ({
       action: 'COLLECTION_SEQUENCE_STEP_SENDING',
