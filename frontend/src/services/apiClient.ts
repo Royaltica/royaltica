@@ -1980,8 +1980,9 @@ export const api = {
     return request<{ policy: CollectionLevelPlan }>('PATCH', '/collection-sequences/level-plan', settings);
   },
 
-  async getShadowReport(): Promise<ShadowReport> {
-    return request<ShadowReport>('GET', '/collection-sequences/runs/shadow-report');
+  /** `dias`: 1 = últimas 24 h; 7 = la semana de prueba del piloto (máx. 14). */
+  async getShadowReport(dias = 1): Promise<ShadowReport> {
+    return request<ShadowReport>('GET', `/collection-sequences/runs/shadow-report?dias=${dias}`);
   },
 
   // ── Interruptor de emergencia de cobranza ──
@@ -2300,6 +2301,8 @@ export interface CollectionRulesSettings {
 /** Lo que el modo sombra habría enviado (GET /collection-sequences/runs/shadow-report). */
 export interface ShadowReport {
   since: string;
+  /** El periodo traía más registros de los que se revisan (no confiar en el conteo). */
+  truncated?: boolean;
   total: number;
   /** Mensajes que habrían ido a facturas que ya estaban pagadas (meta: 0). */
   alreadyPaidCount?: number;

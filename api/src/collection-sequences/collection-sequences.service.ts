@@ -84,6 +84,9 @@ export function pickNextStep<T extends StepLike>(
 }
 
 /** Texto en WhatsApp DENTRO de la ventana de 24h (fuera de ella va la plantilla). */
+/** Tope de registros del reporte de sombra (una semana de piloto cabe de sobra). */
+const SHADOW_REPORT_MAX = 2000;
+
 const tpl = (name: string) => COLLECTION_TEMPLATES.find((t) => t.name === name)!;
 
 /**
@@ -822,9 +825,12 @@ export class CollectionSequencesService {
           createdAt: { gte: from },
         },
         orderBy: { createdAt: 'desc' },
-        take: 200,
+        take: SHADOW_REPORT_MAX + 1,
       }),
     );
+    // Una semana de piloto cabe de sobra; si se pasa, se avisa en vez de contar mal.
+    const truncated = logs.length > SHADOW_REPORT_MAX;
+    if (truncated) logs.length = SHADOW_REPORT_MAX;
     const invoiceIds = [
       ...new Set(
         logs
@@ -873,6 +879,7 @@ export class CollectionSequencesService {
       });
     return {
       since: from.toISOString(),
+      truncated,
       total: logs.length,
       alreadyPaidCount: items.filter((i) => i.alreadyPaid).length,
       items,

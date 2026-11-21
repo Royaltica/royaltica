@@ -22,6 +22,7 @@ beforeEach(() => {
   vi.spyOn(api, 'getUsers').mockResolvedValue([structuredClone(user)]);
   vi.spyOn(api, 'getLevelPlan').mockResolvedValue({ policy: structuredClone(policy) });
   vi.spyOn(api, 'getCollectionStatus').mockResolvedValue({ paused: false } as never);
+  vi.spyOn(api, 'getShadowReport').mockResolvedValue({ since: '2026-11-20T00:00:00Z', total: 0, alreadyPaidCount: 0, items: [] });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -165,5 +166,46 @@ describe('Reglas persistentes', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('No se pudieron cargar las reglas');
     expect(screen.queryByRole('button', { name: 'Guardar reglas' })).not.toBeInTheDocument();
     expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('Modo sombra y plan para la semana de prueba', () => {
+  it('con el modo sombra apagado explica qué va a aparecer en el reporte', async () => {
+    render(<Reglas />);
+    expect(await screen.findByText(/El modo sombra está apagado/)).toBeInTheDocument();
+  });
+
+  it('el reporte de 7 días pide la semana y muestra el indicador de facturas pagadas', async () => {
+    vi.mocked(api.getLevelPlan).mockResolvedValue({ policy: { ...policy, shadowMode: true } });
+    vi.mocked(api.getShadowReport).mockImplementation(async (dias = 1) => ({
+      since: '2026-11-13T00:00:00Z',
+      total: dias === 7 ? 2 : 0,
+      alreadyPaidCount: 0,
+      items: dias === 7
+        ? [
+            { at: '2026-11-18T17:00:00Z', invoiceId: 'i1', folio: 'F-1', customerName: 'Cliente A', channel: 'WHATSAPP', template: null, daysOverdue: 3, stepOrder: 1, alreadyPaid: false },
+            { at: '2026-11-19T17:00:00Z', invoiceId: 'i2', folio: 'F-2', customerName: 'Cliente B', channel: 'EMAIL', template: null, daysOverdue: 5, stepOrder: 2, alreadyPaid: false },
+          ]
+        : [],
+    }));
+    render(<Reglas />);
+    expect(await screen.findByText('En las últimas 24 horas no se habría enviado nada.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '7 días' }));
+    expect(await screen.findByText('Ninguno habría ido a una factura ya pagada.')).toBeInTheDocument();
+    expect(api.getShadowReport).toHaveBeenLastCalledWith(7);
+    expect(screen.getByText(/En los últimos 7 días se habrían enviado 2 mensaje/)).toBeInTheDocument();
+  });
+
+  it('sin plan no muestra un máximo semanal en 0 y al prender el modo sombra recarga el calendario', async () => {
+    vi.mocked(api.getLevelPlan).mockResolvedValueOnce({ policy: null as never }).mockResolvedValueOnce({ policy: null as never });
+    const update = vi.spyOn(api, 'updateLevelPlanSettings').mockResolvedValue({ policy: { ...policy, shadowMode: true } } as never);
+    render(<Reglas />);
+    expect(await screen.findByRole('button', { name: 'Crear plan con aprobación' })).toBeInTheDocument();
+    expect(screen.queryByText('Máximo de mensajes por semana')).not.toBeInTheDocument();
+    vi.mocked(api.getLevelPlan).mockResolvedValue({ policy: { ...policy, shadowMode: true } });
+    fireEvent.click(await screen.findByRole('switch', { name: 'Modo sombra' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ shadowMode: true }));
+    expect(await screen.findByText('Máximo de mensajes por semana')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Crear plan con aprobación' })).not.toBeInTheDocument();
   });
 });

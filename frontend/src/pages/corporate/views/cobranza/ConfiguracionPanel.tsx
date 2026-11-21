@@ -685,7 +685,9 @@ export function Reglas() {
   };
   return (
     <fieldset disabled={ocupado} className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-      <SeguridadEnvios />
+      {/* key: si el plan se crea desde "Cuándo se manda", esta tarjeta se recarga;
+          alCrearPlan: si el plan se crea al prender el modo sombra, se recarga el calendario. */}
+      <SeguridadEnvios key={politica ? politica.id : 'sin-plan'} alCrearPlan={politica ? undefined : () => { setCarga((n) => n + 1); }} />
       <Tarjeta titulo="Cuándo se manda" detalle="Calendario y límite de contactos del plan de cobranza.">
         <div className="mb-4">
           <ModoEnvio />
@@ -693,8 +695,9 @@ export function Reglas() {
         <Fila titulo="Hora de envío" detalle="Cuando salen los mensajes automáticos del día (hora del centro de México). Se guarda en el servidor.">
           <HoraMotor />
         </Fila>
-        {!politica && <div className="mb-4"><p className="text-[13px]">Sin plan de cobranza. Crea uno con aprobación manual para configurar su calendario.</p><button type="button" onClick={() => void crearPlan()} className={BTN_SEC + ' mt-2'}>Crear plan con aprobación</button></div>}
-        <fieldset disabled={!politica}>
+        {!politica && <div className="mb-4"><p className="text-[13px]">Sin plan de cobranza. Crea uno con aprobación manual para configurar su calendario (empieza con 3 mensajes por semana; ningún mensaje sale sin que alguien lo apruebe).</p><button type="button" onClick={() => void crearPlan()} className={BTN_SEC + ' mt-2'}>Crear plan con aprobación</button></div>}
+        {/* Sin plan no hay calendario ni límite que mostrar (antes salía un 0 engañoso). */}
+        {politica && <fieldset>
         <Fila titulo="Días con mensajes" detalle={`Al guardar, se registran fechas excluidas para los próximos ${VIGENCIA_DIAS} días. Hay que renovar el calendario antes de que venza. Al habilitar un día antes bloqueado se quitan sus exclusiones dentro del periodo.`}>
           <div className="flex gap-1">
             {DIAS.map((d, i) => (
@@ -715,7 +718,7 @@ export function Reglas() {
           <Stepper valor={r.maxSemana} min={1} max={100} sufijo="por semana" onChange={(v) => cambiar({ maxSemana: v })} />
         </Fila>
         <button type="button" onClick={() => void guardarPolitica()} className={BTN_PRI + ' mt-4'}><Check size={13} /> Guardar calendario y límite</button>
-        </fieldset>
+        </fieldset>}
       </Tarjeta>
 
       <Tarjeta titulo="Lo que se puede ofrecer" detalle="Preferencias para propuestas de cobranza. Los acuerdos requieren revisión humana.">
@@ -793,37 +796,75 @@ function HoraMotor() {
   );
 }
 
-/** Lo que el modo sombra habría enviado en las últimas 24 h. */
-function ReporteSombra() {
+/**
+ * Lo que el modo sombra habría enviado (últimas 24 h o 7 días). Se muestra
+ * siempre: con el modo apagado explica qué va a aparecer aquí, para que el
+ * criterio de la semana de prueba ("0 mensajes a facturas pagadas") se vea.
+ */
+function ReporteSombra({ activo }: { activo: boolean }) {
+  const [dias, setDias] = React.useState<1 | 7>(1);
   const [rep, setRep] = React.useState<ShadowReport | null | undefined>(undefined);
   React.useEffect(() => {
-    api.getShadowReport().then(setRep).catch(() => setRep(null));
-  }, []);
-  if (rep === undefined) return null;
-  if (rep === null) return <p className="text-[12px] text-brand-ink/45 mt-2">No se pudo cargar lo que se habría enviado.</p>;
-  if (rep.total === 0) return <p className="text-[12px] text-brand-ink/45 mt-2">En las últimas 24 horas no se habría enviado nada.</p>;
+    setRep(undefined);
+    api.getShadowReport(dias).then(setRep).catch(() => setRep(null));
+  }, [dias]);
+  const periodo = dias === 1 ? 'En las últimas 24 horas' : 'En los últimos 7 días';
   return (
-    <div className="mt-3 rounded-2xl bg-brand-ink/[0.03] p-3">
-      <div className="text-[12.5px] font-semibold text-brand-ink mb-2">
-        En las últimas 24 horas se habrían enviado {rep.total} mensaje(s):
+    <div className="mt-2 mb-1 rounded-2xl bg-brand-ink/[0.03] p-3" aria-label="Reporte del modo sombra">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="text-[12.5px] font-semibold text-brand-ink">Lo que se habría enviado</div>
+        <div className="flex gap-1" role="group" aria-label="Periodo del reporte">
+          {([1, 7] as const).map((d) => (
+            <button
+              key={d}
+              type="button"
+              aria-pressed={dias === d}
+              onClick={() => setDias(d)}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${dias === d ? 'bg-brand-ink text-white' : 'text-brand-ink/55 hover:bg-brand-ink/5'}`}
+            >
+              {d === 1 ? '24 h' : '7 días'}
+            </button>
+          ))}
+        </div>
       </div>
-      {(rep.alreadyPaidCount ?? 0) > 0 ? (
-        <p role="alert" className="text-[12px] font-semibold text-red-700 mb-2">
-          {rep.alreadyPaidCount} habrían ido a facturas que ya estaban pagadas. Revisa la carga de pagos antes de activar los envíos reales.
+      {rep === undefined ? (
+        <p className="text-[12px] text-brand-ink/45">Cargando…</p>
+      ) : rep === null ? (
+        <p className="text-[12px] text-brand-ink/45">No se pudo cargar lo que se habría enviado.</p>
+      ) : rep.total === 0 ? (
+        <p className="text-[12px] text-brand-ink/55">
+          {activo
+            ? `${periodo} no se habría enviado nada.`
+            : 'El modo sombra está apagado, así que no hay nada registrado. Al prenderlo, aquí verás cada día a quién se le habría escrito y si alguno ya había pagado (la meta de la semana de prueba es 0).'}
         </p>
       ) : (
-        <p className="text-[12px] text-emerald-700 mb-2">Ninguno habría ido a una factura ya pagada.</p>
+        <>
+          <div className="text-[12.5px] text-brand-ink mb-2">
+            {periodo} se habrían enviado {rep.total} mensaje(s){rep.truncated ? ' o más' : ''}.
+          </div>
+          {(rep.alreadyPaidCount ?? 0) > 0 ? (
+            <p role="alert" className="text-[12px] font-semibold text-red-700 mb-2">
+              {rep.alreadyPaidCount} habrían ido a facturas que ya estaban pagadas. Revisa la carga de pagos antes de activar los envíos reales.
+            </p>
+          ) : (
+            <p className="text-[12px] text-emerald-700 mb-2">Ninguno habría ido a una factura ya pagada.</p>
+          )}
+          {rep.truncated && (
+            <p className="text-[12px] text-amber-700 mb-2">Hay más registros de los que se revisan; elige un periodo más corto.</p>
+          )}
+          <ul className="space-y-1 max-h-48 overflow-auto">
+            {rep.items.slice(0, 50).map((it, i) => (
+              <li key={i} className="text-[12px] text-brand-ink/65">
+                {dias === 7 ? `${new Date(it.at).toLocaleDateString('es-MX', { day: 'numeric', month: 'short' })} · ` : ''}
+                {it.customerName ?? 'Cliente'} · factura {it.folio ?? '—'} · {it.channel ?? '—'}
+                {it.template ? ` (${it.template})` : ''}
+                {typeof it.daysOverdue === 'number' ? ` · ${it.daysOverdue} día(s) respecto al vencimiento` : ''}
+                {it.alreadyPaid ? <span className="text-red-700 font-semibold"> · ya estaba pagada</span> : null}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
-      <ul className="space-y-1 max-h-48 overflow-auto">
-        {rep.items.slice(0, 50).map((it, i) => (
-          <li key={i} className="text-[12px] text-brand-ink/65">
-            {it.customerName ?? 'Cliente'} · factura {it.folio ?? '—'} · {it.channel ?? '—'}
-            {it.template ? ` (${it.template})` : ''}
-            {typeof it.daysOverdue === 'number' ? ` · ${it.daysOverdue} día(s) respecto al vencimiento` : ''}
-            {it.alreadyPaid ? <span className="text-red-700 font-semibold"> · ya estaba pagada</span> : null}
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
@@ -833,7 +874,7 @@ function ReporteSombra() {
  * navegador): interruptor de emergencia de la organización, modo sombra del
  * plan por niveles y guardia de frescura del estado de cuenta.
  */
-function SeguridadEnvios() {
+function SeguridadEnvios({ alCrearPlan }: { key?: string; alCrearPlan?: () => void }) {
   const { avisar, nodo } = useAviso();
   const { confirmar, nodo: nodoConfirmar } = useConfirmar();
   const [estado, setEstado] = React.useState<CollectionStatus | null | undefined>(undefined);
@@ -862,6 +903,8 @@ function SeguridadEnvios() {
       setSombra(r.policy.shadowMode ?? false);
       setFrescura(r.policy.paymentDataMaxAgeHours ?? null);
       avisar('Guardado');
+      // Guardar aquí crea el plan si no existía: el calendario de al lado se recarga.
+      alCrearPlan?.();
     } catch (e) {
       avisar(e instanceof Error ? e.message : 'No se pudo guardar', { error: true });
     } finally {
@@ -938,7 +981,7 @@ function SeguridadEnvios() {
           <Interruptor activo={sombra} onChange={(v) => !ocupado && guardarPlan({ shadowMode: v })} etiqueta="Modo sombra" />
         )}
       </Fila>
-      {sombra && <ReporteSombra />}
+      {sombra !== null && <ReporteSombra activo={!!sombra} />}
       <Fila
         icono={<Database size={16} />}
         titulo="Exigir estado de cuenta reciente"
