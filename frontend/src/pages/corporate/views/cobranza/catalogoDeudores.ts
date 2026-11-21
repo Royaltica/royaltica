@@ -66,7 +66,11 @@ export const EJEMPLO_VARS: Record<string, string> = {
   clabe: '0123 4567 8901 2345 67',
 };
 
-export const TIPOS_DEUDOR: TipoDeudor[] = [
+/**
+ * Catálogo completo (25 tipos). Es material de referencia de la consultoría;
+ * la plataforma opera solo con TIPOS_DEUDOR (los del piloto).
+ */
+export const CATALOGO_COMPLETO: TipoDeudor[] = [
  {
   "id": "fortuito-b2c",
   "seg": "B2C",
@@ -1854,4 +1858,35 @@ export const TIPOS_DEUDOR: TipoDeudor[] = [
  }
 ];
 
+/**
+ * Tipos con los que arranca el piloto: 5 de empresa (B2B), uno o dos por
+ * causa. Pocos a propósito: cada tipo necesita sus plantillas aprobadas por
+ * Meta y alguien que sepa clasificar al cliente. Para sumar uno, agrégalo
+ * aquí y dile a qué tipo del piloto se parecen los demás en EQUIVALENTE.
+ */
+export const TIPOS_PILOTO = ['burocratico-b2b', 'desorganizado-b2b', 'priorizador-b2b', 'intencional-b2b', 'disputador-b2b'] as const;
+
+export const TIPOS_DEUDOR: TipoDeudor[] = TIPOS_PILOTO.map((id) => CATALOGO_COMPLETO.find((t) => t.id === id)!);
+
 export const tipoDeudor = (id: string): TipoDeudor | undefined => TIPOS_DEUDOR.find((t) => t.id === id);
+
+/** Tipo del piloto que corresponde a cada causa (para lo que viene clasificado con el catálogo completo). */
+const PILOTO_POR_CAUSA: Record<CausaDeudor, string | null> = {
+  friccion: 'burocratico-b2b',
+  nopuede: 'priorizador-b2b',
+  noquiere: 'intencional-b2b',
+  desacuerdo: 'disputador-b2b',
+  // Ilocalizable / dudoso: no se automatiza, lo ve una persona.
+  riesgo: null,
+};
+
+/**
+ * Convierte un tipo del catálogo completo (p. ej. el que trae el análisis
+ * de la consultoría) al tipo del piloto más cercano. null = sin equivalente:
+ * el cliente queda sin tipo y alguien lo decide a mano.
+ */
+export function tipoPilotoDe(id: string): string | null {
+  if (tipoDeudor(id)) return id;
+  const original = CATALOGO_COMPLETO.find((t) => t.id === id);
+  return original ? PILOTO_POR_CAUSA[original.causa] : null;
+}

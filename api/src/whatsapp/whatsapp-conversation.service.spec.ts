@@ -38,6 +38,7 @@ describe('WhatsappConversationService', () => {
     invoice: { findMany: jest.Mock };
     collectionPolicy: { findFirst: jest.Mock };
     collectionSequenceRun: { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
+    organization: { findUnique: jest.Mock };
     withOrg: jest.Mock;
   };
   let whatsapp: { sendTemplate: jest.Mock; sendMessage: jest.Mock; isConfigured: boolean };
@@ -62,6 +63,7 @@ describe('WhatsappConversationService', () => {
       invoice: { findMany: jest.fn().mockResolvedValue([invoice]) },
       collectionPolicy: { findFirst: jest.fn().mockResolvedValue(null) },
       collectionSequenceRun: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn(), update: jest.fn() },
+      organization: { findUnique: jest.fn().mockResolvedValue({ name: 'Cliente Demo SA' }) },
       withOrg: jest.fn(),
     };
     prisma.withOrg.mockImplementation((_o: string, fn: (tx: unknown) => unknown) => fn(prisma));

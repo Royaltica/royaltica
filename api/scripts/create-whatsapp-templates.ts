@@ -16,7 +16,7 @@
 
 import 'dotenv/config';
 
-import { COLLECTION_TEMPLATES } from '../src/whatsapp/collection-templates';
+import { COLLECTION_TEMPLATES, DEBTOR_TYPE_TEMPLATES } from '../src/whatsapp/collection-templates';
 
 /** Valores de ejemplo que Meta exige para aprobar cada variable. */
 const EJEMPLO = {
@@ -25,6 +25,7 @@ const EJEMPLO = {
   monto: '$284,500.00 MXN',
   fecha: '17 de octubre',
   liga: 'pagar.royaltica.com/f-2841',
+  empresa: 'Distribuidora Costa Azul',
 } as const;
 
 interface PlantillaDef {
@@ -36,7 +37,19 @@ interface PlantillaDef {
 
 // Una sola fuente de verdad: src/whatsapp/collection-templates.ts (la usan
 // también el motor de secuencias y la pantalla de Cobranza IA).
-const PLANTILLAS: PlantillaDef[] = COLLECTION_TEMPLATES.map((t) => ({
+// Qué subir (para no volver a someter las que ya están aprobadas):
+//   (sin argumentos)        las plantillas generales por nivel
+//   --tipos                 solo las 10 por tipo de deudor
+//   --solo a,b              solo las que se nombran (de cualquiera de las dos listas)
+const ARGS = process.argv.slice(2);
+const SOLO = ARGS.includes('--solo') ? (ARGS[ARGS.indexOf('--solo') + 1] ?? '').split(',').map((x) => x.trim()).filter(Boolean) : null;
+const FUENTE: { name: string; body: string; vars: (keyof typeof EJEMPLO)[]; buttons: string[] }[] = SOLO
+  ? [...COLLECTION_TEMPLATES, ...DEBTOR_TYPE_TEMPLATES].filter((t) => SOLO.includes(t.name))
+  : ARGS.includes('--tipos')
+    ? DEBTOR_TYPE_TEMPLATES
+    : COLLECTION_TEMPLATES;
+
+const PLANTILLAS: PlantillaDef[] = FUENTE.map((t) => ({
   name: t.name,
   body: t.body,
   bodyExample: t.vars.map((k) => EJEMPLO[k]),

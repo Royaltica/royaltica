@@ -33,7 +33,9 @@ export class ActivityController {
 
     const where: Prisma.ActivityLogWhereInput = {
       organizationId: user.organizationId,
-      ...(query.action ? { action: query.action } : {}),
+      // Los avisos de entrega de WhatsApp (uno por mensaje) son ruido en la
+      // bitácora general: solo salen si se piden explícitamente.
+      ...(query.action ? { action: query.action } : { action: { notIn: ['WHATSAPP_STATUS', 'WHATSAPP_MEDIA'] } }),
       ...(query.userId ? { userId: query.userId } : {}),
       ...(query.entityType ? { entityType: query.entityType } : {}),
       ...(query.entityId ? { entityId: query.entityId } : {}),

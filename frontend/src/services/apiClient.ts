@@ -1684,9 +1684,21 @@ export const api = {
     return downloadCsv('/customers/export', 'clientes.csv');
   },
 
+  /** Todo lo que la plataforma guarda de un contacto (derecho de acceso). Solo administradores. */
+  async getCustomerDataExport(id: string): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>('GET', `/customers/${id}/data-export`);
+  },
+
   /** Bitácora de cambios de un registro (solo administradores). */
   async getEntityActivity(entityType: string, entityId: string): Promise<ActivityRow[]> {
     const q = new URLSearchParams({ entityType, entityId, limit: '50' });
+    const r = await request<Paginated<ActivityRow>>('GET', `/activity?${q.toString()}`);
+    return r.data;
+  },
+
+  /** Gestiones registradas por el equipo (resultado de cada contacto). Solo administradores. */
+  async getGestiones(): Promise<ActivityRow[]> {
+    const q = new URLSearchParams({ action: 'AGENT_ACCOUNT_STATUS_UPDATED', limit: '100' });
     const r = await request<Paginated<ActivityRow>>('GET', `/activity?${q.toString()}`);
     return r.data;
   },
@@ -1869,6 +1881,26 @@ export const api = {
     return request<PortfolioSegments>('GET', '/receivables/segments');
   },
 
+  // ── WhatsApp a nivel plataforma (solo SUPERADMIN) ──
+
+  /** Respuestas que no se pudieron ligar a un cliente con certeza. */
+  async adminWaUnmatched(includeResolved = false): Promise<WaUnmatched[]> {
+    return request<WaUnmatched[]>('GET', `/admin/whatsapp/unmatched${includeResolved ? '?all=true' : ''}`);
+  },
+
+  async adminWaAssign(id: string, customerId: string): Promise<{ ok: true }> {
+    return request('POST', `/admin/whatsapp/unmatched/${id}/assign`, { customerId });
+  },
+
+  async adminWaDismiss(id: string): Promise<{ ok: true }> {
+    return request('POST', `/admin/whatsapp/unmatched/${id}/dismiss`);
+  },
+
+  /** Avisos de Meta: plantillas rechazadas/pausadas y calidad del número. */
+  async adminWaAlerts(): Promise<{ id: string; at: string; field: string; title: string }[]> {
+    return request('GET', '/admin/whatsapp/alerts');
+  },
+
   // ── Cobranza IA: conversación de WhatsApp (plantilla → ventana 24h → IA) ──
 
   async getWaConversations(): Promise<WaConversationSummary[]> {
@@ -1877,6 +1909,11 @@ export const api = {
 
   async getWaThread(customerId: string): Promise<WaThread> {
     return request<WaThread>('GET', `/whatsapp/conversations/${customerId}`);
+  },
+
+  /** Liga temporal para abrir el comprobante de un mensaje. */
+  async getWaMediaUrl(customerId: string, messageId: string): Promise<{ url: string; mimeType: string }> {
+    return request('GET', `/whatsapp/conversations/${customerId}/media/${messageId}`);
   },
 
   async sendWaTemplate(customerId: string, invoiceId: string, templateName: string): Promise<WaSendResult> {
@@ -2738,6 +2775,34 @@ export interface WaMessage {
   sent: boolean;
   sentByUserId: string | null;
   createdAt: string;
+  /** Estado real de entrega según Meta. null/ausente = Meta aún no avisa nada. */
+  delivery?: WaDelivery | null;
+  /** Archivo que mandó el cliente (comprobante). null/ausente = sin archivo guardado todavía. */
+  media?: { mimeType: string; filename: string | null; size: number; stored: boolean; reason: string | null } | null;
+}
+
+/** Mensaje entrante de WhatsApp sin cliente claro (bandeja de plataforma). */
+export interface WaUnmatched {
+  id: string;
+  receivedAt: string;
+  /** NO_CANDIDATES = el teléfono no es de ningún cliente · AMBIGUOUS = coincide con varios. */
+  reason: 'NO_CANDIDATES' | 'AMBIGUOUS';
+  from: string | null;
+  kind: WaKind;
+  text: string;
+  resolved: boolean;
+  resolution: string | null;
+  candidates: { customerId: string; customerName: string; organizationId: string; organizationName: string }[];
+}
+
+export interface WaDelivery {
+  status: 'sent' | 'delivered' | 'read' | 'failed';
+  at: string;
+  deliveredAt: string | null;
+  readAt: string | null;
+  failedCode: number | null;
+  /** Por qué no llegó, ya en español. */
+  failedReason: string | null;
 }
 
 export interface WaWindow {
@@ -2750,7 +2815,9 @@ export interface WaConversationSummary {
   customerId: string;
   name: string;
   hasWhatsapp: boolean;
-  lastMessage: { direction: 'INBOUND' | 'OUTBOUND'; kind: WaKind; body: string; createdAt: string } | null;
+  /** El cliente está en la lista de exclusión (pidió baja, número equivocado o pausa manual). */
+  doNotContact?: boolean;
+  lastMessage: { direction: 'INBOUND' | 'OUTBOUND'; kind: WaKind; body: string; createdAt: string; sent?: boolean } | null;
   windowOpen: boolean;
   windowExpiresAt: string | null;
 }
@@ -2767,7 +2834,15 @@ export interface WaTemplateInfo {
 }
 
 export interface WaThread {
-  customer: { id: string; name: string; contact: string | null; phone: string | null; doNotContact: boolean };
+  customer: {
+    id: string;
+    name: string;
+    contact: string | null;
+    phone: string | null;
+    doNotContact: boolean;
+    doNotContactReason?: string | null;
+    doNotContactAt?: string | null;
+  };
   window: WaWindow;
   invoices: { id: string; folio: string; total: number; currency: string; dueDate: string | null; daysToDue: number | null }[];
   templates: WaTemplateInfo[];
@@ -2849,6 +2924,10 @@ export interface PortfolioCustomer {
   doNotContact: boolean;
   doNotContactReason: string | null;
   score: number | null;
+  /** Clasificación de riesgo calculada cada día. null = aún sin calcular. */
+  riskTier?: 'SANO' | 'ATENCION' | 'RIESGO' | 'INCOBRABLE' | null;
+  /** Días de la factura abierta más vencida al momento del cálculo. */
+  maxDaysOverdue?: number | null;
   agent: { id: string; name: string } | null;
   pending: { id: string; folio: string; total: number; currency: string; date: string; dueDate: string | null }[];
   /** Días de atraso al pagar sus últimas 12 facturas (negativo = antes). */

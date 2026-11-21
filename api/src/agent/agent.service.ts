@@ -168,8 +168,9 @@ export class AgentService {
       throw new NotFoundException('Cuenta no encontrada.');
     }
     // Un agente solo puede reportar gestión sobre SUS propias cuentas
-    // asignadas (Supervisor/Admin gestionan por otras vías).
-    if (customer.assignedAgentId !== user.id) {
+    // asignadas. Administrador y Supervisor ven toda la cartera y pueden
+    // registrar la gestión de cualquier cuenta de su organización.
+    if (user.operationalProfile === 'AGENTE_EJECUTIVO' && customer.assignedAgentId !== user.id) {
       throw new ForbiddenException('Esta cuenta no está asignada a ti.');
     }
 

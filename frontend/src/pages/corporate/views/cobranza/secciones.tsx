@@ -72,7 +72,7 @@ export const SECCIONES: Record<Section, MetaSeccion> = {
     nombre: 'Pagos',
     slug: 'pagos',
     titulo: 'Pagos',
-    texto: 'Lo que ya entró, conciliado entre ERP, REP y cobros registrados.',
+    texto: 'Lo que ya entró: depósitos del banco por aplicar y cobros registrados.',
     Icono: Wallet,
     acento: '16 185 129', // esmeralda
   },

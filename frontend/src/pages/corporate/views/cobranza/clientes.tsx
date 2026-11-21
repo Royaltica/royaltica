@@ -694,6 +694,11 @@ const ACCION: Record<string, string> = {
   CUSTOMER_PORTAL_LINK_ISSUED: 'Se generó su liga de pago',
   CUSTOMER_PORTAL_VIEWED: 'Abrió su liga de pago',
   CUSTOMER_DO_NOT_CONTACT_SET: 'Pidió no ser contactado',
+  CUSTOMER_OPT_OUT: 'Pidió la baja por WhatsApp',
+  CUSTOMER_DATA_EXPORTED: 'Descargó todos sus datos',
+  AGENT_ACCOUNT_STATUS_UPDATED: 'Registró una gestión',
+  CUSTOMER_WRONG_CONTACT: 'Contestaron que es número equivocado',
+  CUSTOMER_DISPUTE: 'No está de acuerdo con una factura (cobranza en pausa)',
   CUSTOMER_PROMISED_PAYMENT: 'Prometió pagar',
   CUSTOMER_CLAIMED_PAID: 'Dijo que ya pagó',
   CUSTOMER_CLAIMED_PAID_REPEAT: 'Volvió a decir que ya pagó',
@@ -722,6 +727,43 @@ const CAMPO: Record<string, string> = {
 };
 
 /** Quién cambió qué y cuándo (lo ven los administradores). */
+/**
+ * Descarga todo lo que la plataforma guarda de un contacto (datos, facturas,
+ * mensajes y bitácora) para atender una solicitud de acceso a sus datos.
+ */
+export function ExportarDatosContacto({ dbId, nombre }: { dbId?: string; nombre: string }) {
+  const [estado, setEstado] = React.useState<'listo' | 'bajando' | string>('listo');
+  if (!dbId) return null;
+  const bajar = async () => {
+    setEstado('bajando');
+    try {
+      const datos = await api.getCustomerDataExport(dbId);
+      const blob = new Blob([JSON.stringify(datos, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `datos-${nombre.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'contacto'}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setEstado('listo');
+    } catch (e) {
+      setEstado(e instanceof Error ? e.message : 'No se pudo generar el archivo.');
+    }
+  };
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 text-[11.5px] text-brand-ink/50">
+      <button type="button" onClick={() => void bajar()} disabled={estado === 'bajando'} className={BTN_SEC}>
+        {estado === 'bajando' ? <Loader2 size={11} className="animate-spin" /> : null} Descargar todos sus datos
+      </button>
+      <span>
+        {estado !== 'listo' && estado !== 'bajando'
+          ? estado
+          : 'Para atender una solicitud de acceso a datos personales. Queda registrado quién lo descargó.'}
+      </span>
+    </div>
+  );
+}
+
 export function BitacoraCliente({ dbId }: { dbId?: string }) {
   const [filas, setFilas] = React.useState<ActivityRow[] | null | undefined>(undefined);
   React.useEffect(() => {

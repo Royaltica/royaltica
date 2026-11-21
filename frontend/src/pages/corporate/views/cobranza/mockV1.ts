@@ -3,7 +3,8 @@
 // planes y reportes se derivan de aquí para que los 3 perfiles cuadren.
 // Reemplazar por el API cuando exista el backend del Módulo 2.
 
-export const HOY = '2026-09-28';
+/** Hoy (AAAA-MM-DD) en la Ciudad de México. Antes era una fecha fija del prototipo. */
+export const HOY = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
 
 export const AGENTES = ['María Jiménez', 'Carlos Mendoza', 'Ana Robles'] as const;
 export type Agente = (typeof AGENTES)[number];
@@ -99,6 +100,10 @@ export type DatosCliente = {
   noContactar: boolean;
   motivoNoContactar: string | null;
   nota: string | null;
+  /** Puntualidad 0-100 calculada por el servidor. null = sin historial suficiente. */
+  score?: number | null;
+  riesgo?: 'SANO' | 'ATENCION' | 'RIESGO' | 'INCOBRABLE' | null;
+  diasMasVencida?: number | null;
 };
 
 export const CARTERA: CuentaCartera[] = [
@@ -440,6 +445,9 @@ export type Campana = {
 
 const OC = (id: Ocasion) => OCASIONES.find((o) => o.id === id)!;
 
+/** Ids de las campañas de ejemplo: nunca se muestran con una cartera real. */
+export const CAMPANAS_EJEMPLO = new Set(['c3', 'c5', 'h1', 'h2', 'h3']);
+
 export const CAMPANAS: Campana[] = [
   {
     id: 'c3', nombre: 'Validación de contactos', estado: 'Activa', enviados: 11, respuesta: 27,
@@ -464,7 +472,7 @@ export const CAMPANAS: Campana[] = [
 ];
 
 // ── Gestiones (base de reportes). Agente, línea y monto salen de CARTERA ─
-export const RESULTADOS = ['Promesa de pago', 'Pagó', 'Sin respuesta', 'Disputa', 'Escalado', 'Enviado', 'No gestionada'] as const;
+export const RESULTADOS = ['Promesa de pago', 'Pagó', 'Respondió', 'Sin respuesta', 'Disputa', 'Escalado', 'Enviado', 'No gestionada'] as const;
 export type Resultado = (typeof RESULTADOS)[number];
 
 export type Gestion = {
@@ -472,7 +480,8 @@ export type Gestion = {
   hora: string;
   agente: string;
   cliente: string;
-  linea: Linea;
+  /** Línea de negocio (ejemplo) o categoría del cliente (cartera real). */
+  linea: string;
   resultado: Resultado;
   monto: number;
 };
@@ -487,7 +496,7 @@ export function gestion(
 ): Gestion {
   // Si se pasa la cuenta se usa tal cual (clientes reales que no existen en el prototipo).
   const c = cuenta ?? cuentaPorCliente(cliente)!;
-  return { fecha, hora, cliente, resultado, agente: c.agente, linea: c.linea, monto: monto ?? saldoDe(c) };
+  return { fecha, hora, cliente, resultado, agente: c.agente, linea: c.dbId ? (c.datos?.categoria ?? 'Sin categoría') : c.linea, monto: monto ?? saldoDe(c) };
 }
 
 export const GESTIONES: Gestion[] = [

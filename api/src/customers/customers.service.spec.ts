@@ -1,7 +1,8 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { CustomersService } from './customers.service';
 import { PrismaService } from '../common/prisma/prisma.service';
 import { SatService } from '../sat/sat.service';
+import type { ActivityLogService } from '../activity/activity-log.service';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 
 const admin: AuthenticatedUser = {
@@ -161,5 +162,42 @@ describe('CustomersService', () => {
 
     prisma.customer.findFirst.mockResolvedValueOnce(null);
     await expect(service.restore(admin, 'c-2')).rejects.toThrow(NotFoundException);
+  });
+  describe('dataExport (derecho de acceso)', () => {
+    const prismaCon = (customer: unknown) => {
+      const tx = {
+        customer: { findFirst: jest.fn().mockResolvedValue(customer) },
+        invoice: { findMany: jest.fn().mockResolvedValue([{ folio: 'F-1', cfdiUuid: 'u', total: '100.50', currency: 'MXN', date: new Date(), dueDate: null, paidDate: null, status: 'PENDING' }]) },
+        whatsappMessage: { findMany: jest.fn().mockResolvedValue([{ direction: 'INBOUND', kind: 'TEXT', body: 'hola', templateName: null, sent: true, createdAt: new Date() }]) },
+        activityLog: { findMany: jest.fn().mockResolvedValue([]) },
+      };
+      return { tx, prisma: { withOrg: (_o: string, fn: (t: unknown) => unknown) => fn(tx) } as unknown as PrismaService };
+    };
+    const sat = {} as unknown as SatService;
+
+    it('un usuario que no es administrador no puede exportar', async () => {
+      const { prisma } = prismaCon({ id: 'c-1' });
+      const svc = new CustomersService(prisma, sat);
+      await expect(
+        svc.dataExport({ ...admin, role: 'CORPORATE_USER' } as AuthenticatedUser, 'c-1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('junta contacto, facturas y mensajes, solo de su organización, y deja registro', async () => {
+      const { prisma, tx } = prismaCon({ id: 'c-1', name: 'ACME', legalName: 'ACME SA', rfc: 'AAA010101AAA', doNotContact: false });
+      const record = jest.fn().mockResolvedValue(undefined);
+      const svc = new CustomersService(prisma, sat, { record } as unknown as ActivityLogService);
+      const out = await svc.dataExport(admin, 'c-1');
+      expect(tx.customer.findFirst).toHaveBeenCalledWith({ where: { id: 'c-1', organizationId: 'org-1' } });
+      expect(out.contacto.rfc).toBe('AAA010101AAA');
+      expect(out.facturas[0].total).toBe(100.5);
+      expect(out.mensajesWhatsapp).toHaveLength(1);
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({ action: 'CUSTOMER_DATA_EXPORTED', entityId: 'c-1' }));
+    });
+
+    it('cliente de otra organización: no encontrado', async () => {
+      const { prisma } = prismaCon(null);
+      await expect(new CustomersService(prisma, sat).dataExport(admin, 'c-9')).rejects.toBeInstanceOf(NotFoundException);
+    });
   });
 });

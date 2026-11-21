@@ -7,6 +7,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import type { Env } from '../config/env.validation';
 import { classifyIntent } from './collections-intent.util';
+import { classifyIntent as classifyWhatsappIntent } from '../whatsapp/inbound-intent';
 import {
   normalizeInboundPayload,
   extractFolioFromSubject,
@@ -142,6 +143,31 @@ export class EmailInboundService {
       // propósito (no confirmamos ni negamos si la dirección existe).
       this.logger.debug(`Correo entrante de ${email.from} sin cliente asociado; se ignora.`);
       return { processed: false, reason: 'cliente-no-encontrado' };
+    }
+
+    // Baja por correo: se mira solo lo que escribió el cliente (sin el
+    // mensaje citado, que trae nuestro propio pie con la palabra BAJA).
+    if (classifyWhatsappIntent(ownText(email.text)).intent === 'OPT_OUT') {
+      await this.prisma.withOrg(customer.organizationId, (tx) =>
+        tx.customer.update({
+          where: { id: customer.id },
+          data: { doNotContact: true, doNotContactReason: 'Solicitó baja por correo', doNotContactAt: new Date() },
+        }),
+      );
+      const admins = await this.prisma.user.findMany({
+        where: { organizationId: customer.organizationId, role: 'CORPORATE_ADMIN', isActive: true },
+        select: { id: true },
+      });
+      await this.notifications.createMany(
+        admins.map((u) => u.id),
+        {
+          type: 'RECEIVABLE_CUSTOMER_OPT_OUT',
+          title: 'Cliente pidió no recibir mensajes',
+          body: `${customer.name} pidió la baja por correo. Ya no se le enviará ningún recordatorio (WhatsApp ni correo). Puedes reactivarlo desde su expediente si fue un error.`,
+          metadata: { customerId: customer.id, intent: 'OPT_OUT' },
+        },
+      );
+      return { processed: true, reason: 'baja' };
     }
 
     const invoice = await this.findInvoice(customer.id, email.subject);
@@ -327,4 +353,19 @@ export class EmailInboundService {
       orderBy: [{ status: 'asc' }, { dueDate: 'asc' }],
     });
   }
+}
+
+/**
+ * Lo que escribió la persona, sin el correo citado debajo: se corta en la
+ * primera línea que empieza con ">" o que anuncia la cita ("El ... escribió:",
+ * "On ... wrote:", "De:", "-----Mensaje original-----").
+ */
+export function ownText(text: string): string {
+  const out: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const l = line.trim();
+    if (l.startsWith('>') || /^(el .+ escribi[oó]:|on .+ wrote:|de:|from:|-{2,} ?mensaje original|-{2,} ?original message)/i.test(l)) break;
+    out.push(line);
+  }
+  return out.join('\n').trim();
 }

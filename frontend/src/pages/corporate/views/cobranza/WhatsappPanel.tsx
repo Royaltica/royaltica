@@ -108,7 +108,7 @@ function Conversacion({ customerId, cuenta, demo = false }: { key?: string; cust
     if (demo) return;
     void cargar();
     // Las respuestas del cliente llegan por el webhook: se refresca solo.
-    const t = setInterval(() => void cargar(), 15_000);
+    const t = setInterval(() => void cargar(), 8_000);
     return () => clearInterval(t);
   }, [cargar, demo]);
 
@@ -139,10 +139,20 @@ function Conversacion({ customerId, cuenta, demo = false }: { key?: string; cust
     : !cuenta.contactable
       ? `Contacto en pausa${cuenta.motivo ? ` (${cuenta.motivo})` : ''}. Reanúdalo para volver a escribirle.`
       : hilo.customer.doNotContact
-        ? 'Este cliente pidió no ser contactado.'
+        ? `Este cliente está en la lista de no contactar${hilo.customer.doNotContactReason ? ` (${hilo.customer.doNotContactReason})` : ''}. Reactívalo en Datos si fue un error.`
         : !hilo.customer.phone
           ? 'Falta el WhatsApp de finanzas. Agrégalo en Datos para poder escribirle.'
           : null;
+
+  // Comprobante del cliente: se abre con una liga temporal en otra pestaña.
+  const abrirArchivo = async (messageId: string) => {
+    try {
+      const { url } = await api.getWaMediaUrl(customerId!, messageId);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      setAviso({ texto: e instanceof Error ? e.message : 'No se pudo abrir el archivo.', error: true });
+    }
+  };
 
   const correr = async (tipo: NonNullable<Ocupado>, fn: () => Promise<string | void>) => {
     setOcupado(tipo);
@@ -301,7 +311,7 @@ function Conversacion({ customerId, cuenta, demo = false }: { key?: string; cust
                     </span>
                   </div>
                 )}
-                <BurbujaChat m={m} etapa={etapaDe(m.templateName, hilo)} reduce={reduce} />
+                <BurbujaChat m={m} etapa={etapaDe(m.templateName, hilo)} reduce={reduce} onAbrirArchivo={customerId ? abrirArchivo : undefined} />
               </React.Fragment>
             );
           })}
@@ -588,7 +598,17 @@ const BTN_CHAT_FANTASMA =
 const BTN_CHAT_SEC =
   'inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white/70 ring-1 ring-brand-ink/10 text-[12.5px] font-semibold text-brand-ink/70 hover:bg-white hover:text-brand-ink transition-colors disabled:opacity-40';
 
-function BurbujaChat({ m, etapa, reduce }: { m: WaMessage; etapa: string | null; reduce: boolean | null }) {
+function BurbujaChat({
+  m,
+  etapa,
+  reduce,
+  onAbrirArchivo,
+}: {
+  m: WaMessage;
+  etapa: string | null;
+  reduce: boolean | null;
+  onAbrirArchivo?: (messageId: string) => void;
+}) {
   const sale = m.direction === 'OUTBOUND';
   return (
     <motion.div
@@ -610,13 +630,41 @@ function BurbujaChat({ m, etapa, reduce }: { m: WaMessage; etapa: string | null;
           </div>
         )}
         <p className="text-[13px] leading-relaxed whitespace-pre-wrap">{m.body}</p>
+        {m.media &&
+          (m.media.stored && onAbrirArchivo ? (
+            <button
+              type="button"
+              onClick={() => onAbrirArchivo(m.id)}
+              className="mt-1.5 text-[12px] font-semibold text-cyan-700 underline underline-offset-2 hover:no-underline"
+            >
+              Ver {m.media.mimeType === 'application/pdf' ? 'el PDF' : 'la imagen'}
+              {m.media.size ? ` (${Math.max(1, Math.round(m.media.size / 1024))} KB)` : ''}
+            </button>
+          ) : (
+            !m.media.stored && <p className="mt-1 text-[11px] text-brand-ink/45">Archivo no guardado. {m.media.reason ?? ''}</p>
+          ))}
         <div className={`flex items-center justify-end gap-1 mt-1 text-[10px] ${sale ? 'text-white/45' : 'text-brand-ink/35'}`}>
           {hora(m.createdAt)}
-          {sale && (m.sent ? <CheckCheck size={12} className="text-brand-gold" /> : <Clock size={11} />)}
+          {sale && <EstadoEntrega m={m} />}
         </div>
+        {sale && m.delivery?.status === 'failed' && (
+          <p className="mt-1 text-[11px] leading-snug text-rose-200">
+            No llegó. {m.delivery.failedReason ?? 'WhatsApp no pudo entregarlo.'}
+          </p>
+        )}
       </div>
     </motion.div>
   );
+}
+
+/** Palomitas del mensaje saliente con el estado real que reporta Meta. */
+function EstadoEntrega({ m }: { m: WaMessage }) {
+  const st = m.delivery?.status;
+  if (st === 'failed') return <span title="No se entregó" className="text-rose-300 font-semibold">No entregado</span>;
+  if (st === 'read') return <span title="Leído" className="inline-flex items-center gap-0.5 text-brand-gold"><CheckCheck size={12} />Leído</span>;
+  if (st === 'delivered') return <span title="Entregado" className="inline-flex items-center gap-0.5"><CheckCheck size={12} />Entregado</span>;
+  if (!m.sent) return <span title="No salió" className="inline-flex items-center gap-0.5"><Clock size={11} />No enviado</span>;
+  return <span title="Enviado; WhatsApp aún no confirma la entrega"><CheckCheck size={12} className="text-brand-gold" /></span>;
 }
 
 function Inicial({ nombre }: { nombre: string }) {

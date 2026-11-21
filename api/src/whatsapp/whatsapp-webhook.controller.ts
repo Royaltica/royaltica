@@ -53,11 +53,11 @@ export class WhatsappWebhookController {
     @Req() req: Request & { rawBody?: Buffer },
     @Headers('x-hub-signature-256') signature: string | undefined,
     @Body() payload: unknown,
-  ): Promise<{ received: true; processed: number }> {
+  ): Promise<{ received: true; processed: number; statuses: number }> {
     if (!this.webhook.verifySignature(req.rawBody, signature)) {
       throw new ForbiddenException('Firma de webhook inválida.');
     }
-    const { processed } = await this.webhook.handleIncoming(payload);
-    return { received: true, processed };
+    const { processed, statuses } = await this.webhook.handleIncoming(payload);
+    return { received: true, processed, statuses };
   }
 }
